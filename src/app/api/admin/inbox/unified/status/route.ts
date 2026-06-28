@@ -75,8 +75,11 @@ export async function POST(req: NextRequest) {
     ticketPatch.status = 'snoozed'; threadPatch.status = 'snoozed'
     if (body.snoozeUntil) threadPatch.snoozed_until = body.snoozeUntil
   }
-  else if (action === 'read') { ticketPatch.unread_count = 0; threadPatch.unread_count = 0 }
-  else if (action === 'unread') { ticketPatch.unread_count = 1; threadPatch.unread_count = 1 }
+  // read_at is the WhatsApp-side read marker: a thread is unread only when an
+  // inbound message is NEWER than read_at, so marking read clears the badge AND a
+  // later inbound re-flags it. (Email already clears via unread_count.)
+  else if (action === 'read') { ticketPatch.unread_count = 0; ticketPatch.read_at = new Date().toISOString(); threadPatch.unread_count = 0 }
+  else if (action === 'unread') { ticketPatch.unread_count = 1; ticketPatch.read_at = null; threadPatch.unread_count = 1 }
   else if (action === 'assign') { ticketPatch.assigned_to = body.assigneeId ?? null; threadPatch.assignee_id = body.assigneeId ?? null }
 
   // Apply a tag-column change to an existing tag value, preserving the other half.

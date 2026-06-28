@@ -78,8 +78,12 @@ export async function GET(req: NextRequest) {
       // Body: a media caption (already stored as body) or the template label.
       // For a bare media row with no caption, leave the text empty so the bubble
       // shows only the image/chip (no literal "[media message]" string).
-      let body = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '') || (m.template_name ? `[template: ${m.template_name}]` : '')
-      if (!body && !media) body = m.direction === 'in' ? '[media message]' : ''
+      const body = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '') || (m.template_name ? `[template: ${m.template_name}]` : '')
+      // A row with no text AND no media descriptor is a reaction / system event /
+      // unsupported type we don't capture. SKIP it — never show the misleading
+      // "[media message]" label (Taona 2026-06-29). Real media has `media` set and
+      // renders via the client MediaBubble; legacy media (descriptor present, id
+      // null) keeps its honest chip because `media` is still defined.
       if (!body && !media) continue
       // Outbound attribution: an agent (metadata.sent_by) replied, else it was
       // the auto-bot (no sender stamp and no human took over historically).

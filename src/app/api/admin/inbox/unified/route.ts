@@ -29,6 +29,7 @@ interface Contact {
   last_preview: string | null
   last_direction: 'in' | 'out' | null
   unread: boolean
+  read_at: string | null     // WhatsApp read marker; unread iff last inbound > read_at
   starred: boolean
   tag: string | null         // operational label: payment | load-in | badges | …
   assignee_id: string | null
@@ -88,13 +89,13 @@ export async function GET(req: NextRequest) {
   // ---- Conversation state from vendor_tickets (status/star/assignee/unread) ----
   const { data: tickets } = await db
     .from('vendor_tickets')
-    .select('vendor_application_id, ticket_buyer_email, status, tag, assigned_to, unread_count')
-  interface TState { status: string; starred: boolean; tag: string | null; assignee: string | null; unread: number }
+    .select('vendor_application_id, ticket_buyer_email, status, tag, assigned_to, unread_count, read_at')
+  interface TState { status: string; starred: boolean; tag: string | null; assignee: string | null; unread: number; read_at: string | null }
   const tByApp = new Map<string, TState>()
   const tByEmail = new Map<string, TState>()
-  for (const t of (tickets || []) as Array<{ vendor_application_id: string | null; ticket_buyer_email: string | null; status: string | null; tag: string | null; assigned_to: string | null; unread_count: number | null }>) {
+  for (const t of (tickets || []) as Array<{ vendor_application_id: string | null; ticket_buyer_email: string | null; status: string | null; tag: string | null; assigned_to: string | null; unread_count: number | null; read_at: string | null }>) {
     const pt = parseTag(t.tag)
-    const st: TState = { status: t.status || 'open', starred: pt.starred, tag: pt.tag, assignee: t.assigned_to, unread: t.unread_count || 0 }
+    const st: TState = { status: t.status || 'open', starred: pt.starred, tag: pt.tag, assignee: t.assigned_to, unread: t.unread_count || 0, read_at: t.read_at || null }
     if (t.vendor_application_id) tByApp.set(t.vendor_application_id, st)
     if (t.ticket_buyer_email) tByEmail.set(t.ticket_buyer_email.toLowerCase(), st)
   }
@@ -132,6 +133,7 @@ export async function GET(req: NextRequest) {
         last_preview: preview.slice(0, 120),
         last_direction: direction,
         unread: false,
+        read_at: c.read_at ?? null,
         starred: c.starred || false,
         tag: c.tag || null,
         assignee_id: c.assignee_id || null,
@@ -144,6 +146,7 @@ export async function GET(req: NextRequest) {
       if (phone && !existing.phone) existing.phone = phone
       if (email && !existing.email) existing.email = email
       if (c.business_name && !existing.business_name) existing.business_name = c.business_name
+      if (c.read_at && !existing.read_at) existing.read_at = c.read_at
       if (c.starred) existing.starred = true
       if (c.tag && !existing.tag) existing.tag = c.tag
       if (c.assignee_id && !existing.assignee_id) existing.assignee_id = c.assignee_id
@@ -200,6 +203,7 @@ export async function GET(req: NextRequest) {
           starred: st?.starred || false,
           tag: st?.tag || null,
           assignee_id: st?.assignee || null,
+          read_at: st?.read_at ?? null,
         },
         isFirst ? m.created_at : null,
         isFirst ? (body || '[no text]') : '',
@@ -278,11 +282,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Derive unread: WhatsApp-side unread = latest message inbound. Email-side
-  // unread folded in via last_direction='in' set above when unread_count>0.
+  // Derive unread: the latest message is inbound AND it arrived AFTER the thread
+  // was last marked read (read_at). So "mark read" clears the badge, and a NEW
+  // inbound message (newer than read_at) re-flags it. read_at is null until the
+  // operator reads it, so a never-read inbound thread is unread (prior behaviour).
+  // Email keeps its existing behaviour (read_at null => last_direction drives it,
+  // and last_direction is set from unread_count above).
   const list = Array.from(contacts.values()).map((c) => ({
     ...c,
-    unread: c.last_direction === 'in',
+    unread:
+      c.last_direction === 'in' &&
+      (!c.read_at || !c.last_message_at || new Date(c.last_message_at) > new Date(c.read_at)),
     bot_paused: c.phone ? (handoverPaused.get(norm(c.phone)) ?? false) : false,
   }))
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
