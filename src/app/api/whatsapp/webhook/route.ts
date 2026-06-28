@@ -25,6 +25,7 @@ import { resolveIdentity } from '@/lib/bot/identity'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
 import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { isMaintenanceEnabled } from '@/lib/maintenance'
 import { guardReply, logGuardRedaction } from '@/lib/bot/reply-guard'
 import { shouldProcess } from '@/lib/brain-core/index.js'
@@ -758,6 +759,9 @@ async function logMessage(row: {
   } catch (e) {
     console.error('wa_threads touch error', e)
   }
+
+  // Live inbox: ping the admin inbox to refresh instantly (no PII in the ping).
+  await broadcastInboxRefresh(row.direction).catch(() => {})
 }
 
 async function touchThread(

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import { useSearchParams } from 'next/navigation'
 import { AdminPage } from '@/components/admin/AdminPage'
 import {
@@ -282,16 +283,32 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   const activeIdRef = useRef<string | null>(null); activeIdRef.current = activeId
   const contactsRef = useRef<Contact[]>([]); contactsRef.current = contacts
 
-  // Live refresh: pull the list + open thread every 15s when the tab is visible.
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (document.hidden) return
-      loadSilent()
-      const c = contactsRef.current.find((x) => x.id === activeIdRef.current)
-      if (c) refreshMessages(c)
-    }, 15000)
-    return () => clearInterval(id)
+  // LIVE: Supabase Realtime. The webhook fires a content-free "refresh" broadcast
+  // the instant a message lands (or the bot replies), and we re-fetch through the
+  // server route immediately. This is what makes the inbox feel native, no waiting
+  // for the next poll. (No PII in the broadcast; the data comes from the route.)
+  const refreshNow = useCallback(() => {
+    if (document.hidden) return
+    loadSilent()
+    const c = contactsRef.current.find((x) => x.id === activeIdRef.current)
+    if (c) refreshMessages(c)
   }, [loadSilent, refreshMessages])
+
+  useEffect(() => {
+    const supabase = createClient()
+    const ch = supabase
+      .channel('inbox-updates')
+      .on('broadcast', { event: 'refresh' }, () => refreshNow())
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [refreshNow])
+
+  // Fallback poll (safety net if the realtime socket drops). Slow now that
+  // realtime carries the live updates.
+  useEffect(() => {
+    const id = setInterval(() => refreshNow(), 30000)
+    return () => clearInterval(id)
+  }, [refreshNow])
 
   const active = useMemo(() => contacts.find((c) => c.id === activeId) || null, [contacts, activeId])
   const nameOf = (c: Contact) => c.business_name || c.contact_name || c.phone || c.email || 'Unknown'
