@@ -821,16 +821,30 @@ async function logStatuses(statuses: Array<{ messageId: string; status: string; 
 function isLikelyAutoresponder(text: string): boolean {
   const t = (text || '').toLowerCase().trim()
   if (!t || t.length > 600) return false
+  // Specific automated-greeting phrasings only, so a genuine vendor message is
+  // never suppressed. Covers both "thanks" and "thank you" forms + the
+  // unavailable / business-hours / auto-reply variants that were slipping
+  // through and getting a (pointless) bot reply (Taona 2026-06-28).
   const AUTORESPONDER_PATTERNS = [
-    /thank you for contacting/,
-    /thanks for (contacting|reaching out|your message)/,
-    /this is an automated (reply|message|response)/,
-    /we (will|'ll) (get|be) back to you/,
-    /our (business|operating|working) hours/,
-    /out of (the )?office/,
-    /away from (my|the) (phone|desk)/,
-    /we have received your message/,
-    /your message is important to us/,
+    /thank(s| you)( so much)? for (contacting|reaching out|getting in touch|your (message|enquiry|inquiry|order|email|patience))/,
+    /this is an automat(ed|ic) (reply|message|response)/,
+    /automatic reply/,
+    /auto[- ]?reply/,
+    /we (will|'ll|are going to|shall) (get|be|get back|be back|revert) ?(back)? to you/,
+    /we (have|'ve) received your (message|enquiry|order)/,
+    /your (message|enquiry) is important to us/,
+    /(our|the) (business|operating|working|trading|office) hours/,
+    /outside (of )?(our )?(normal |regular )?(business|office|working|trading) hours/,
+    /out of (the |our )?office/,
+    /away from (my|the|our) (phone|desk|office)/,
+    /we (are|'re) (currently |temporarily )?(closed|away|unavailable|not available|offline)/,
+    /(currently|temporarily) (closed|away|unavailable|not available|offline)/,
+    /(not |un)available (to reply|to respond|at the moment|right now|at present)/,
+    /not (currently )?available to reply/,
+    /kindly await/,
+    /we will respond (as soon as|asap|shortly|when we)/,
+    /our team will (get back|respond|be in touch)/,
+    /please bear with us/,
   ]
   return AUTORESPONDER_PATTERNS.some((re) => re.test(t))
 }
