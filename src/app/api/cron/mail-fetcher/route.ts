@@ -1,23 +1,21 @@
 /**
- * Mail fetcher cron — pulls messages from one or more inboxes and lands them as
- * rows in mail_messages, then opens / refreshes a wa_threads row so the unified
- * inbox surfaces the conversation. Runs every 2 minutes via vercel.json.
- * Idempotent on Message-ID.
+ * Gmail fetcher cron — pulls Samreen's capetownhalaal@gmail.com into the SAME
+ * support_inbox_threads / support_inbox_messages tables the unified inbox reads,
+ * so her Gmail shows up natively alongside support@ and WhatsApp.
  *
- * ACCOUNTS (multi-account since 2026-06-28):
- *   - primary  : the support mailbox (GoDaddy). Searches UNSEEN and MARKS SEEN
- *                (it's a system box, so consuming it is fine).
- *   - gmail    : Samreen's capetownhalaal@gmail.com (personal box). Searches
- *                RECENT and NEVER marks seen — we must not touch her read state.
- *                Dedup is on message_id (UNIQUE), so re-seeing the same recent
- *                message is a cheap 23505 skip.
+ * Why this and not the support-mail-fetcher: that one owns support@youngatheart
+ * (consumes UNSEEN, marks seen). This one owns ONLY her personal Gmail and is
+ * NON-DESTRUCTIVE — searches RECENT, never marks her mail read, and dedups on
+ * message_id (with an existence check so re-seeing a recent message does NOT
+ * re-increment the thread unread_count). Runs every 2 minutes via vercel.json.
  *
- * If mail_messages does not exist yet the writer surfaces the error but does NOT
- * crash the cron.
+ * (Historical note: this route previously raced support@ with support-mail-fetcher
+ * and wrote to a dead-end table. Now scoped to Gmail -> support_inbox_*.)
  */
 
 import { NextResponse } from 'next/server'
 import { ImapFlow, type FetchMessageObject } from 'imapflow'
+import { simpleParser } from 'mailparser'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 
@@ -25,250 +23,150 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-interface VendorMatch {
-  id: string
-  contact_name: string | null
-  business_name: string | null
-}
-
-interface MailAccount {
-  label: string
-  host: string
-  port: number
-  user: string
-  pass: string
-  /** true = consume UNSEEN + mark \Seen (system box). false = read recent
-   *  non-destructively, never mark seen (personal box). */
-  markSeen: boolean
-}
-
-interface AccountReport {
-  label: string
-  host: string
-  fetched: number
-  written: number
-  skipped: number
-  errors: string[]
-}
-
-function buildAccounts(): { accounts: MailAccount[]; configErrors: string[] } {
-  const accounts: MailAccount[] = []
-  const configErrors: string[] = []
-
-  // Primary support mailbox (GoDaddy). IMAP_PASS preferred; SMTP_PASS is the
-  // same secret on that stack today (env-hygiene warning kept).
-  let primPass = process.env.IMAP_PASS
-  if (!primPass && process.env.SMTP_PASS) {
-    primPass = process.env.SMTP_PASS
-    configErrors.push('config: IMAP_PASS missing, fell back to SMTP_PASS. Set IMAP_PASS in Vercel env.')
-  }
-  if (primPass) {
-    accounts.push({
-      label: 'primary',
-      host: process.env.IMAP_HOST || 'imap.secureserver.net',
-      port: Number(process.env.IMAP_PORT || 993),
-      user: process.env.IMAP_USER || 'support@youngatheart.co.za',
-      pass: primPass,
-      markSeen: true,
-    })
-  }
-
-  // Samreen's Gmail (added 2026-06-28). NON-destructive: never marks her mail read.
-  if (process.env.GMAIL_IMAP_USER && process.env.GMAIL_APP_PASS) {
-    accounts.push({
-      label: 'gmail',
-      host: 'imap.gmail.com',
-      port: 993,
-      user: process.env.GMAIL_IMAP_USER,
-      pass: process.env.GMAIL_APP_PASS,
-      markSeen: false,
-    })
-  }
-
-  return { accounts, configErrors }
-}
-
 async function findVendorByEmail(
   supabase: ReturnType<typeof createAdminClient>,
   email: string
-): Promise<VendorMatch | null> {
+): Promise<{ id: string } | null> {
   if (!email) return null
-  const { data, error } = await supabase
-    .from('vendor_applications')
-    .select('id,contact_name,business_name')
-    .eq('email', email)
-    .limit(1)
-  if (error || !data || data.length === 0) return null
-  return data[0] as VendorMatch
+  const { data } = await supabase.from('vendor_applications').select('id').eq('email', email).limit(1)
+  return (data?.[0] as { id: string }) || null
 }
 
-async function fetchAccount(
-  acct: MailAccount,
-  supabase: ReturnType<typeof createAdminClient>
-): Promise<AccountReport> {
-  const report: AccountReport = { label: acct.label, host: acct.host, fetched: 0, written: 0, skipped: 0, errors: [] }
+export async function GET(req: Request) {
+  const started = Date.now()
+  const errors: string[] = []
+  let fetched = 0, written = 0, skipped = 0
 
-  const client = new ImapFlow({
-    host: acct.host,
-    port: acct.port,
-    secure: true,
-    auth: { user: acct.user, pass: acct.pass },
-    logger: false,
-    socketTimeout: 30_000,
-  })
+  if (!verifyCronAuth(req.headers.get('authorization'))) {
+    return NextResponse.json({ ok: false, errors: ['unauthorized'], durationMs: 0 }, { status: 401 })
+  }
+
+  const user = process.env.GMAIL_IMAP_USER
+  const pass = process.env.GMAIL_APP_PASS
+  if (!user || !pass) {
+    return NextResponse.json({ ok: true, skipped: 'GMAIL_IMAP_USER/GMAIL_APP_PASS not set', durationMs: Date.now() - started })
+  }
+
+  const supabase = createAdminClient()
+  const client = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user, pass }, logger: false, socketTimeout: 30_000 })
 
   try {
     await client.connect()
   } catch (e) {
-    const msg = (e as Error).message
-    console.error(JSON.stringify({ at: 'mail-fetcher', account: acct.label, event: 'connect_failed', host: acct.host, error: msg }))
     try { await client.close() } catch { /* swallow */ }
-    report.errors.push(`imap connect (${acct.label}): ${msg}`)
-    return report
+    return NextResponse.json({ ok: false, errors: [`imap connect: ${(e as Error).message}`], durationMs: Date.now() - started }, { status: 502 })
   }
 
   let lock: Awaited<ReturnType<typeof client.getMailboxLock>> | null = null
   try {
     lock = await client.getMailboxLock('INBOX')
-    // Personal box: read RECENT (last 2 days) non-destructively. System box:
-    // consume UNSEEN. Dedup on message_id makes re-seeing recent mail cheap.
-    const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)
-    const criteria = acct.markSeen ? { seen: false } : { since }
-    const uidsRaw = await client.search(criteria, { uid: true })
+    // NON-DESTRUCTIVE: read RECENT (last 3 days), never mark seen. Dedup via the
+    // message-existence check below so re-reads are cheap no-ops.
+    const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+    const uidsRaw = await client.search({ since }, { uid: true })
     const uids: number[] = Array.isArray(uidsRaw) ? uidsRaw : []
-    const toFetch = uids.slice(-50) // newest 50
+    const toFetch = uids.slice(-50)
 
     for (const uid of toFetch) {
-      report.fetched += 1
+      fetched += 1
       let msg: FetchMessageObject | null = null
       try {
         msg = (await client.fetchOne(String(uid), {
-          envelope: true,
-          source: true,
-          headers: ['message-id', 'auto-submitted', 'x-auto-response-suppress', 'precedence', 'list-unsubscribe', 'in-reply-to', 'references'],
+          envelope: true, source: true,
+          headers: ['message-id', 'auto-submitted', 'x-auto-response-suppress', 'precedence', 'in-reply-to'],
         }, { uid: true })) as FetchMessageObject
-      } catch (e) {
-        report.errors.push(`uid ${uid} fetch: ${(e as Error).message}`)
-        report.skipped += 1
-        continue
-      }
-      if (!msg) { report.skipped += 1; continue }
+      } catch (e) { errors.push(`uid ${uid} fetch: ${(e as Error).message}`); skipped += 1; continue }
+      if (!msg) { skipped += 1; continue }
 
       const headerBlob = msg.headers ? msg.headers.toString('utf8') : ''
       const autoSubmittedMatch = headerBlob.match(/^auto-submitted:\s*([^\r\n]+)/im)
       const autoSubmitted = autoSubmittedMatch !== null && autoSubmittedMatch[1].trim().toLowerCase() !== 'no'
       const autoSuppress = /^x-auto-response-suppress:\s*\S/im.test(headerBlob)
       const precedence = /^precedence:\s*(bulk|list|junk)/im.test(headerBlob)
-      if (autoSubmitted || autoSuppress || precedence) {
-        if (acct.markSeen) {
-          try { await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }) } catch { /* swallow */ }
-        }
-        report.skipped += 1
-        continue
-      }
+      if (autoSubmitted || autoSuppress || precedence) { skipped += 1; continue }
 
       const messageIdMatch = headerBlob.match(/^message-id:\s*(.+)$/im)
       const messageId = (messageIdMatch?.[1] || msg.envelope?.messageId || '').trim()
-      if (!messageId) { report.skipped += 1; continue }
+      if (!messageId) { skipped += 1; continue }
+
+      // EXISTENCE CHECK (non-destructive correctness): if we've already imported
+      // this message, skip BEFORE touching the thread, so unread_count is never
+      // re-incremented on a re-read.
+      const { data: dupe } = await supabase.from('support_inbox_messages').select('id').eq('message_id', messageId).limit(1)
+      if (dupe && dupe.length) { skipped += 1; continue }
+
+      const inReplyToMatch = headerBlob.match(/^in-reply-to:\s*(.+)$/im)
+      const inReplyTo = inReplyToMatch?.[1]?.trim() || null
 
       const fromRaw = msg.envelope?.from?.[0]
       const fromAddress = (fromRaw?.address || '').toLowerCase()
       const fromName = fromRaw?.name || null
-      const toAddress = (msg.envelope?.to?.[0]?.address || acct.user).toLowerCase()
+      const toAddress = (msg.envelope?.to?.[0]?.address || user).toLowerCase()
       const subject = msg.envelope?.subject || ''
       const receivedAt = (msg.envelope?.date || new Date()).toISOString()
-      const body = msg.source instanceof Buffer ? msg.source.toString('utf8').slice(0, 8000) : ''
+
+      // Skip mail FROM her own address (sent-mail loops).
+      if (fromAddress === user.toLowerCase()) { skipped += 1; continue }
+
+      let body = ''
+      let bodyHtml: string | null = null
+      if (msg.source instanceof Buffer) {
+        try {
+          const parsed = await simpleParser(msg.source)
+          body = (parsed.text || '').trim().slice(0, 4000)
+          const html = typeof parsed.html === 'string' ? parsed.html.trim() : ''
+          if (html) bodyHtml = html.slice(0, 32_000)
+          if (!body) {
+            const raw = msg.source.toString('utf8')
+            const splitIdx = raw.search(/\r?\n\r?\n/)
+            body = (splitIdx >= 0 ? raw.slice(splitIdx + 2) : raw).trim().slice(0, 4000)
+          }
+        } catch (e) { errors.push(`mailparser ${messageId}: ${(e as Error).message}`) }
+      }
 
       const vendor = await findVendorByEmail(supabase, fromAddress)
 
-      // Land the email in inbound_emails (self-contained store). The legacy
-      // mail_messages + wa_threads channel pipeline (upsert_thread) was never
-      // shipped to prod, so we do NOT depend on it. status='new' feeds the
-      // email->WhatsApp management loop (notify Samreen + draft reply).
+      // Upsert thread by peer_email (mirrors support-mail-fetcher).
+      let threadId: string | null = null
       try {
-        const { error: insErr } = await supabase.from('inbound_emails').insert({
-          account: acct.label,
-          message_id: messageId,
-          from_address: fromAddress,
-          from_name: fromName,
-          to_address: toAddress,
-          subject,
-          body,
-          received_at: receivedAt,
-          vendor_application_id: vendor?.id ?? null,
-          status: 'new',
-        })
-        if (insErr) {
-          const code = (insErr as { code?: string }).code
-          if (code !== '23505') { report.errors.push(`insert ${messageId}: ${insErr.message}`); continue }
-          // 23505 = already imported (idempotent). Fine.
+        const { data: existing } = await supabase.from('support_inbox_threads').select('id,unread_count').eq('peer_email', fromAddress).maybeSingle()
+        if (existing) {
+          threadId = (existing as { id: string }).id
+          await supabase.from('support_inbox_threads').update({
+            peer_name: fromName, subject, status: 'open', snoozed_until: null,
+            last_inbound_at: receivedAt, unread_count: ((existing as { unread_count: number }).unread_count ?? 0) + 1,
+            vendor_application_id: vendor?.id ?? null,
+          }).eq('id', threadId)
         } else {
-          report.written += 1
+          const { data: inserted, error: insErr } = await supabase.from('support_inbox_threads').insert({
+            peer_email: fromAddress, peer_name: fromName, subject, status: 'open',
+            last_inbound_at: receivedAt, unread_count: 1, vendor_application_id: vendor?.id ?? null,
+          }).select('id').single()
+          if (insErr) throw insErr
+          threadId = (inserted as { id: string }).id
         }
-      } catch (e) {
-        report.errors.push(`insert ${messageId}: ${(e as Error).message}`)
-        continue
-      }
+      } catch (e) { errors.push(`thread upsert ${fromAddress}: ${(e as Error).message}`); continue }
 
-      // Mark seen ONLY for the system box, and only after the row is durable.
-      if (acct.markSeen) {
-        try { await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }) } catch (e) { report.errors.push(`flag seen ${uid}: ${(e as Error).message}`) }
-      }
+      try {
+        const { error: msgErr } = await supabase.from('support_inbox_messages').insert({
+          thread_id: threadId, direction: 'in', from_address: fromAddress, from_name: fromName,
+          to_address: toAddress, subject, body_text: body, body_html: bodyHtml, message_id: messageId,
+          in_reply_to: inReplyTo, provider: 'gmail', received_at: receivedAt,
+        })
+        if (msgErr) {
+          const code = (msgErr as { code?: string }).code
+          if (code !== '23505') { errors.push(`message insert ${messageId}: ${msgErr.message}`); continue }
+        } else { written += 1 }
+      } catch (e) { errors.push(`message insert ${messageId}: ${(e as Error).message}`); continue }
     }
   } catch (e) {
-    report.errors.push(`loop (${acct.label}): ${(e as Error).message}`)
-    console.error(JSON.stringify({ at: 'mail-fetcher', account: acct.label, event: 'loop_error', error: (e as Error).message }))
+    errors.push(`loop: ${(e as Error).message}`)
   } finally {
     if (lock) { try { lock.release() } catch { /* swallow */ } }
     await client.logout().catch(async () => { try { await client.close() } catch { /* swallow */ } })
   }
 
-  return report
-}
-
-interface FetcherReport {
-  ok: boolean
-  fetched: number
-  written: number
-  skipped: number
-  errors: string[]
-  accounts: AccountReport[]
-  durationMs: number
-}
-
-export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
-  const started = Date.now()
-
-  if (!verifyCronAuth(req.headers.get('authorization'))) {
-    console.warn(JSON.stringify({ at: 'mail-fetcher', event: 'unauthorized' }))
-    return NextResponse.json(
-      { ok: false, fetched: 0, written: 0, skipped: 0, errors: ['unauthorized'], accounts: [], durationMs: 0 },
-      { status: 401 }
-    )
-  }
-
-  const { accounts, configErrors } = buildAccounts()
-  if (accounts.length === 0) {
-    return NextResponse.json(
-      { ok: false, fetched: 0, written: 0, skipped: 0, errors: ['no mail account configured', ...configErrors], accounts: [], durationMs: Date.now() - started },
-      { status: 500 }
-    )
-  }
-
-  const supabase = createAdminClient()
-  const reports: AccountReport[] = []
-  // Sequential: keep memory + concurrent IMAP connections bounded.
-  for (const acct of accounts) {
-    reports.push(await fetchAccount(acct, supabase))
-  }
-
-  const fetched = reports.reduce((s, r) => s + r.fetched, 0)
-  const written = reports.reduce((s, r) => s + r.written, 0)
-  const skipped = reports.reduce((s, r) => s + r.skipped, 0)
-  const errors = [...configErrors, ...reports.flatMap((r) => r.errors)]
   const durationMs = Date.now() - started
-
-  console.log(JSON.stringify({ at: 'mail-fetcher', event: 'run_complete', accounts: reports.map((r) => ({ label: r.label, fetched: r.fetched, written: r.written, skipped: r.skipped, errs: r.errors.length })), durationMs }))
-
-  return NextResponse.json({ ok: errors.length === 0, fetched, written, skipped, errors, accounts: reports, durationMs })
+  console.log(JSON.stringify({ at: 'gmail-fetcher', event: 'run_complete', fetched, written, skipped, errorCount: errors.length, durationMs }))
+  return NextResponse.json({ ok: errors.length === 0, account: 'gmail', fetched, written, skipped, errors, durationMs })
 }
