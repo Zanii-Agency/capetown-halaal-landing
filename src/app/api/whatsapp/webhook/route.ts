@@ -357,10 +357,16 @@ async function handleInbound(msg: {
       try {
         const pendingEmail = await pendingEmailForAdmin(e164)
         if (pendingEmail) {
-          const { reply: emReply } = await handleEmailConfirm(pendingEmail, msg.text)
-          const er = await sendText(e164, emReply)
-          await logMessage({ direction: 'out', wa_phone: e164, body: emReply, status: er.skipped ? 'failed' : 'sent', providerMessageId: er.messageId })
-          return
+          const r = await handleEmailConfirm(pendingEmail, msg.text)
+          // Only act + stop when she actually used a concierge verb (SEND/SEND:/
+          // SKIP). Any other message (stats, a blast confirm, anything) falls
+          // THROUGH to normal admin chat and leaves the email pending — so an
+          // unrelated message can never fire an email (skeptic CRITICAL #2).
+          if (r.recognized) {
+            const er = await sendText(e164, r.reply)
+            await logMessage({ direction: 'out', wa_phone: e164, body: r.reply, status: er.skipped ? 'failed' : 'sent', providerMessageId: er.messageId })
+            return
+          }
         }
       } catch (e) {
         console.error('[email-concierge] confirm handling failed:', (e as Error).message)

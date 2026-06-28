@@ -151,7 +151,7 @@ export async function GET(req: Request) {
         const { error: msgErr } = await supabase.from('support_inbox_messages').insert({
           thread_id: threadId, direction: 'in', from_address: fromAddress, from_name: fromName,
           to_address: toAddress, subject, body_text: body, body_html: bodyHtml, message_id: messageId,
-          in_reply_to: inReplyTo, provider: 'imap', received_at: receivedAt,
+          in_reply_to: inReplyTo, provider: 'imap', mailbox: 'gmail', received_at: receivedAt,
         })
         if (msgErr) {
           const code = (msgErr as { code?: string }).code
