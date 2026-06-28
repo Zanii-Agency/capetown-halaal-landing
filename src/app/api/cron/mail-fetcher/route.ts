@@ -181,32 +181,22 @@ async function fetchAccount(
 
       const vendor = await findVendorByEmail(supabase, fromAddress)
 
-      let threadId: string | null = null
+      // Land the email in inbound_emails (self-contained store). The legacy
+      // mail_messages + wa_threads channel pipeline (upsert_thread) was never
+      // shipped to prod, so we do NOT depend on it. status='new' feeds the
+      // email->WhatsApp management loop (notify Samreen + draft reply).
       try {
-        const { data: tid, error: rpcErr } = await supabase.rpc('upsert_thread', {
-          p_channel: 'mail',
-          p_key: fromAddress,
-          p_inbound_at: receivedAt,
-        })
-        if (rpcErr) throw rpcErr
-        threadId = (tid as string) ?? null
-      } catch (e) {
-        report.errors.push(`thread upsert ${fromAddress}: ${(e as Error).message}`)
-        continue
-      }
-
-      try {
-        const { error: insErr } = await supabase.from('mail_messages').insert({
-          thread_id: threadId,
+        const { error: insErr } = await supabase.from('inbound_emails').insert({
+          account: acct.label,
           message_id: messageId,
           from_address: fromAddress,
           from_name: fromName,
           to_address: toAddress,
           subject,
           body,
-          direction: 'inbound',
-          vendor_application_id: vendor?.id ?? null,
           received_at: receivedAt,
+          vendor_application_id: vendor?.id ?? null,
+          status: 'new',
         })
         if (insErr) {
           const code = (insErr as { code?: string }).code
