@@ -282,19 +282,33 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Phone-keyed WhatsApp read markers — persist "read" for EVERY WhatsApp thread
+  // (vendor or not). digits-only key, matching the contact's phone digits.
+  const waRead = new Map<string, string>()
+  {
+    const { data: wr } = await db.from('wa_read_state').select('wa_phone, read_at')
+    for (const r of (wr || []) as Array<{ wa_phone: string; read_at: string }>) {
+      waRead.set(r.wa_phone.replace(/\D/g, ''), r.read_at)
+    }
+  }
+
   // Derive unread: the latest message is inbound AND it arrived AFTER the thread
-  // was last marked read (read_at). So "mark read" clears the badge, and a NEW
-  // inbound message (newer than read_at) re-flags it. read_at is null until the
-  // operator reads it, so a never-read inbound thread is unread (prior behaviour).
-  // Email keeps its existing behaviour (read_at null => last_direction drives it,
-  // and last_direction is set from unread_count above).
-  const list = Array.from(contacts.values()).map((c) => ({
-    ...c,
-    unread:
-      c.last_direction === 'in' &&
-      (!c.read_at || !c.last_message_at || new Date(c.last_message_at) > new Date(c.read_at)),
-    bot_paused: c.phone ? (handoverPaused.get(norm(c.phone)) ?? false) : false,
-  }))
+  // was last marked read. read_at comes from the phone-keyed wa_read_state for
+  // WhatsApp (works for all threads), falling back to the vendor_tickets read_at.
+  // So "mark read" clears the badge AND a newer inbound message re-flags it.
+  // Email keeps its behaviour (last_direction set from unread_count above).
+  const list = Array.from(contacts.values()).map((c) => {
+    const phoneDigits = c.phone ? c.phone.replace(/\D/g, '') : ''
+    const readAt = (phoneDigits && waRead.get(phoneDigits)) || c.read_at
+    return {
+      ...c,
+      read_at: readAt,
+      unread:
+        c.last_direction === 'in' &&
+        (!readAt || !c.last_message_at || new Date(c.last_message_at) > new Date(readAt)),
+      bot_paused: c.phone ? (handoverPaused.get(norm(c.phone)) ?? false) : false,
+    }
+  })
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
 
   const counts = {

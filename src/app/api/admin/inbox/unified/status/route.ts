@@ -128,5 +128,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // WhatsApp read marker, phone-keyed. Works for EVERY WhatsApp thread, including
+  // non-vendor / unknown numbers that have no vendor_tickets row — so "read"
+  // actually persists across reloads for all of them, not just vendors.
+  if (body.phone && (action === 'read' || action === 'unread')) {
+    const digits = body.phone.replace(/\D/g, '')
+    if (digits) {
+      if (action === 'read') {
+        await db.from('wa_read_state').upsert({ wa_phone: digits, read_at: new Date().toISOString() }, { onConflict: 'wa_phone' })
+      } else {
+        await db.from('wa_read_state').delete().eq('wa_phone', digits)
+      }
+      touched++
+    }
+  }
+
   return NextResponse.json({ ok: true, action, touched })
 }

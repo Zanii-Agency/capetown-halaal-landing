@@ -51,6 +51,7 @@ interface CommItem {
   from: string
   subject?: string
   media?: MediaInfo
+  pending?: boolean   // optimistic outbound, not yet confirmed by the server
 }
 
 interface Operator { id: string; email: string }
@@ -421,9 +422,19 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
 
+  // Auto-scroll to the newest message ONLY when the thread just opened, or when
+  // the operator is already near the bottom. If they scrolled up to read older
+  // messages, a background poll must NOT yank them back down (that was the main
+  // "unstable" feel). Native-WhatsApp behaviour.
+  const scrolledThreadRef = useRef<string | null>(null)
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [messages])
+    const el = scrollRef.current
+    if (!el) return
+    const switched = scrolledThreadRef.current !== activeId
+    scrolledThreadRef.current = activeId
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140
+    if (switched || nearBottom) el.scrollTop = el.scrollHeight
+  }, [messages, activeId])
 
   // Auto-grow the composer with its content, up to ~8 lines, so a multi-line
   // reply is fully visible without scrolling inside a tiny box.
@@ -448,6 +459,18 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
 
   const submitReply = useCallback(async () => {
     if (!active || (!reply.trim() && !attachment)) return
+    const text = reply.trim()
+    const hadAttachment = !!attachment
+    // OPTIMISTIC: show the reply immediately + clear the box, like WhatsApp. The
+    // server reload reconciles it (replaces the temp with the real row).
+    const tempId = `temp:${Date.now()}`
+    if (text) {
+      setMessages((prev) => [...prev, {
+        id: tempId, channel: replyChannel, direction: 'out', body: text,
+        at: new Date().toISOString(), from: 'You', pending: true,
+      }])
+    }
+    setReply(''); setAttachment(null)
     setSending(true); setSendMsg(null)
     try {
       const res = await fetch('/api/admin/inbox/unified/reply', {
@@ -456,18 +479,26 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
           channel: replyChannel,
           phone: replyChannel === 'whatsapp' ? active.phone : undefined,
           email: replyChannel === 'email' ? active.email : undefined,
-          text: reply.trim() || undefined,
-          attachment: attachment || undefined,
+          text: text || undefined,
+          attachment: hadAttachment ? attachment : undefined,
         }),
       })
       const j = await res.json().catch(() => ({}))
       if (!res.ok || j.ok === false) {
+        // Roll back the optimistic bubble + restore the text so she can retry.
+        setMessages((prev) => prev.filter((m) => m.id !== tempId))
+        if (text) setReply(text)
         setSendMsg(j.message || j.error || 'Send failed.')
         if (j.windowClosed) setWindowClosed(true)
         return
       }
-      setReply(''); setAttachment(null); setWindowClosed(false); await loadMessages(active)
-    } catch { setSendMsg('Send failed.') } finally { setSending(false) }
+      setWindowClosed(false)
+      await loadMessages(active)
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId))
+      if (text) setReply(text)
+      setSendMsg('Send failed.')
+    } finally { setSending(false) }
   }, [active, reply, replyChannel, attachment, loadMessages])
 
   // Outside the 24h window: send the same text as an approved announcement template.
