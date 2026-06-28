@@ -406,12 +406,22 @@ export function parseInbound(body: unknown): InboundMessage[] {
       const profileName = contacts[0]?.profile?.name
       for (const msg of value?.messages || []) {
         const media = extractMedia(msg)
+        // Non-text, non-media types (reaction / location / contacts) arrived with
+        // an empty body and showed as "[media message]" / blank in the inbox.
+        // Capture a readable label so they render meaningfully (native feel).
+        const reaction = (msg as { reaction?: { emoji?: string } }).reaction
+        const hasLocation = !!(msg as { location?: unknown }).location
+        const hasContacts = Array.isArray((msg as { contacts?: unknown[] }).contacts)
+        const fallback =
+          reaction?.emoji ? `reacted ${reaction.emoji}` :
+          hasLocation ? '📍 shared a location' :
+          hasContacts ? '📇 shared a contact' : ''
         out.push({
           from: msg.from,
           messageId: msg.id,
           type: msg.type,
           // Use a media caption as the text so a captioned image still reads well.
-          text: msg.text?.body || msg.button?.text || media?.caption || '',
+          text: msg.text?.body || msg.button?.text || media?.caption || fallback || '',
           name: profileName,
           replyToWamid: (msg as { context?: { id?: string } }).context?.id,
           ...(media ? { media } : {}),

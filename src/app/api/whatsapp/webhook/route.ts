@@ -290,6 +290,15 @@ async function handleInbound(msg: {
     return
   }
 
+  // 3-REACTION) Reactions / location / contacts / system messages. These were
+  // logged above (as "reacted 👍", "📍 shared a location", etc.) so the inbox
+  // shows them, but there is NOTHING to auto-reply to. Return before the brain
+  // and the media-ack path, which was wrongly sending "Thanks, I have your
+  // document" to a thumbs-up reaction. (Taona 2026-06-29.)
+  if (msg.type === 'reaction' || msg.type === 'location' || msg.type === 'contacts' || msg.type === 'system' || msg.type === 'unsupported') {
+    return
+  }
+
   // 3a) ADMIN path — bypass the festival LLM and route through the admin chat
   // handler. The handler returns either a structured reply (intent matched —
   // stats query, blast proposal, confirmation, cancellation) or an empty reply
