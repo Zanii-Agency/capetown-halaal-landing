@@ -24,6 +24,7 @@ import { findAdmin, isDevNumber } from '@/lib/bot/admins'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
+import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
 import { isMaintenanceEnabled } from '@/lib/maintenance'
 import { guardReply, logGuardRedaction } from '@/lib/bot/reply-guard'
 import { shouldProcess } from '@/lib/brain-core/index.js'
@@ -336,6 +337,23 @@ async function handleInbound(msg: {
           } catch (e) { console.error('[swipe] cross-mirror failed:', (e as Error).message) }
         }
         return
+      }
+    }
+
+    // EMAIL CONCIERGE: if this admin has an email awaiting their confirm, their
+    // reply (SEND / SEND: <text> / SKIP) acts on THAT email, not normal admin
+    // chat. Takes priority so a "send" isn't swallowed by the chat handler.
+    if (emailConciergeEnabled()) {
+      try {
+        const pendingEmail = await pendingEmailForAdmin(e164)
+        if (pendingEmail) {
+          const { reply: emReply } = await handleEmailConfirm(pendingEmail, msg.text)
+          const er = await sendText(e164, emReply)
+          await logMessage({ direction: 'out', wa_phone: e164, body: emReply, status: er.skipped ? 'failed' : 'sent', providerMessageId: er.messageId })
+          return
+        }
+      } catch (e) {
+        console.error('[email-concierge] confirm handling failed:', (e as Error).message)
       }
     }
 
