@@ -12,7 +12,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { sendText } from '@/lib/whatsapp'
-import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, type InboundEmail } from '@/lib/email-concierge'
+import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, EMAIL_MIRROR, type InboundEmail } from '@/lib/email-concierge'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -100,6 +100,20 @@ export async function GET(req: Request) {
   }
 
   await db.from('support_inbox_messages').update({ concierge_draft: draft || null }).eq('id', email.id)
+
+  // Mirror to Taona (FYI only; Samreen is handling/confirming). Best-effort, one
+  // compact message so he sees every email come in without being the confirmer.
+  try {
+    const mirror =
+      `👀 Mirror (Samreen is handling): email on ${box}\n` +
+      `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
+      `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
+      `"${snippet.slice(0, 350)}"` +
+      (draft ? `\n\nDraft: ${draft.slice(0, 450)}` : '')
+    await sendText(EMAIL_MIRROR.phone, mirror)
+  } catch (e) {
+    console.warn('[email-concierge] mirror to Taona failed:', (e as Error).message)
+  }
 
   return NextResponse.json({
     ok: !r1.skipped && !r2.skipped,

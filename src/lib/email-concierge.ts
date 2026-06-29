@@ -22,6 +22,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const EMAIL_CONFIRMER = { name: 'Samreen', phone: '+27723803393' }
+// Taona gets a MIRROR (FYI) of every email notification, but does NOT confirm —
+// only the confirmer (Samreen) is set as concierge_admin, so his replies go to
+// normal admin chat, never act on the email.
+export const EMAIL_MIRROR = { name: 'Taona', phone: '+971501168462' }
 
 export function emailConciergeEnabled(): boolean {
   return (process.env.EMAIL_CONCIERGE || '').toLowerCase() === 'on'
