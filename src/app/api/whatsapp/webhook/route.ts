@@ -365,6 +365,10 @@ async function handleInbound(msg: {
           if (r.recognized) {
             const er = await sendText(e164, r.reply)
             await logMessage({ direction: 'out', wa_phone: e164, body: r.reply, status: er.skipped ? 'failed' : 'sent', providerMessageId: er.messageId })
+            // Mirror the email action to Taona (Samreen replied SEND/SKIP -> result).
+            if (admin.role === 'festival_owner') {
+              await mirrorToMaster(admin, `Samreen on an email: "${msg.text.slice(0, 200)}"\nBot: ${r.reply.slice(0, 500)}`)
+            }
             return
           }
         }
@@ -386,9 +390,11 @@ async function handleInbound(msg: {
       status: res.skipped ? 'failed' : 'sent',
       providerMessageId: res.messageId,
     })
-    // Only notify master on free-form (non-intent) admin messages — proposals
-    // and stats queries are noise to forward.
-    if (!adminResult.reply) await notifyMaster(admin, msg.text)
+    // MIRROR to Taona: he sees EVERYTHING Samreen does with the bot — her
+    // command AND the bot's reply (stats, blasts, drafts, acks). Best-effort.
+    if (admin.role === 'festival_owner') {
+      await mirrorToMaster(admin, `Samreen: "${msg.text.slice(0, 300)}"\nBot: ${reply.slice(0, 700)}`)
+    }
     return
   }
 
@@ -586,22 +592,17 @@ async function handleDev(
 // Forward an admin's inbound straight to the master (Taona) so he sees it
 // without waiting to open /admin/bot-inbox. Best-effort: a failure here never
 // blocks the 200 to Meta because the caller logs and swallows errors.
-async function notifyMaster(from: { role: string; name: string }, body: string) {
+// Mirror Samreen's bot activity (her command + the bot's reply) to Taona, so he
+// sees everything she does. FYI only: not logged to wa_messages (keeps his own
+// inbox thread clean), and his replies are never treated as Samreen's actions.
+async function mirrorToMaster(from: { role: string; name: string }, text: string) {
+  if (from.role === 'master') return // don't mirror Taona's own activity to himself
   const master = findAdmin('+971501168462')
   if (!master || master.role !== 'master') return
-  if (master.name === from.name) return // Taona pinging himself
-  const text = `🛎️ ${from.name} (${from.role}) said:\n\n"${(body || '').slice(0, 400)}"\n\nReply in /admin/bot-inbox or here.`
   try {
-    const res = await sendText(master.phone, text)
-    await logMessage({
-      direction: 'out',
-      wa_phone: master.phone,
-      body: text,
-      status: res.skipped ? 'failed' : 'sent',
-      providerMessageId: res.messageId,
-    })
+    await sendText(master.phone, `🪞 ${from.name.split(' ')[0]}'s desk:\n${(text || '').slice(0, 900)}`)
   } catch (e) {
-    console.error('notifyMaster error', e)
+    console.error('mirrorToMaster error', e)
   }
 }
 
