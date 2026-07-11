@@ -177,6 +177,27 @@ async function wcPost<T>(endpoint: string, body: Record<string, unknown>): Promi
   return res.json()
 }
 
+async function wcPut<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
+  if (!WC_KEY || !WC_SECRET) {
+    throw new Error('WooCommerce credentials missing. Set WC_CONSUMER_KEY and WC_CONSUMER_SECRET.')
+  }
+  const url = new URL(`${WC_BASE}${endpoint}`)
+  url.searchParams.set('consumer_key', WC_KEY)
+  url.searchParams.set('consumer_secret', WC_SECRET)
+  const res = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  })
+  if (!res.ok) {
+    const txt = await res.text().catch(() => 'no body')
+    console.error(`WooCommerce PUT ${endpoint} failed: ${res.status}`, txt)
+    throw new Error(`WooCommerce PUT ${endpoint} failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 async function wcGet<T>(endpoint: string): Promise<T> {
   if (!WC_KEY || !WC_SECRET) {
     throw new Error('WooCommerce credentials missing. Set WC_CONSUMER_KEY and WC_CONSUMER_SECRET.')
@@ -236,6 +257,35 @@ function pluckFooEventsTicketId(meta: WCOrderMeta[] | undefined): string | undef
  * which our WP hook reposts as base64).
  */
 export async function createStaffBadgeOrder(input: CreateStaffOrderInput): Promise<WCOrderCreatedResult> {
+  // FooEvents ticket blueprint (KT #206653). FooEvents mints a ticket/badge only
+  // when the order carries this WooCommerceEventsOrderTickets structure — the same
+  // shape the checkout builds for a normal ticket buyer. A REST order without it
+  // creates the order but NO badge (the old bug: order made, nothing to print).
+  // Verified live: order WITH this + a pending->completed transition sets
+  // WooCommerceEventsTicketsGenerated=yes; without it, no generation.
+  const [staffFirst, ...staffRest] = (input.staff.name || 'Staff').trim().split(/\s+/)
+  const staffLast = staffRest.join(' ')
+  const orderTickets = {
+    '1': {
+      '1': {
+        WooCommerceEventsProductID: String(STAFF_BADGE_PRODUCT_ID),
+        WooCommerceEventsOrderID: '0', // patched to the real id after creation
+        WooCommerceEventsTicketType: '',
+        WooCommerceEventsStatus: 'Paid',
+        WooCommerceEventsCustomerID: '0',
+        WooCommerceEventsAttendeeName: staffFirst || 'Staff',
+        WooCommerceEventsAttendeeLastName: staffLast,
+        WooCommerceEventsAttendeeEmail: input.vendorEmail,
+        WooCommerceEventsAttendeeTelephone: input.vendorPhone,
+        WooCommerceEventsAttendeeCompany: input.vendorBusinessName,
+        WooCommerceEventsAttendeeDesignation: input.staff.role,
+        WooCommerceEventsVariations: '',
+        WooCommerceEventsVariationID: '',
+        WooCommerceEventsPrice: '',
+      },
+    },
+  }
+
   const meta: WCOrderMeta[] = [
     { key: 'staff_name', value: input.staff.name },
     { key: 'staff_id_number', value: input.staff.id_number },
@@ -245,15 +295,20 @@ export async function createStaffBadgeOrder(input: CreateStaffOrderInput): Promi
     { key: 'vendor_portal_staff_id', value: input.staff.portalStaffId },
     { key: 'stall_code', value: input.stallCode || '' },
     { key: '_is_staff_badge', value: '1' },
+    { key: 'WooCommerceEventsOrderTickets', value: orderTickets as unknown as string },
+    { key: 'WooCommerceEventsTicketsPurchased', value: { [String(STAFF_BADGE_PRODUCT_ID)]: 1 } as unknown as string },
   ]
 
   const body = {
-    status: 'completed',
-    set_paid: true,
+    // Create PENDING, then transition to completed below. FooEvents generates on
+    // the woocommerce_order_status_completed TRANSITION; an order born 'completed'
+    // via REST does not fire that hook, so it must transition.
+    status: 'pending',
+    set_paid: false,
     customer_note: `Staff badge for ${input.vendorBusinessName}${input.stallCode ? ` (stall ${input.stallCode})` : ''}`,
     billing: {
-      first_name: input.vendorFirstName,
-      last_name: input.vendorLastName || input.vendorBusinessName,
+      first_name: staffFirst || input.vendorFirstName,
+      last_name: staffLast || input.vendorLastName || input.vendorBusinessName,
       email: input.vendorEmail,
       phone: input.vendorPhone,
       address_1: input.stallCode ? `Vendor stall ${input.stallCode}` : 'Vendor stall (unallocated)',
@@ -265,7 +320,15 @@ export async function createStaffBadgeOrder(input: CreateStaffOrderInput): Promi
     meta_data: meta,
   }
 
-  const order = await wcPost<WCOrderRaw>('/orders', body)
+  const created = await wcPost<WCOrderRaw>('/orders', body)
+  // Patch the real order id into the blueprint, then transition to completed to
+  // fire FooEvents generation. The returned completed order is what we poll.
+  orderTickets['1']['1'].WooCommerceEventsOrderID = String(created.id)
+  const order = await wcPut<WCOrderRaw>(`/orders/${created.id}`, {
+    status: 'completed',
+    set_paid: true,
+    meta_data: [{ key: 'WooCommerceEventsOrderTickets', value: orderTickets as unknown as string }],
+  })
 
   // Poll briefly for FooEvents ticket generation (the hook runs on status
   // completed, but on a busy WP host the post insert can lag by 1–6 seconds).
