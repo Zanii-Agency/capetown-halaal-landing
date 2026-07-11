@@ -227,7 +227,7 @@ export function intentFaqKeys(intent: Intent): import('./faq').FaqKey[] {
     case 'vendor_docs':
       return ['halaal_cert', 'contact']
     case 'vendor_payment':
-      return ['stall_sizes', 'contact']
+      return ['vendor_payment_method', 'stall_sizes', 'contact']
     case 'sponsorship':
       return ['contact', 'dates', 'venue']
     case 'general_inquiry':

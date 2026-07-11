@@ -32,6 +32,7 @@ export type FaqKey =
   | 'accessibility'
   | 'ticket_collection'
   | 'ticket_scan_issue'
+  | 'vendor_payment_method'
 
 export interface FaqEntry {
   key: FaqKey
@@ -211,6 +212,23 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
       'Payment is by major credit and debit cards (Visa, Mastercard), and cash at the event. There is no booking fee for online or in-person purchases.',
     answer:
       'We accept major credit and debit cards (Visa, Mastercard) and cash at the event. There is no booking fee for either online or in-person purchases.',
+  },
+  // Vendor-side payment (stall fee), NOT the ticket_buyer payment_methods entry
+  // above. CTH does not accept EFT/bank transfer, ever (hard rule 2026-07-11:
+  // a production bot invented "the team will send EFT details" and left a
+  // vendor stuck waiting for a payment method that doesn't exist). Card only,
+  // via the Yoco link in the exhibitor portal.
+  vendor_payment_method: {
+    key: 'vendor_payment_method',
+    patterns: [
+      /\b(eft|bank\s*(details|account|transfer)|swift|account\s*number)\b/i,
+      /\bhow (can|do) i pay\b.*\b(stall|stand|fee|invoice)\b/i,
+      /\b(stall|stand|fee|invoice).{0,15}\bpay\b/i,
+    ],
+    fact:
+      'Vendor stall fees are paid by card only (Yoco), through the exhibitor portal at cthalaal.co.za/exhibitor/login. There is no EFT or bank transfer option.',
+    answer:
+      'There is no EFT or bank transfer option for stall fees, sorry for any confusion. Payment is by card only (Yoco), through your exhibitor portal at cthalaal.co.za/exhibitor/login. Log in, open your invoice, and pay there. If you cannot access the portal, reply here and the team will send you the Yoco payment link directly.',
   },
   gate_tickets: {
     key: 'gate_tickets',

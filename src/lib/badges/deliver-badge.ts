@@ -21,7 +21,7 @@ export interface DeliverResult {
  * resend), sendMedia delivers the PDF straight to WhatsApp.
  */
 export async function deliverBadge(
-  input: BadgeInput & { vendorPhone?: string; vendorEmail?: string },
+  input: BadgeInput & { vendorPhone?: string; vendorEmail?: string; intro?: string },
 ): Promise<DeliverResult> {
   const pdf = await renderBadgePdf(input)
   if (!pdf) return { pdf: false, email: false, whatsapp: 'render_failed' }
@@ -37,7 +37,7 @@ export async function deliverBadge(
         to: input.vendorEmail,
         subject: `Staff badge for ${input.name}, Young at Heart 2026`,
         text:
-          `Hi,\n\nAttached is the festival staff gate pass for ${input.name} (${input.role}) at ${input.businessName}` +
+          `Hi,\n\n${input.intro ? `${input.intro}\n\n` : ''}Attached is the festival staff gate pass for ${input.name} (${input.role}) at ${input.businessName}` +
           `${input.stall ? `, stall ${input.stall}` : ''}.\n\n` +
           `Print it or show it on a phone. The QR code is scanned at the gate. Pass number ${input.wcOrderId}.\n\n` +
           `See you 11 to 13 December 2026 at Youngsfield Military Base.\n\nYoung at Heart Festival`,

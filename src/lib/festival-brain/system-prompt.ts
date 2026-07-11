@@ -69,7 +69,7 @@ const INTENT_HINTS: Partial<Record<Intent, string>> = {
   vendor_application: 'User wants to be a vendor. Send them to cthalaal.co.za/apply. Mention halaal cert is required for food vendors.',
   vendor_status: 'User is asking about an existing application. Report the sender\'s OWN application status and the exact NEXT STEP from the ABOUT THE SENDER block. Do not deflect; do not say you cannot access applications.',
   vendor_docs: 'User is asking about documents. Required: halaal cert (food vendors), ID/company reg, public liability if applicable. Direct uploads via the application portal.',
-  vendor_payment: 'User is asking about payment. Do not invent banking details. Confirm the team will send EFT details via email after approval.',
+  vendor_payment: 'User is asking about payment. Payment is by card ONLY (Yoco), paid in the exhibitor portal at cthalaal.co.za/exhibitor/login. There is NO EFT / bank transfer option, ever. NEVER promise bank details or say "the team will send EFT details" (this happened in production and left a vendor stuck waiting for a payment method that does not exist). If they ask for bank details, tell them plainly there is no EFT, then send them to the portal to pay by card, or offer to have the team send the Yoco payment link if they cannot access the portal.',
   sponsorship: 'User is asking about sponsorship. Do not invent packages. Offer to connect them with the partnerships team at support@youngatheart.co.za.',
   general_inquiry: 'General festival question. Stick to hard facts and grounding block.',
 }
