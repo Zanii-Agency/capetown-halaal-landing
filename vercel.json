@@ -3,6 +3,18 @@
     "src/app/api/exhibitor/portal/marketing/**/route.ts": {
       "memory": 3009,
       "maxDuration": 60
+    },
+    "src/app/api/exhibitor/staff/route.ts": {
+      "memory": 3009,
+      "maxDuration": 60
+    },
+    "src/app/api/exhibitor/staff/resend/route.ts": {
+      "memory": 3009,
+      "maxDuration": 60
+    },
+    "src/app/api/exhibitor/portal/invoice/**/route.ts": {
+      "memory": 3009,
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -37,6 +49,10 @@
     {
       "path": "/api/cron/email-concierge",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-yoco",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
