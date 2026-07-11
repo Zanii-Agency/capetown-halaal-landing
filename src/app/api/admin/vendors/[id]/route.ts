@@ -29,6 +29,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { TIER_META, parseAllocation } from '@/lib/stalls'
 import { parsePortalState, updatePortalStateImpl } from '@/lib/portal-state'
+import { syncExhibitorAuth } from '@/lib/exhibitor-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -208,12 +209,27 @@ export async function PATCH(
       return NextResponse.json({ error: updErr?.message || 'Update failed' }, { status: 500 })
     }
 
+    // Propagate the amend to the Supabase Auth login identity. The vendor logs in
+    // via auth.users.email — a store separate from vendor_applications.email — so
+    // an email edit here must move the login too, or the vendor is silently locked
+    // out (corrected email, no account answers to it). Look up by the OLD email
+    // (before.email) which is what the auth account answered to. Non-fatal.
+    let authSync: { updated: boolean; userId?: string; error?: string } | undefined
+    if (changed.includes('email') || changed.includes('business_name')) {
+      authSync = await syncExhibitorAuth({
+        oldEmail: (before as { email?: string }).email || '',
+        newEmail: changed.includes('email') ? (after.email as string) : undefined,
+        businessName: changed.includes('business_name') ? (after.business_name as string) : undefined,
+      })
+      if (authSync.error) console.warn('[vendors PATCH] auth sync error:', authSync.error)
+    }
+
     // Audit row — never block the response on a logging failure.
     try {
       await db.from('vendor_application_events').insert({
         application_id: id,
         event_type: 'vendor_amended',
-        after_value: { changed, fields: update },
+        after_value: { changed, fields: update, auth_sync: authSync ?? null },
         actor_email: actorEmail,
         actor_role: 'operator',
         note: `Amended ${changed.join(', ')}`,
@@ -222,7 +238,7 @@ export async function PATCH(
       console.warn('[vendors PATCH] event log insert failed:', (e as Error).message)
     }
 
-    return NextResponse.json({ ok: true, updated: after, changed })
+    return NextResponse.json({ ok: true, updated: after, changed, authSync })
   } catch (err) {
     console.error('[vendors PATCH] error:', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

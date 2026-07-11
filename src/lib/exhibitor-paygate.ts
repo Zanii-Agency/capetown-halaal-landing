@@ -52,6 +52,21 @@ export async function requirePaid(): Promise<void> {
 }
 
 /**
+ * Gate a page an APPROVED vendor may use regardless of whether they have signed,
+ * paid, or been allocated. The stall-request pages use this (NOT requirePaid):
+ * a vendor must be able to change their stall SIZE (tier) or request a different
+ * stall POSITION as soon as they are approved — before the contract locks their
+ * fee and before allocation. Non-approved applications go back to the overview.
+ */
+export async function requireApproved(): Promise<void> {
+  const ctx = await getExhibitorContext()
+  if (!ctx?.application) return // layout redirects to login
+  if (ctx.application.status !== 'approved') {
+    redirect('/exhibitor/portal')
+  }
+}
+
+/**
  * Gate the /payments page itself: a vendor must sign the contract before they
  * can pay. An approved, unsigned vendor is sent to /contract. (Does not gate on
  * payment, since this is where they pay.)

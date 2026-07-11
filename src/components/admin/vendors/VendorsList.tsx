@@ -15,6 +15,10 @@ export interface VendorRow {
   phone: string | null
   categories: string[]
   tier_label: string
+  stall_type: string
+  appliances: string
+  appliance_details: string
+  uses_gas: string
   stall: string | null
   stall_status: string | null
   payment_status: string
@@ -45,7 +49,7 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
   const [viewMode, setViewMode] = useState<'table' | 'pipeline'>('table')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [composerOpen, setComposerOpen] = useState(false)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting] = useState<false | 'csv' | 'xlsx'>(false)
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -67,13 +71,14 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
     })
   }
 
-  async function exportCsv() {
-    setExporting(true)
+  async function runExport(kind: 'csv' | 'xlsx') {
+    setExporting(kind)
     try {
       const params = new URLSearchParams()
       if (selected.size > 0) params.set('ids', Array.from(selected).join(','))
       else params.set('status', 'approved')
-      const url = `/api/admin/vendors/csv?${params.toString()}`
+      const path = kind === 'xlsx' ? 'export' : 'csv'
+      const url = `/api/admin/vendors/${path}?${params.toString()}`
       // Fetch first, check res.ok, only download on success. An error body
       // must NEVER be saved to disk (was saving the JSON error as csv.json).
       const res = await fetch(url, { credentials: 'same-origin' })
@@ -97,7 +102,7 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
       const objectUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = objectUrl
-      a.download = `vendors-${new Date().toISOString().slice(0, 10)}.csv`
+      a.download = `vendors-${new Date().toISOString().slice(0, 10)}.${kind === 'xlsx' ? 'xlsx' : 'csv'}`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -168,12 +173,21 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
         </button>
         <button
           type="button"
-          onClick={exportCsv}
-          disabled={exporting}
+          onClick={() => runExport('xlsx')}
+          disabled={!!exporting}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border border-[#1f7050] bg-[#1f7050] text-white hover:bg-[#1a5e43] disabled:opacity-60"
+        >
+          {exporting === 'xlsx' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+          Export Excel ({selected.size > 0 ? `${selected.size} selected` : 'all approved'})
+        </button>
+        <button
+          type="button"
+          onClick={() => runExport('csv')}
+          disabled={!!exporting}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border border-neutral-300 text-neutral-700 hover:border-neutral-500 disabled:opacity-60"
         >
-          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-          Export CSV ({selected.size > 0 ? `${selected.size} selected` : 'all approved'})
+          {exporting === 'csv' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+          CSV
         </button>
         {selected.size > 0 && (
           <button
@@ -255,6 +269,7 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
                 <th className="px-4 py-2 w-28">Payment</th>
                 <th className="px-4 py-2 w-24">Contract</th>
                 <th className="px-4 py-2 w-16">Docs</th>
+                <th className="px-4 py-2 max-w-[220px]">Appliances</th>
                 <th className="px-4 py-2">Blockers</th>
               </tr>
             </thead>
@@ -282,7 +297,7 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
                     >
                       {r.business_name}
                     </Link>
-                    <p className="text-[11px] text-neutral-500 truncate">{r.tier_label}</p>
+                    <p className="text-[11px] text-neutral-500 truncate" title={r.stall_type}>{r.stall_type || r.tier_label}</p>
                   </td>
                   <td className="px-4 py-3 max-w-[180px]">
                     <p className="text-neutral-700 truncate" title={r.contact_name || ''}>
@@ -340,6 +355,15 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
                   </td>
                   <td className="px-4 py-3 text-[12px] tabular-nums text-neutral-700">
                     {r.docs_count}
+                  </td>
+                  <td className="px-4 py-3 max-w-[220px] align-top">
+                    {r.appliances ? (
+                      <p className="text-[11px] text-neutral-700 line-clamp-2" title={`${r.appliances}${r.appliance_details ? `\n\nNotes: ${r.appliance_details}` : ''}${r.uses_gas ? `\n\nGas: ${r.uses_gas}` : ''}`}>
+                        {r.appliances}
+                      </p>
+                    ) : (
+                      <span className="text-[11px] text-neutral-400">none</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {r.blockers.length === 0 ? (

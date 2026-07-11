@@ -42,6 +42,19 @@ export default async function ContractPage() {
         </div>
       )}
 
+      {/* Wrong size? Signing locks the stall fee, so let an approved vendor change
+          the stall size (or request a position) before they commit. Reachable
+          here because the stall-request page gates on approval, not payment. */}
+      {!alreadySigned && (
+        <div className="mb-6 rounded-xl border border-[#cd2653]/20 bg-[#cd2653]/5 p-4 text-sm text-[#1B1A17]">
+          Wrong stall size? You can change your stall size or request a different position{' '}
+          <a href="/exhibitor/portal/stand/change" className="font-semibold text-[#cd2653] underline underline-offset-2">
+            before you sign
+          </a>
+          . Signing locks your stall fee.
+        </div>
+      )}
+
       {/* Contract body */}
       <article className="bg-white rounded-2xl border border-neutral-200 p-8 space-y-7 text-[15px] leading-7 text-neutral-800">
         <p>

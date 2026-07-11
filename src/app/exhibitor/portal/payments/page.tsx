@@ -109,6 +109,19 @@ export default async function PaymentsPage() {
           : 'Your portal unlocks the moment your stall fee clears. Pay by card via Yoco, EFT details on request via support.'}
       />
 
+      {/* Wrong size? Let the vendor change stall size before paying so the fee
+          matches the booth they want. Reachable pre-payment (stall-request page
+          gates on approval, not payment). */}
+      {!fullyPaid && (
+        <div className="rounded-2xl border border-[#cd2653]/20 bg-[#cd2653]/5 p-4 mb-6 text-sm text-[#1B1A17]">
+          Need a bigger or smaller booth? Change your stall size or request a different position{' '}
+          <Link href="/exhibitor/portal/stand/change" className="font-semibold text-[#cd2653] underline underline-offset-2">
+            before you pay
+          </Link>
+          , so your fee matches the stall you want.
+        </div>
+      )}
+
       {/* Countdown banner */}
       {showCountdown && (
         <div className={`rounded-2xl border p-5 mb-6 flex items-start gap-4 ${toneStyles[countdownTone]}`}>

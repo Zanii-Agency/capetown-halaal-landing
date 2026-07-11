@@ -27,7 +27,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalState, type PortalState } from '@/lib/portal-state'
-import { TIER_META, tierLabel } from '@/lib/stalls'
+import { TIER_META, TYPE_META, tierLabel, type StallType } from '@/lib/stalls'
 import { notifyVendor } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
@@ -76,7 +76,27 @@ export async function GET() {
     .filter((r): r is NonNullable<typeof r> => r !== null)
     .sort((a, b) => String(b.requestedAt || '').localeCompare(String(a.requestedAt || '')))
 
-  return NextResponse.json({ requests })
+  // Position/location requests (distinct feature: a different SPOT, not a
+  // different SIZE). Same admin surface so the operator has one queue.
+  const moveRequests = (apps || [])
+    .map((a) => {
+      const state = parsePortalState((a.admin_notes as string) || null)
+      const mr = state.stallMoveRequest
+      if (!mr || mr.status !== 'pending') return null
+      return {
+        id: a.id as string,
+        business_name: (a.business_name as string) || 'Unknown vendor',
+        preferredZone: mr.preferredZone || null,
+        preferredZoneLabel: mr.preferredZone ? (TYPE_META[mr.preferredZone as StallType]?.label || mr.preferredZone) : null,
+        currentStall: mr.currentStall || null,
+        details: mr.details || '',
+        requestedAt: mr.createdAt || null,
+      }
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .sort((a, b) => String(b.requestedAt || '').localeCompare(String(a.requestedAt || '')))
+
+  return NextResponse.json({ requests, moveRequests })
 }
 
 export async function POST(req: NextRequest) {
@@ -87,6 +107,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const id = String(body.id || '').trim()
   const action = String(body.action || '') as 'approve' | 'reject'
+  const kind = (String(body.kind || 'size') === 'move' ? 'move' : 'size') as 'size' | 'move'
   const note = body.note ? String(body.note).slice(0, 400) : undefined
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   if (!['approve', 'reject'].includes(action)) {
@@ -101,6 +122,38 @@ export async function POST(req: NextRequest) {
     .eq('id', id)
     .maybeSingle()
   if (!app) return NextResponse.json({ error: 'Application not found' }, { status: 404 })
+
+  // POSITION request branch. Resolving it never mutates allocation or tier — the
+  // operator re-allocates by hand on /admin/vendor-ops. Approve = acknowledged.
+  if (kind === 'move') {
+    const moveBefore = parsePortalState((app.admin_notes as string) || null)
+    const mr = moveBefore.stallMoveRequest
+    if (!mr || mr.status !== 'pending') {
+      return NextResponse.json({ error: 'No pending stall position request', code: 'NOT_PENDING' }, { status: 409 })
+    }
+    const moveStatus: 'approved' | 'rejected' = action === 'approve' ? 'approved' : 'rejected'
+    await updatePortalState(id, (s: PortalState) => ({
+      ...s,
+      stallMoveRequest: s.stallMoveRequest
+        ? { ...s.stallMoveRequest, status: moveStatus, ...(note ? { adminNote: note } : {}) }
+        : s.stallMoveRequest,
+    }))
+    try {
+      await db.from('vendor_application_events').insert({
+        application_id: id,
+        event_type: `stall_move_${moveStatus}`,
+        after_value: { details: mr.details, preferred_zone: mr.preferredZone || null, status: moveStatus, ...(note ? { note } : {}) },
+        actor_email: user.email || null,
+        actor_role: 'admin',
+        note: action === 'approve' ? 'Stall position request acknowledged' : `Stall position request declined${note ? `: ${note}` : ''}`,
+      })
+    } catch (e) {
+      console.warn('[stall-changes] move event log failed:', (e as Error).message)
+    }
+    // zanii-codef: no vendor email for position requests yet — the portal
+    // reflects the status live. Add a notifyVendor template if vendors ask.
+    return NextResponse.json({ ok: true, id, kind: 'move', status: moveStatus, business_name: app.business_name })
+  }
 
   const before = parsePortalState((app.admin_notes as string) || null)
   const cr = before.stallChangeRequest

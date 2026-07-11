@@ -126,18 +126,12 @@ View all applications: https://cthalaal.co.za/admin/applications
 Contacts (started/incomplete applications): https://cthalaal.co.za/admin/contacts`
 
     try {
-      await Promise.all([
-        sendEmail({
-          to: 'capetownhalaal@gmail.com',
-          subject: `[Lead] ${business || email} started but didn't complete vendor application`,
-          text: adminText,
-        }),
-        sendEmail({
-          to: 'info@sinan.agency',
-          subject: `[Lead] ${business || email} started but didn't complete vendor application`,
-          text: adminText,
-        }),
-      ])
+      // Lead notice goes to the festival owner only. No agency copy.
+      await sendEmail({
+        to: 'capetownhalaal@gmail.com',
+        subject: `[Lead] ${business || email} started but didn't complete vendor application`,
+        text: adminText,
+      })
     } catch (adminEmailError) {
       console.error('Admin notification error:', adminEmailError)
     }

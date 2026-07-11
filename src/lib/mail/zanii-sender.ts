@@ -3,7 +3,8 @@
 //
 // Why this exists alongside src/lib/email/resend.ts:
 //   - resend.ts is the transactional channel (single-recipient confirmations,
-//     approval letters, payment reminders). It bcc:s info@sinan.agency.
+//     approval letters, payment reminders). No agency BCC; the Support Inbox
+//     Sent tab is the record of what went out.
 //   - zanii-sender.ts is the bulk channel. Per-recipient unsubscribe, a stable
 //     RFC-compliant Message-ID, no bcc fan-out, paced batching. All bulk blasts
 //     (doc chases, payment reminders fan-out, contract reminders, allocation

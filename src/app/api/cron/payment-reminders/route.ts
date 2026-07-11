@@ -116,14 +116,16 @@ export async function GET(req: NextRequest) {
       })
       out.emailSent = emailRes.ok
 
-      // WhatsApp template: Meta-approved body, params: businessName, amount, dueDate
+      // WhatsApp template: Meta-approved body, params: firstName, amount, dueDate
       const phone = (app.phone as string) || ''
       if (phone) {
         try {
+          // Template body opens "Hi {{1}}," so param 1 is the person's first
+          // name, not the business name (matches the email's greeting).
           const waRes = await sendTemplate(
             toE164(phone),
             'vendor_payment_reminder',
-            [businessName, formatRand(amount), dueDateStr],
+            [firstName, formatRand(amount), dueDateStr],
             { category: 'utility' }
           )
           out.waSent = !waRes.skipped

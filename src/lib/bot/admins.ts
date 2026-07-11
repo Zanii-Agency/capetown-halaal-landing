@@ -20,7 +20,9 @@ export const BOT_ADMINS: BotAdmin[] = [
     phone: '+971501168462',
     role: 'master',
     name: 'Taona',
-    email: 'admin@sinan.agency',
+    // No email backstop: festival ops mail must never route to an agency
+    // address. Taona gets master alerts on WhatsApp + the admin portal; the
+    // festival owner (below) receives the email copy at her own address.
   },
   {
     phone: '+27723803393',

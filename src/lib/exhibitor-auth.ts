@@ -68,3 +68,42 @@ export async function provisionExhibitorAccount(opts: {
 
   return { tempPassword, userId }
 }
+
+/**
+ * Keep the Supabase Auth login identity in sync when an admin (Samreen) amends a
+ * vendor's application. The login is Supabase Auth keyed on auth.users.email, a
+ * SEPARATE store from vendor_applications.email — editing the application row
+ * alone silently desyncs the two, leaving the vendor locked out (they log in with
+ * the corrected email but no account answers to it). This propagates the edit.
+ *
+ * Looks the auth user up by the OLD email (what the row held before the edit,
+ * which is what the auth account still answers to when the two were in sync).
+ * If the vendor has no auth account yet (still pending, never approved) it's a
+ * no-op. Non-fatal by contract: returns a flag, never throws, so an amend never
+ * fails because of an auth hiccup.
+ */
+export async function syncExhibitorAuth(opts: {
+  oldEmail: string
+  newEmail?: string
+  businessName?: string
+}): Promise<{ updated: boolean; userId?: string; error?: string }> {
+  try {
+    const admin = createAdminClient()
+    const user = await findUserByEmail(admin, opts.oldEmail)
+    if (!user) return { updated: false } // unapproved / no login to sync
+    const patch: { email?: string; email_confirm?: boolean; user_metadata?: Record<string, unknown> } = {}
+    if (opts.newEmail && opts.newEmail.toLowerCase() !== opts.oldEmail.toLowerCase()) {
+      patch.email = opts.newEmail
+      patch.email_confirm = true // admin-verified change; no confirmation round-trip
+    }
+    if (opts.businessName) {
+      patch.user_metadata = { ...(user.user_metadata || {}), business_name: opts.businessName }
+    }
+    if (!patch.email && !patch.user_metadata) return { updated: false, userId: user.id }
+    const { error } = await admin.auth.admin.updateUserById(user.id, patch)
+    if (error) return { updated: false, userId: user.id, error: error.message }
+    return { updated: true, userId: user.id }
+  } catch (e) {
+    return { updated: false, error: (e as Error).message }
+  }
+}
