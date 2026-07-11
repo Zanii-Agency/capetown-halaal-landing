@@ -266,6 +266,16 @@ export async function askFestivalBrain(
   if (faqHit && context.surface !== 'vendor' && VENDOR_ONLY_FAQ.has(faqHit.key)) {
     faqHit = null
   }
+  // Intent-scoped FAQ gate (KT #206651 P1.2). matchFaq and the intent classifier
+  // score independently and only usually agree; when they disagree the FAQ fires
+  // off-topic — the production transcripts show a payment-timing question answered
+  // with festival dates, and an instalment question answered with payment methods.
+  // Require the winning FAQ key to belong to the classified intent before it may
+  // short-circuit; otherwise fall through to the grounded LLM.
+  if (faqHit) {
+    const allowed = new Set(intentFaqKeys(intent.intent))
+    if (allowed.size > 0 && !allowed.has(faqHit.key)) faqHit = null
+  }
   const isFirstContact =
     context.forceFirstContact ?? (context.waId ? await isFirstContactByWaId(context.waId) : true)
 

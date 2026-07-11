@@ -110,6 +110,21 @@ Bring your vehicle pass. Power & water as per your portal. See you on-site!
 
 ---
 
+## 8. `vendor_payment_reminder` — Utility (APPROVED in Meta)
+**Body:**
+```
+Hi {{1}}, a friendly reminder that your stall fee for the Young at Heart Festival is due.
+
+Amount: {{2}}
+Due date: {{3}}
+
+Your stall is only secured once payment is received in full. Please reply here if you have any questions.
+```
+**Variables:** 1=contact first name, 2=amount (e.g. "R6,500"), 3=due date (e.g. "22 July 2026")
+**Sent by:** weekly cron `/api/cron/payment-reminders` (Mon 07:00 UTC) alongside the `VendorPaymentReminder` email, to approved vendors who have not paid.
+
+---
+
 ## Keyword auto-replies (free-form, inside 24h window — no template needed)
 | Keyword | Action |
 |---|---|

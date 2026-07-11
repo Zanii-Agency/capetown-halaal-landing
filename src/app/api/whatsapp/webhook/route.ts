@@ -24,6 +24,8 @@ import { findAdmin, isDevNumber } from '@/lib/bot/admins'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
+import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
+import { resolveVendorSession, confirmVendorVerification } from '@/lib/bot/vendor-session'
 import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { isMaintenanceEnabled } from '@/lib/maintenance'
@@ -493,9 +495,9 @@ async function handleInbound(msg: {
   // history, and per-caller identity briefing as extraSystem. The brain owns
   // the system prompt, intent routing, FAQ short-circuit, and sign-off rule.
   let reply = ''
-  // Slow follow-up (e.g. render + send an invoice PDF) the brain hands back; run
-  // it AFTER the 200 via after() so the inbound response is never blocked.
-  let deferredAction: (() => Promise<void>) | undefined
+  // Slow follow-ups (e.g. render + send an invoice PDF) handed back by the brain
+  // or the agent; run AFTER the 200 via after() so the response is never blocked.
+  const deferredActions: Array<() => Promise<void>> = []
   // N2: per-sender LLM rate limit. If this caller has already burned 10 LLM
   // turns in the last 5 minutes, skip the Haiku call and respond with a
   // pre-written line so a spammer can't pin our Anthropic spend.
@@ -510,13 +512,43 @@ async function handleInbound(msg: {
       : "We've received your message. A human will respond shortly. For tickets visit cthalaal.co.za"
   } else {
     try {
-      // Brain mesh (ADR-004): identity-partitioned. routeToBrain sends a vendor
-      // to the scoped vendor brain (self-service actions hard-bound to their own
-      // application id + Q&A fallthrough), and a ticket_buyer / unknown to the
-      // read-only attendee brain. Admins are handled above and never reach here.
-      const result = await routeToBrain(identity, msg.text, { history })
-      reply = result.message
-      deferredAction = result.deferred
+      // Phase D (ADR-0005): when CTH_AGENT is on, vendors and unknown senders go
+      // through the Sonnet tool-calling agent (session-scoped tools + email-OTP
+      // step-up). ticket_buyer keeps the read-only attendee brain (ticket-resend
+      // grounding); admins are handled above. Flag off = the ADR-004 mesh, unchanged.
+      if (vendorAgentEnabled() && (identity.role === 'vendor' || identity.role === 'unknown')) {
+        // Deterministic verification: a bare 6-digit code confirms a pending
+        // step-up. Identity binding is never model-driven (invariant 3). If there
+        // is no pending challenge, fall through and treat it as an ordinary message.
+        const codeOnly = msg.text.trim().match(/^(\d{6})$/)
+        let handled = false
+        if (codeOnly) {
+          const r = await confirmVendorVerification(e164, codeOnly[1])
+          if (r.reason !== 'no_pending') {
+            reply = r.ok
+              ? "You're verified. How can I help with your stall, payment, contract, or documents?"
+              : r.reason === 'expired'
+                ? "That code has expired. Tell me your application email again and I'll send a fresh one."
+                : r.reason === 'too_many_attempts'
+                  ? 'Too many attempts. Tell me your application email again for a fresh code.'
+                  : `That code was not correct.${typeof r.remaining === 'number' ? ` ${r.remaining} attempt${r.remaining === 1 ? '' : 's'} left.` : ''}`
+            handled = true
+          }
+        }
+        if (!handled) {
+          const session = await resolveVendorSession(e164)
+          const out = await runVendorAgent(session, msg.text, { history })
+          reply = out.message
+          deferredActions.push(...out.deferred)
+        }
+      } else {
+        // Brain mesh (ADR-004): identity-partitioned. routeToBrain sends a vendor
+        // to the scoped vendor brain and a ticket_buyer / unknown to the read-only
+        // attendee brain.
+        const result = await routeToBrain(identity, msg.text, { history })
+        reply = result.message
+        if (result.deferred) deferredActions.push(result.deferred)
+      }
     } catch (e) {
       console.error('brain error', e)
       reply = identity.firstName
@@ -543,8 +575,7 @@ async function handleInbound(msg: {
   // survives past the response on Vercel (unlike a floating promise) and runs
   // within maxDuration (raised to 60s below for the puppeteer render). Fully
   // best-effort: a failure here never affects the inbound 200 or the text reply.
-  if (deferredAction) {
-    const run = deferredAction
+  for (const run of deferredActions) {
     after(async () => {
       try { await run() } catch (e) { console.error('[wa-webhook] deferred action failed:', (e as Error).message) }
     })

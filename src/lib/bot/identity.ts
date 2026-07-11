@@ -70,8 +70,14 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
   // from the inbound number, so the .like is injection-safe. Mirrors the ticket
   // auto-linker's last-9 match. Only apply when we have a full 9 digits.
   const last9 = e164.replace(/\D/g, '').slice(-9)
+  // ADDITIVE verified-WA binding (ADR-0005): a number that verified ownership via
+  // email-OTP step-up is recorded as a ⟦WAV<last9>⟧ marker in admin_notes (never
+  // overwriting the canonical phone column). Match it here so that number resolves
+  // to its vendor. Pure-digit last9, so the .like value is injection-safe. Matches
+  // nothing until the verification flow writes a marker, so this is safe to ship
+  // ahead of the tools.
   const phoneOr = last9.length === 9
-    ? `phone.eq.${e164},phone.eq.${e164NoPlus},phone.like.*${last9}`
+    ? `phone.eq.${e164},phone.eq.${e164NoPlus},phone.like.*${last9},admin_notes.like.*WAV${last9}*`
     : `phone.eq.${e164},phone.eq.${e164NoPlus}`
   // Multi-apply: a person can have several applications. Take the most recent
   // as the active identity and surface applicationCount so callers can offer an

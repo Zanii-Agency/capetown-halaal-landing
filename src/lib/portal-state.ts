@@ -140,11 +140,30 @@ export interface PortalState {
    *  Writer: /api/exhibitor/notification-prefs. Keep keys in lockstep with the
    *  NotifyEvent union. */
   notification_preferences?: Record<string, boolean>
-  /** Stall change request submitted by vendor (Agent 12). */
+  /** Stall SIZE change request submitted by vendor (Agent 12). Changes the
+   *  booth tier/dimensions (preferred_booth_tier). Distinct from the POSITION
+   *  request below. */
   stallChangeRequest?: {
     requestedTier: string
     currentTier: string
     reason: string
+    status: 'pending' | 'approved' | 'rejected'
+    createdAt: string
+    adminNote?: string
+  }
+  /** Stall POSITION / location change request. Distinct from stallChangeRequest
+   *  (which changes the booth SIZE). A position request is a preference for a
+   *  different spot on the floor; the operator allocates by hand on
+   *  /admin/vendor-ops, so resolving it never auto-mutates the ⟦STALL:..⟧
+   *  marker — same discipline as a tier change. Available pre-allocation.
+   *  Writer: /api/exhibitor/stand/move. Setter: /api/admin/stall-changes. */
+  stallMoveRequest?: {
+    /** Preferred zone hint (TYPE_META key: FT|FS|TS|BS). Optional. */
+    preferredZone?: string
+    /** What the vendor is asking for (free text). */
+    details: string
+    /** Allocated stall code at request time, if any. */
+    currentStall?: string
     status: 'pending' | 'approved' | 'rejected'
     createdAt: string
     adminNote?: string
@@ -164,6 +183,25 @@ export interface PortalState {
   /** ISO timestamp the logo-upload campaign last messaged this vendor. Set by
    *  /api/admin/vendors/logo-campaign so re-runs do not double-message. */
   logo_prompt_sent_at?: string
+  /** WhatsApp numbers that verified ownership of this application via email-OTP
+   *  step-up (ADR-0005). ADDITIVE: we never overwrite vendor_applications.phone,
+   *  so a vendor can self-serve from a second device without corrupting their
+   *  on-file contact number. resolveIdentity ALSO matches these via a queryable
+   *  ⟦WAV<last9>⟧ marker written into admin_notes alongside this record. */
+  verified_wa?: Array<{
+    phone: string        // E.164 of the verified WhatsApp number
+    bound_at: string     // ISO timestamp of OTP confirmation
+  }>
+  /** Pending email-OTP step-up for a WhatsApp number that did NOT uniquely
+   *  resolve to this vendor. The candidate number is NOT trusted until the code
+   *  emailed to the application address is confirmed. Cleared on success/expiry.
+   *  Distinct from phone_change_pending (that is a portal-authenticated flow). */
+  wa_verify_pending?: {
+    wa_phone: string     // E.164 candidate WhatsApp number being bound
+    code_hash: string    // sha256(code + ':' + applicationId), constant-time compare
+    requested_at: string // ISO timestamp (expiry + rate-limit)
+    attempts: number     // failed code checks; >=5 invalidates and forces re-request
+  }
 }
 
 export interface SupportMessage {
