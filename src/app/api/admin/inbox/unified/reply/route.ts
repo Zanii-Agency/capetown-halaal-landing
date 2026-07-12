@@ -17,8 +17,32 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendText, sendTemplate, sendMedia, toE164 } from '@/lib/whatsapp'
 import { sendEmail } from '@/lib/email/resend'
+import { transportFor, fromAddressFor } from '@/lib/email-concierge'
+import { mirrorOutboundToSupportInbox } from '@/lib/email/support-mirror'
 import { assertRole } from '@/lib/admin-rbac'
 import { z } from 'zod'
+
+/**
+ * Which mailbox does this peer's conversation live on? The two inbound
+ * fetchers tag support_inbox_messages.mailbox ('gmail' for Samreen's
+ * capetownhalaal@gmail.com, unset/null for support@youngatheart.co.za — see
+ * mail-fetcher.ts / support-mail-fetcher.ts). A reply must go out from the
+ * SAME mailbox the vendor actually emailed, or it lands as a from-mismatch
+ * (Taona 2026-07-12: "it must know which email to reply from"). We read the
+ * peer's most recent INBOUND message rather than a static thread column,
+ * since that is the freshest signal of where they expect the reply.
+ */
+async function mailboxForPeer(db: ReturnType<typeof createAdminClient>, peerEmail: string): Promise<'gmail' | 'primary'> {
+  const { data } = await db
+    .from('support_inbox_messages')
+    .select('mailbox')
+    .eq('direction', 'in')
+    .ilike('from_address', peerEmail)
+    .order('received_at', { ascending: false })
+    .limit(1)
+  const row = data?.[0] as { mailbox?: string | null } | undefined
+  return row?.mailbox === 'gmail' ? 'gmail' : 'primary'
+}
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -177,6 +201,37 @@ export async function POST(req: NextRequest) {
     inReplyTo = (lastMsg?.[0]?.message_id as string | undefined) || undefined
   }
 
+  const mailbox = await mailboxForPeer(db, peer)
+
+  if (mailbox === 'gmail') {
+    // Reply FROM Samreen's actual Gmail (capetownhalaal@gmail.com), the same
+    // account already used to READ her inbox (GMAIL_IMAP_USER/GMAIL_APP_PASS,
+    // an app password — works for SMTP send too, no new credential needed).
+    const from = fromAddressFor('gmail')
+    if (!from) {
+      return NextResponse.json({ ok: false, channel: 'email', reason: 'gmail_not_configured', message: 'GMAIL_IMAP_USER is not set.' }, { status: 502 })
+    }
+    try {
+      const t = transportFor('gmail')
+      await t.sendMail({
+        from, to: body.email, subject, text: text || ' ',
+        ...(body.attachment
+          ? { attachments: [{ filename: body.attachment.filename, content: Buffer.from(body.attachment.dataBase64, 'base64'), contentType: body.attachment.contentType }] }
+          : {}),
+        ...(inReplyTo ? { inReplyTo, references: inReplyTo } : {}),
+      })
+      // Resend's sendEmail mirrors into the Support Inbox automatically; the
+      // raw nodemailer path here must do it explicitly so the reply appears
+      // in the thread same as a support@ reply does.
+      await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ' })
+      return NextResponse.json({ ok: true, channel: 'email', via: 'gmail' })
+    } catch (e) {
+      const msg = (e as Error).message
+      console.error('[unified/reply] gmail send failed:', msg)
+      return NextResponse.json({ ok: false, channel: 'email', reason: msg, message: `Email failed: ${msg}` }, { status: 502 })
+    }
+  }
+
   const res = await sendEmail({
     to: body.email,
     subject,
@@ -189,5 +244,5 @@ export async function POST(req: NextRequest) {
   if (!res.ok) {
     return NextResponse.json({ ok: false, channel: 'email', reason: res.error, message: `Email failed: ${res.error}` }, { status: 502 })
   }
-  return NextResponse.json({ ok: true, channel: 'email' })
+  return NextResponse.json({ ok: true, channel: 'email', via: 'support' })
 }

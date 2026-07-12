@@ -3,17 +3,22 @@
  *
  * Mark a vendor's stall fee paid manually (cash, EFT off-platform, comp).
  * Writes:
- *   - portal-state marker `payment.status = 'paid'` + paid_at + reference
+ *   - portal-state marker `payment.status = 'paid'` + paid_at + reference + method
  *   - vendor_application_events entry { event_type: 'payment_manual', note: ... }
  *
- * Body: { amount?: number, reference?: string, note?: string }
+ * Body: { method: 'eft'|'cash'|'manual_card'|'waived', amount?: number, reference?: string, note?: string }
+ * method is REQUIRED (Taona 2026-07-12: "it should ask how they paid") — this
+ * used to hardcode 'eft' for every manual payment regardless of reality, which
+ * also made the invoice always claim "Paid via Yoco" (see invoice-pdf.ts).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
-import { confirmPayment } from '@/lib/payments/confirm'
+import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { requireOperator } from '@/lib/admin-rbac'
+
+const ALLOWED: PaymentMethod[] = ['eft', 'cash', 'manual_card', 'waived']
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -29,9 +34,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const db = createAdminClient()
 
   const body = await req.json().catch(() => ({}))
+  const method = String(body.method || '').trim() as PaymentMethod
+  if (!ALLOWED.includes(method)) {
+    return NextResponse.json({ error: `method is required and must be one of: ${ALLOWED.join(', ')}` }, { status: 400 })
+  }
   const amount = typeof body.amount === 'number' ? body.amount : undefined
   const reference = body.reference ? String(body.reference).slice(0, 80) : undefined
-  const note = body.note ? String(body.note).slice(0, 500) : 'Marked paid manually by admin.'
+  const note = body.note ? String(body.note).slice(0, 500) : `Marked paid manually by admin (${method}).`
 
   // Route through the SAME confirmPayment authority as the Yoco webhook and the
   // vendor-ops mark-paid, so a manual payment ACCUMULATES into the cumulative
@@ -43,7 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const providerRef = reference || `manual-${id}-${Date.now()}`
   const result = await confirmPayment({
     applicationId: id,
-    method: 'eft',
+    method,
     amount,
     providerRef,
     silent: true,
@@ -56,7 +65,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     await db.from('vendor_application_events').insert({
       application_id: id,
       event_type: 'payment_manual',
-      after_value: { amount, total_paid: result.amount, reference: providerRef, note },
+      after_value: { amount, total_paid: result.amount, method, reference: providerRef, note },
       actor_email: user.email || null,
       actor_role: 'admin',
       note,

@@ -224,6 +224,7 @@ function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
         status: state.payment?.status || 'none',
         reference: state.payment?.reference || paymentReference(vendorId),
         providerRef: state.payment?.provider_ref || '',
+        method: state.payment?.method,
         preferredBoothTier: row.preferred_booth_tier || '',
         specialRequirements: row.special_requirements,
       })

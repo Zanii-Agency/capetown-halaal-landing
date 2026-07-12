@@ -107,7 +107,7 @@ export async function draftReply(email: InboundEmail): Promise<string> {
   }
 }
 
-function transportFor(account: string): nodemailer.Transporter {
+export function transportFor(account: string): nodemailer.Transporter {
   if (account === 'gmail') {
     return nodemailer.createTransport({
       host: 'smtp.gmail.com', port: 465, secure: true,
@@ -121,7 +121,7 @@ function transportFor(account: string): nodemailer.Transporter {
   })
 }
 
-function fromAddressFor(account: string): string {
+export function fromAddressFor(account: string): string {
   return account === 'gmail' ? process.env.GMAIL_IMAP_USER || '' : process.env.SMTP_USER || ''
 }
 

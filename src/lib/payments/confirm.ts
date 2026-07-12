@@ -203,6 +203,7 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
         ...(s.payment || {}),
         status: 'paid',
         amount: newCumulative,
+        method: input.method,
         provider_ref: ref || s.payment?.provider_ref,
         refs: ref ? Array.from(new Set([...prevRefs, ref])) : prevRefs,
         paid_at: s.payment?.paid_at || paidAtIso,

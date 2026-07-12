@@ -270,6 +270,7 @@ function doGetInvoice(identity: ResolvedIdentity): VendorActionResult {
         paidAt: state.payment?.paid_at
           ? new Date(state.payment.paid_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
           : undefined,
+        method: state.payment?.method,
         preferredBoothTier: (app.preferred_booth_tier as string) || '',
         specialRequirements: app.special_requirements,
       })

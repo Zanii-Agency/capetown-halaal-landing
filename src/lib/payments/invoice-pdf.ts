@@ -21,6 +21,19 @@ interface InvoiceData {
   providerRef?: string
   paidAt?: string
   issuedAt: string
+  /** How this was actually paid. Undefined = a paid record from before this
+   *  field existed; render a neutral "Paid" line rather than guessing. */
+  method?: 'yoco' | 'fnb' | 'manual' | 'eft' | 'cash' | 'manual_card' | 'waived'
+}
+
+const METHOD_LABEL: Record<NonNullable<InvoiceData['method']>, string> = {
+  yoco: 'Paid via Yoco (card)',
+  fnb: 'Paid via bank transfer',
+  manual: 'Paid (recorded manually)',
+  eft: 'Paid via EFT',
+  cash: 'Paid via cash',
+  manual_card: 'Paid via card (in person)',
+  waived: 'Fee waived',
 }
 
 function escapeHtml(s: string): string {
@@ -29,7 +42,7 @@ function escapeHtml(s: string): string {
   }[c] as string))
 }
 
-function buildInvoiceHtml(data: InvoiceData): string {
+export function buildInvoiceHtml(data: InvoiceData): string {
   const isPaid = data.status === 'paid'
   const rows: string[] = [
     `<tr><td><div class="title">${escapeHtml(data.pricing.stallLabel)}</div><div class="sub">Stall fee, 3 days, setup access</div></td><td class="num">1</td><td class="num">${formatRand(data.pricing.stallPrice)}</td></tr>`,
@@ -146,7 +159,7 @@ function buildInvoiceHtml(data: InvoiceData): string {
 
   ${isPaid ? `<div class="payment">
     <div class="label">Payment</div>
-    <div class="line">Paid via Yoco${data.paidAt ? ' on ' + escapeHtml(data.paidAt) : ''}. Reference <span style="font-family: monospace;">${escapeHtml(data.providerRef || data.reference)}</span>.</div>
+    <div class="line">${escapeHtml(data.method ? METHOD_LABEL[data.method] : 'Paid')}${data.paidAt ? ' on ' + escapeHtml(data.paidAt) : ''}. Reference <span style="font-family: monospace;">${escapeHtml(data.providerRef || data.reference)}</span>.</div>
   </div>` : ''}
 
   <div class="footer">
@@ -171,6 +184,7 @@ export async function renderInvoicePdf(input: {
   reference: string
   providerRef?: string
   paidAt?: string
+  method?: InvoiceData['method']
   preferredBoothTier: string
   specialRequirements?: unknown
 }): Promise<Buffer | null> {
@@ -196,6 +210,7 @@ export async function renderInvoicePdf(input: {
     reference: input.reference,
     providerRef: input.providerRef,
     paidAt: input.paidAt,
+    method: input.method,
     issuedAt: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
   })
 

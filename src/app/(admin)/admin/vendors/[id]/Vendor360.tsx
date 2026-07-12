@@ -172,6 +172,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const [drawerView, setDrawerView] = useState<'contact' | 'doc' | 'paid'>('contact')
   const [previewDoc, setPreviewDoc] = useState<DocRecord | null>(null)
   const [markPaidBusy, setMarkPaidBusy] = useState(false)
+  const [markPaidMethod, setMarkPaidMethod] = useState<'' | 'eft' | 'cash' | 'manual_card' | 'waived'>('')
   const [markPaidAmount, setMarkPaidAmount] = useState('')
   const [markPaidRef, setMarkPaidRef] = useState('')
   const [markPaidNote, setMarkPaidNote] = useState('')
@@ -344,6 +345,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
     const paidSoFar = portal.payment?.amount || 0
     const outstanding = Math.max(0, total - paidSoFar)
     setMarkPaidAmount(outstanding > 0 ? String(outstanding) : '')
+    setMarkPaidMethod('')
     setMarkPaidRef('')
     setMarkPaidNote('')
     setMarkPaidErr(null)
@@ -351,6 +353,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   }
 
   async function handleMarkPaid() {
+    if (!markPaidMethod) { setMarkPaidErr('Pick how they paid.'); return }
     setMarkPaidBusy(true)
     setMarkPaidErr(null)
     try {
@@ -358,6 +361,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          method: markPaidMethod,
           amount: markPaidAmount ? Number(markPaidAmount) : undefined,
           reference: markPaidRef || undefined,
           note: markPaidNote || undefined,
@@ -941,6 +945,21 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           <div className="space-y-4">
             <p className="text-xs text-neutral-500">Logs a payment_manual audit event and flips the portal marker.</p>
             <div>
+              <label className="text-xs font-medium text-neutral-600 block mb-1">How did they pay? *</label>
+              <select
+                value={markPaidMethod}
+                onChange={(e) => setMarkPaidMethod(e.target.value as typeof markPaidMethod)}
+                className="w-full border border-neutral-200 rounded-md px-3 py-2 text-sm bg-white"
+              >
+                <option value="">Select a method…</option>
+                <option value="eft">EFT (bank transfer)</option>
+                <option value="cash">Cash</option>
+                <option value="manual_card">Card, in person (not Yoco)</option>
+                <option value="waived">Waived (no payment, fee excused)</option>
+              </select>
+              <p className="text-xs text-neutral-500 mt-1">Shown on their invoice, so pick what actually happened.</p>
+            </div>
+            <div>
               <label className="text-xs font-medium text-neutral-600 block mb-1">Amount (R)</label>
               <p className="text-xs text-neutral-500 mb-1">Outstanding balance (what they still owe)</p>
               <input
@@ -974,7 +993,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
             {markPaidErr && <p className="text-xs text-red-600">{markPaidErr}</p>}
             <button
               onClick={handleMarkPaid}
-              disabled={markPaidBusy}
+              disabled={markPaidBusy || !markPaidMethod}
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 px-4 rounded-md disabled:opacity-60 inline-flex items-center justify-center gap-2"
             >
               {markPaidBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
