@@ -333,7 +333,26 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
       if (c.email) params.set('email', c.email)
       const res = await fetch(`/api/admin/inbox/unified/messages?${params}`)
       const j = await res.json()
-      if (res.ok) setMessages(j.messages || [])
+      if (res.ok) {
+        setMessages(j.messages || [])
+        // Force-scroll to the bottom for a freshly OPENED thread, imperatively,
+        // not via the [messages, activeId] effect below (Taona 2026-07-12,
+        // "opens at the top instead of the bottom"). That effect fires on
+        // React's render tick, which can land BEFORE the browser has actually
+        // painted the new message list, so el.scrollHeight still reports the
+        // PREVIOUS (shorter/taller) thread's height — the scroll assignment
+        // lands on stale geometry and visually settles wherever the browser's
+        // default (top) leaves it. Two nested rAFs: the first waits for this
+        // commit to be painted, the second waits for layout from THAT paint to
+        // be final (fonts/wrapping can still shift height across a single
+        // frame) — one rAF alone still raced on real thread data in testing.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const el = scrollRef.current
+            if (el) el.scrollTop = el.scrollHeight
+          })
+        })
+      }
     } finally { setMsgsLoading(false) }
   }, [])
 
@@ -439,19 +458,23 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
 
-  // Auto-scroll to the newest message ONLY when the thread just opened, or when
-  // the operator is already near the bottom. If they scrolled up to read older
-  // messages, a background poll must NOT yank them back down (that was the main
-  // "unstable" feel). Native-WhatsApp behaviour.
-  const scrolledThreadRef = useRef<string | null>(null)
+  // Follow new messages during BACKGROUND POLLING only if the operator is
+  // already near the bottom — if they scrolled up to read older messages, a
+  // poll must NOT yank them back down. The "thread just opened, force to
+  // bottom" case is handled imperatively in loadMessages (double-rAF, right
+  // where the fetch resolves) — see that comment for why a reactive effect
+  // keyed on [messages, activeId] cannot reliably do it (Taona 2026-07-12,
+  // "opens at the top instead of the bottom"): activeId changes on its own
+  // render tick before the new messages exist, so any version of this effect
+  // fires at least once against stale geometry. No cross-thread race applies
+  // here since activeId is unchanged during a poll, so scrollHeight always
+  // reflects the SAME thread's real, current content.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const switched = scrolledThreadRef.current !== activeId
-    scrolledThreadRef.current = activeId
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140
-    if (switched || nearBottom) el.scrollTop = el.scrollHeight
-  }, [messages, activeId])
+    if (nearBottom) el.scrollTop = el.scrollHeight
+  }, [messages])
 
   // Auto-grow the composer with its content, up to ~8 lines, so a multi-line
   // reply is fully visible without scrolling inside a tiny box.

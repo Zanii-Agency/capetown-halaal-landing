@@ -159,7 +159,15 @@ export async function GET(req: NextRequest) {
   }
 
   // ---- WhatsApp + Bot: aggregate wa_messages by phone ----
-  if (channelFilter !== 'email') {
+  // ALWAYS runs, even when channelFilter narrows the returned list to one
+  // channel below. counts.whatsapp/email must reflect the TRUE cross-channel
+  // totals, not whatever channel happened to be selected when this request
+  // fired — otherwise switching to the Email tab makes the WhatsApp tab lie
+  // and show 0 (found 2026-07-12: contacts only ever got a 'whatsapp' entry
+  // in this now-removed `if` branch, so filtering to Email genuinely built a
+  // whatsapp-free contacts map and counts.whatsapp read 0 correctly off
+  // WRONG input, not a data problem).
+  {
     const { data: wa } = await db
       .from('wa_messages')
       .select('wa_phone, direction, body, created_at, metadata')
@@ -214,7 +222,8 @@ export async function GET(req: NextRequest) {
   }
 
   // ---- Email/Support: support_inbox_threads by peer_email ----
-  if (channelFilter !== 'whatsapp') {
+  // ALWAYS runs too — same reasoning as the WhatsApp block above.
+  {
     const { data: threads } = await db
       .from('support_inbox_threads')
       .select('peer_email, peer_name, subject, status, tag, assignee_id, last_handled_at, last_inbound_at, unread_count, created_at')
@@ -311,6 +320,9 @@ export async function GET(req: NextRequest) {
   })
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
 
+  // Counts are ALWAYS computed from the full cross-channel list (never the
+  // channel-filtered display list below), so the tab badges stay true no
+  // matter which tab is currently selected.
   const counts = {
     all: list.length,
     whatsapp: list.filter((c) => c.channels.includes('whatsapp')).length,
@@ -318,5 +330,7 @@ export async function GET(req: NextRequest) {
     unread: list.filter((c) => c.unread).length,
   }
 
-  return NextResponse.json({ contacts: list.slice(0, 500), counts })
+  const displayList = channelFilter === 'all' ? list : list.filter((c) => c.channels.includes(channelFilter))
+
+  return NextResponse.json({ contacts: displayList.slice(0, 500), counts })
 }
