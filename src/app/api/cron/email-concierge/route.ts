@@ -29,14 +29,34 @@ export async function GET(req: Request) {
   const db = createAdminClient()
   const confirmer = EMAIL_CONFIRMER
 
-  // One in-flight: if Samreen already has an email awaiting her confirm, wait.
-  const { count: inflight } = await db
+  // One in-flight: if Samreen already has an email awaiting her confirm, wait
+  // — UNLESS it's gone stale (found 2026-07-12: this had no timeout at all, so
+  // a single row whose WhatsApp notify silently failed — the exact "healthy
+  // ecosystem engagement" throttle this project already fights — blocked the
+  // ENTIRE queue forever. 2 rows sat in awaiting_confirm since 2026-06-29;
+  // 267 real inbound emails since then were never even looked at, including a
+  // City of Cape Town event-support reply with a deadline that has now
+  // passed). A stale in-flight row is auto-skipped (not silently discarded —
+  // tagged so it's visible it was auto-resolved, not actioned) so the queue
+  // can never wedge shut again; the operator still sees it via concierge_status.
+  const STALE_MINUTES = 60
+  const { data: inflightRows } = await db
     .from('support_inbox_messages')
-    .select('id', { count: 'exact', head: true })
+    .select('id, received_at')
     .eq('concierge_status', 'awaiting_confirm')
     .eq('concierge_admin', confirmer.phone)
-  if ((inflight ?? 0) > 0) {
-    return NextResponse.json({ ok: true, waiting: 'an email is awaiting confirmation' })
+  const staleCutoff = Date.now() - STALE_MINUTES * 60 * 1000
+  const stale = (inflightRows || []).filter((r) => new Date(r.received_at as string).getTime() < staleCutoff)
+  const fresh = (inflightRows || []).filter((r) => new Date(r.received_at as string).getTime() >= staleCutoff)
+  if (stale.length > 0) {
+    await db
+      .from('support_inbox_messages')
+      .update({ concierge_status: 'skipped_stale' })
+      .in('id', stale.map((r) => r.id))
+    console.warn(`[email-concierge] auto-skipped ${stale.length} stale in-flight row(s) (>${STALE_MINUTES}min unconfirmed) so the queue is not wedged shut`)
+  }
+  if (fresh.length > 0) {
+    return NextResponse.json({ ok: true, waiting: 'an email is awaiting confirmation', autoSkippedStale: stale.length })
   }
 
   // Oldest NEW inbound email.
