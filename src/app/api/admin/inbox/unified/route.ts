@@ -168,56 +168,87 @@ export async function GET(req: NextRequest) {
   // whatsapp-free contacts map and counts.whatsapp read 0 correctly off
   // WRONG input, not a data problem).
   {
-    const { data: wa } = await db
-      .from('wa_messages')
-      .select('wa_phone, direction, body, created_at, metadata')
-      .order('created_at', { ascending: false })
-      .limit(3000)
+    // Paginated scan instead of one .limit(N) call (Taona 2026-07-12): a fixed
+    // cap on raw messages (across ALL vendors combined) silently drops a
+    // conversation from the list the moment its last message falls outside
+    // the window — no error, it just vanishes. Worse, one busy thread (the
+    // vendor agent's tool-call/receipt/reply chatter) can crowd out a
+    // quieter vendor's single unread message. DDL is blocked on this
+    // Supabase project (CTH-DOCTRINE law 8), so a DISTINCT ON query or a
+    // supporting index isn't available — instead we page through in DESC
+    // order and stop once two consecutive pages add NO new phones (every
+    // active conversation is very likely already covered), capped at
+    // MAX_PAGES as a hard safety ceiling either way. wa_messages is at 1,408
+    // rows as of 2026-07-12 (one page), so this costs nothing today and
+    // scales as real volume grows instead of silently dropping vendors.
+    const PAGE_SIZE = 1000
+    const MAX_PAGES = 10
     const seenPhone = new Set<string>()
     // Bot handover state: the FIRST [HUMAN_HANDOVER_ON/OFF] marker we see per
     // phone is the latest (rows are created_at DESC). ON => bot paused, a human
     // is handling; OFF => bot auto-replying.
     const handoverSeen = new Set<string>()
-    for (const m of (wa || []) as Array<{ wa_phone: string; direction: string; body: string | null; created_at: string; metadata: { media?: { kind?: string } } | null }>) {
-      const phone = norm(m.wa_phone || '')
-      if (!phone) continue
-      const raw = (m.body || '').trim()
-      if (!handoverSeen.has(phone)) {
-        if (/^\[HUMAN_HANDOVER_ON\]/.test(raw)) { handoverPaused.set(phone, true); handoverSeen.add(phone) }
-        else if (/^\[HUMAN_HANDOVER_OFF\]/.test(raw)) { handoverPaused.set(phone, false); handoverSeen.add(phone) }
+    let consecutiveEmptyPages = 0
+    for (let pageIdx = 0; pageIdx < MAX_PAGES; pageIdx++) {
+      const from = pageIdx * PAGE_SIZE
+      const { data: wa } = await db
+        .from('wa_messages')
+        .select('wa_phone, direction, body, created_at, metadata')
+        .order('created_at', { ascending: false })
+        .range(from, from + PAGE_SIZE - 1)
+      if (!wa || wa.length === 0) break // exhausted the whole table
+
+      const phonesBeforePage = seenPhone.size
+      for (const m of wa as Array<{ wa_phone: string; direction: string; body: string | null; created_at: string; metadata: { media?: { kind?: string } } | null }>) {
+        const phone = norm(m.wa_phone || '')
+        if (!phone) continue
+        const raw = (m.body || '').trim()
+        if (!handoverSeen.has(phone)) {
+          if (/^\[HUMAN_HANDOVER_ON\]/.test(raw)) { handoverPaused.set(phone, true); handoverSeen.add(phone) }
+          else if (/^\[HUMAN_HANDOVER_OFF\]/.test(raw)) { handoverPaused.set(phone, false); handoverSeen.add(phone) }
+        }
+        if (isMarker(raw)) continue
+        // Strip a leading lowercase template tag (e.g. "[vendor_payment_confirmation] …")
+        // so the preview reads as the actual message, not the tag. When the message
+        // is media with no caption, show a media label ("📷 Photo") instead of the
+        // bare "[no text]" fallback so the operator can see what the vendor sent.
+        const stripped = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '')
+        const mediaLabel = mediaPreviewLabel(m.metadata?.media?.kind)
+        const body = (stripped || mediaLabel || '[no text]')
+        const vendor = byPhone.get(phone)
+        const appId = vendor?.id || null
+        const st = appId ? tByApp.get(appId) : undefined
+        const isFirst = !seenPhone.has(phone)
+        seenPhone.add(phone)
+        touch(
+          {
+            phone: `+${phone}`,
+            email: vendor?.email || null,
+            business_name: vendor?.business_name || null,
+            contact_name: vendor?.contact_name || null,
+            application_id: appId,
+            identity: appId ? 'vendor' : 'unknown',
+            status: st?.status || 'open',
+            starred: st?.starred || false,
+            tag: st?.tag || null,
+            assignee_id: st?.assignee || null,
+            read_at: st?.read_at ?? null,
+          },
+          isFirst ? m.created_at : null,
+          isFirst ? (body || '[no text]') : '',
+          isFirst ? (m.direction === 'in' ? 'in' : 'out') : null,
+          'whatsapp',
+        )
       }
-      if (isMarker(raw)) continue
-      // Strip a leading lowercase template tag (e.g. "[vendor_payment_confirmation] …")
-      // so the preview reads as the actual message, not the tag. When the message
-      // is media with no caption, show a media label ("📷 Photo") instead of the
-      // bare "[no text]" fallback so the operator can see what the vendor sent.
-      const stripped = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '')
-      const mediaLabel = mediaPreviewLabel(m.metadata?.media?.kind)
-      const body = (stripped || mediaLabel || '[no text]')
-      const vendor = byPhone.get(phone)
-      const appId = vendor?.id || null
-      const st = appId ? tByApp.get(appId) : undefined
-      const isFirst = !seenPhone.has(phone)
-      seenPhone.add(phone)
-      touch(
-        {
-          phone: `+${phone}`,
-          email: vendor?.email || null,
-          business_name: vendor?.business_name || null,
-          contact_name: vendor?.contact_name || null,
-          application_id: appId,
-          identity: appId ? 'vendor' : 'unknown',
-          status: st?.status || 'open',
-          starred: st?.starred || false,
-          tag: st?.tag || null,
-          assignee_id: st?.assignee || null,
-          read_at: st?.read_at ?? null,
-        },
-        isFirst ? m.created_at : null,
-        isFirst ? (body || '[no text]') : '',
-        isFirst ? (m.direction === 'in' ? 'in' : 'out') : null,
-        'whatsapp',
-      )
+
+      const newPhonesThisPage = seenPhone.size - phonesBeforePage
+      consecutiveEmptyPages = newPhonesThisPage === 0 ? consecutiveEmptyPages + 1 : 0
+      if (consecutiveEmptyPages >= 2) break // converged: two pages running found no new conversation
+      if (wa.length < PAGE_SIZE) break // last page was partial — table exhausted
+
+      if (pageIdx === MAX_PAGES - 1) {
+        console.warn(`[inbox/unified] WhatsApp scan hit MAX_PAGES (${MAX_PAGES}) without converging — some older conversations may be missing from the list. Time to build the real per-phone-latest query.`)
+      }
     }
   }
 
