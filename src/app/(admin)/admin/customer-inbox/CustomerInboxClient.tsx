@@ -51,7 +51,9 @@ interface CommItem {
   at: string
   from: string
   subject?: string
-  media?: MediaInfo
+  // An array: WhatsApp is always 0 or 1, a real email can carry several
+  // attachments at once.
+  media?: MediaInfo[]
   pending?: boolean   // optimistic outbound, not yet confirmed by the server
 }
 
@@ -788,9 +790,11 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
                         </div>
                         <div className={`px-4 py-2.5 shadow-sm overflow-hidden min-w-0 ${bubbleSkin}`}>
                           {m.subject && isEmail && <p className="text-[12px] font-semibold opacity-70 mb-1 break-words">{m.subject}</p>}
-                          {m.media && (
-                            <div className={m.body ? 'mb-2' : ''}>
-                              <MediaBubble media={m.media} onDark={isOperator} />
+                          {m.media && m.media.length > 0 && (
+                            <div className={`space-y-1.5 ${m.body ? 'mb-2' : ''}`}>
+                              {m.media.map((media, i) => (
+                                <MediaBubble key={i} media={media} onDark={isOperator} />
+                              ))}
                             </div>
                           )}
                           {m.body && (

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { parseAttachmentMarker } from '@/lib/email/attachments'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -26,7 +27,16 @@ interface CommItem {
   from: string
   subject?: string
   bot?: boolean
-  media?: MediaInfo
+  // An array, not a single item: WhatsApp always sends 0 or 1 media per
+  // message, but a real email can carry several attachments at once.
+  media?: MediaInfo[]
+}
+
+function kindForMime(mimeType: string): MediaInfo['kind'] {
+  if (mimeType.startsWith('image/')) return 'image'
+  if (mimeType.startsWith('video/')) return 'video'
+  if (mimeType.startsWith('audio/')) return 'audio'
+  return 'document'
 }
 
 export async function GET(req: NextRequest) {
@@ -67,13 +77,13 @@ export async function GET(req: NextRequest) {
       // keyed on the wa_messages row id. Legacy media rows have no id => url null
       // so the client falls back to a chip instead of the old "[media message]".
       const md = m.metadata?.media
-      const media: MediaInfo | undefined = md
-        ? {
+      const media: MediaInfo[] | undefined = md
+        ? [{
             kind: md.kind,
             url: md.id ? `/api/admin/inbox/media/${m.id}` : null,
             mimeType: md.mime_type,
             filename: md.filename,
-          }
+          }]
         : undefined
       // Body: a media caption (already stored as body) or the template label.
       // For a bare media row with no caption, leave the text empty so the bubble
@@ -118,9 +128,18 @@ export async function GET(req: NextRequest) {
         .limit(500)
       const subjById = new Map(threads.map((t) => [t.id, t.subject]))
       for (const m of (msgs || []) as Array<{ id: string; thread_id: string; direction: string; from_address: string; subject: string | null; body_text: string | null; received_at: string; sent_by: string | null }>) {
-        const body = m.body_text || m.subject || ''
-        if (!body) continue
+        const { cleanBody, attachments } = parseAttachmentMarker(m.body_text)
+        const body = cleanBody || m.subject || ''
+        if (!body && !attachments.length) continue
         const out = m.direction !== 'in'
+        const media: MediaInfo[] | undefined = attachments.length
+          ? attachments.map((a, i) => ({
+              kind: kindForMime(a.mimeType),
+              url: `/api/admin/inbox/media/mail:${m.id}:${i}`,
+              mimeType: a.mimeType,
+              filename: a.filename,
+            }))
+          : undefined
         comms.push({
           id: `mail:${m.id}`,
           channel: 'email',
@@ -129,6 +148,7 @@ export async function GET(req: NextRequest) {
           at: m.received_at,
           from: !out ? m.from_address : (local(m.sent_by ? adminEmailById.get(m.sent_by) : null) || 'Team'),
           subject: m.subject || subjById.get(m.thread_id) || undefined,
+          ...(media ? { media } : {}),
         })
       }
     }

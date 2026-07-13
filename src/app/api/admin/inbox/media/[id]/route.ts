@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { parseAttachmentMarker, EMAIL_ATTACHMENTS_BUCKET } from '@/lib/email/attachments'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,6 +32,35 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   const db = createAdminClient()
   const { data: adminUser } = await db.from('admin_users').select('id').eq('id', user.id).maybeSingle()
   if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+
+  // Email attachment: id is "mail:<support_inbox_messages row id>:<index>" —
+  // a real email can carry several attachments, so the row id alone isn't
+  // enough to pick one. Attachment metadata lives in the body_text marker
+  // (no JSONB column on this table, DDL blocked — see attachments.ts).
+  const mailMatch = id.match(/^mail:([^:]+):(\d+)$/)
+  if (mailMatch) {
+    const [, mailRowId, indexStr] = mailMatch
+    const { data: row } = await db
+      .from('support_inbox_messages')
+      .select('body_text')
+      .eq('id', mailRowId)
+      .maybeSingle()
+    const { attachments } = parseAttachmentMarker(row?.body_text)
+    const att = attachments[Number(indexStr)]
+    if (!att) return NextResponse.json({ error: 'no_media' }, { status: 404 })
+    const { data: blob, error: dlErr } = await db.storage.from(EMAIL_ATTACHMENTS_BUCKET).download(att.path)
+    if (dlErr || !blob) {
+      console.error('[inbox-media] email attachment download failed:', dlErr?.message)
+      return NextResponse.json({ error: 'storage_fetch_failed' }, { status: 502 })
+    }
+    const headers = new Headers({
+      'Content-Type': att.mimeType,
+      'Cache-Control': 'private, max-age=300',
+      'Content-Disposition': `inline; filename="${att.filename.replace(/["\r\n]/g, '')}"`,
+    })
+    const arrayBuf = await blob.arrayBuffer()
+    return new NextResponse(arrayBuf, { status: 200, headers })
+  }
 
   // The `id` param is the wa_messages row id (UUID). Strip any "wa:" prefix the
   // unified thread uses for its synthetic message ids.

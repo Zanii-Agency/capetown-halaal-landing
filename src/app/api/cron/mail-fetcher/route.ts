@@ -18,6 +18,7 @@ import { ImapFlow, type FetchMessageObject } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
+import { captureAttachments } from '@/lib/email/attachments'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -121,6 +122,8 @@ export async function GET(req: Request) {
             const splitIdx = raw.search(/\r?\n\r?\n/)
             body = (splitIdx >= 0 ? raw.slice(splitIdx + 2) : raw).trim().slice(0, 4000)
           }
+          // Real attachments (not embedded signature images) — see attachments.ts.
+          body += await captureAttachments(supabase, messageId, parsed.attachments)
         } catch (e) { errors.push(`mailparser ${messageId}: ${(e as Error).message}`) }
       }
 
