@@ -2,9 +2,9 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Tent, ArrowLeftRight } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Tent, ArrowLeftRight, Bell } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -41,6 +41,7 @@ const navGroups: NavGroup[] = [
     label: 'COMMUNICATIONS',
     items: [
       { name: 'Inbox', href: '/admin/customer-inbox', icon: MessageCircle },
+      { name: 'Needs You', href: '/admin/customer-inbox?view=needs', icon: Bell },
       { name: 'Broadcast', href: '/admin/broadcast', icon: Megaphone },
       { name: 'Contacts', href: '/admin/contacts', icon: BookOpen },
     ],
@@ -77,11 +78,13 @@ const ROLE_BADGE_STYLE: Record<AdminRole, { label: string; cls: string; Icon: ty
 
 export function AdminSidebar({ role, email }: AdminSidebarProps) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
   const badge = ROLE_BADGE_STYLE[role]
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
   const [supportUnread, setSupportUnread] = useState(0)
+  const [needsHuman, setNeedsHuman] = useState(0)
   const [pendingApps, setPendingApps] = useState<number | null>(null)
   // Collapsed state for desktop (lg+) sidebar. Persisted to localStorage so the
   // operator's preference survives reloads. Mobile drawer is unaffected.
@@ -119,6 +122,7 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
         const j = await res.json()
         if (cancelled) return
         setSupportUnread(j.counts?.unread || 0)
+        setNeedsHuman(j.counts?.needs_human || 0)
       } catch { /* swallow */ }
     }
     tick()
@@ -239,8 +243,18 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
               </p>
             )}
             {group.items.map((item) => {
-              const isActive = isItemActive(item.href)
-              const badgeNum = item.href === '/admin/customer-inbox' ? supportUnread
+              // Inbox and Needs You share the /admin/customer-inbox path and are
+              // told apart by the ?view=needs query (usePathname drops the query,
+              // so disambiguate with searchParams).
+              const onInbox = pathname.startsWith('/admin/customer-inbox')
+              const isNeedsView = searchParams.get('view') === 'needs'
+              const isActive = item.href.includes('view=needs')
+                ? (onInbox && isNeedsView)
+                : item.href === '/admin/customer-inbox'
+                  ? (onInbox && !isNeedsView)
+                  : isItemActive(item.href)
+              const badgeNum = item.href.includes('view=needs') ? needsHuman
+                : item.href === '/admin/customer-inbox' ? supportUnread
                 : item.href === '/admin/applications' ? pendingApps
                 : null
               return (

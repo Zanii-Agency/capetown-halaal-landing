@@ -225,7 +225,16 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   const searchParams = useSearchParams()
   const deepLinkContact = searchParams.get('contact')
   const deepLinkChannel = searchParams.get('channel')
+  const deepLinkView = searchParams.get('view')
   const didDeepLink = useRef(false)
+
+  // Entered from the sidebar "Needs You" nav item (/admin/customer-inbox?view=needs):
+  // open straight into the action queue across all channels. Tracks the param so
+  // toggling Inbox <-> Needs You in the sidebar flips the view without a remount.
+  useEffect(() => {
+    if (deepLinkView === 'needs') { setChannel('all'); setTab('needs') }
+    else if (deepLinkView === null) { setTab((t) => (t === 'needs' ? 'all' : t)); setFocusMode(false) }
+  }, [deepLinkView])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1004,21 +1013,6 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
           )}
 
           <div className="px-4 pt-4 pb-3 border-b border-neutral-100 space-y-3">
-            {/* Needs You: the action queue. One click gathers every waiting
-                conversation across ALL channels (forces channel=all) so nothing
-                hides behind a channel filter. Toggles back to All. */}
-            <button
-              onClick={() => { if (tab === 'needs') { setTab('all'); setFocusMode(false) } else { setChannel('all'); setTab('needs') } }}
-              className={`w-full inline-flex items-center justify-center gap-2 text-sm font-bold px-3 py-2.5 rounded-xl border transition-colors ${
-                tab === 'needs'
-                  ? 'bg-[#cd2653] text-white border-[#cd2653] shadow-sm'
-                  : counts?.needs_human
-                    ? 'bg-rose-50 text-[#cd2653] border-rose-200 hover:bg-rose-100'
-                    : 'bg-neutral-50 text-neutral-500 border-neutral-200 hover:bg-neutral-100'
-              }`}>
-              <Bell className="w-4 h-4" />
-              Needs You{counts ? ` (${counts.needs_human})` : ''}
-            </button>
             {/* Channel is the PRIMARY axis: a prominent segmented control,
                 counted, server-side filtered via setChannel -> load(). The
                 status row below stays the secondary axis. */}
