@@ -36,6 +36,7 @@ interface Contact {
   application_id: string | null
   status: string             // open | snoozed | resolved
   bot_paused: boolean        // WhatsApp: true = human handling, bot is off
+  last_channel: 'whatsapp' | 'email'  // channel of the most recent message (for a badge)
 }
 
 const norm = (p: string) => p.replace(/^\+/, '')
@@ -149,6 +150,7 @@ export async function GET(req: NextRequest) {
         application_id: vendorId,
         status: c.status || 'open',
         bot_paused: false,
+        last_channel: channel,
       })
     } else {
       if (!existing.channels.includes(channel)) existing.channels.push(channel)
@@ -163,6 +165,7 @@ export async function GET(req: NextRequest) {
         existing.last_message_at = at
         existing.last_preview = preview.slice(0, 120)
         existing.last_direction = direction
+        existing.last_channel = channel
       }
     }
   }
@@ -265,6 +268,27 @@ export async function GET(req: NextRequest) {
       if (pageIdx === MAX_PAGES - 1) {
         console.warn(`[inbox/unified] WhatsApp scan hit MAX_PAGES (${MAX_PAGES}) without converging — some older conversations may be missing from the list. Time to build the real per-phone-latest query.`)
       }
+    }
+  }
+
+  // Which mailbox each email peer reached us on — 'gmail' = Samreen's
+  // capetownhalaal@gmail.com, else the support@youngatheart.co.za primary. Read
+  // from the latest INBOUND support message per peer (same signal the reply
+  // route uses to pick the from-address). Lets the UI badge the two email
+  // channels apart, so all THREE client channels (WhatsApp / YAH email / Gmail)
+  // are visible in the queue. One query; latest wins because we scan DESC.
+  const mailboxByPeer = new Map<string, 'gmail' | 'youngatheart'>()
+  {
+    const { data: msgs } = await db
+      .from('support_inbox_messages')
+      .select('from_address, mailbox, received_at')
+      .eq('direction', 'in')
+      .order('received_at', { ascending: false })
+      .limit(4000)
+    for (const m of (msgs || []) as Array<{ from_address: string | null; mailbox: string | null; received_at: string }>) {
+      const from = (m.from_address || '').toLowerCase().trim()
+      if (!from || mailboxByPeer.has(from)) continue
+      mailboxByPeer.set(from, m.mailbox === 'gmail' ? 'gmail' : 'youngatheart')
     }
   }
 
@@ -372,7 +396,10 @@ export async function GET(req: NextRequest) {
     // escalation). Self-clears: a reply flips unread AND advances humanReplyAt;
     // Resolve removes it outright.
     const needs_human = c.status !== 'resolved' && (unread || botPaused || openEscalation)
-    return { ...c, read_at: readAt, unread, bot_paused: botPaused, needs_human }
+    // Mailbox tag for email contacts so the UI can tell the two email channels
+    // apart (Gmail vs support@youngatheart). Null for WhatsApp-only contacts.
+    const mailbox = c.email ? (mailboxByPeer.get(c.email.toLowerCase()) || 'youngatheart') : null
+    return { ...c, read_at: readAt, unread, bot_paused: botPaused, needs_human, mailbox }
   })
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
 

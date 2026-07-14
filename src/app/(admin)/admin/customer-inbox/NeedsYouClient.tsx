@@ -23,6 +23,26 @@ interface Contact {
   last_preview: string | null
   application_id: string | null
   needs_human: boolean
+  last_channel: 'whatsapp' | 'email'
+  mailbox: 'gmail' | 'youngatheart' | null
+}
+
+// The three channels a client reaches the festival on: WhatsApp, the
+// support@youngatheart.co.za inbox, and Samreen's capetownhalaal Gmail. Badge
+// each waiting item so she knows where to answer before opening it.
+function channelInfo(c: Contact): { label: string; cls: string; wa: boolean } {
+  const isWa = c.last_channel === 'whatsapp' || (c.channels.includes('whatsapp') && !c.channels.includes('email'))
+  if (isWa) return { label: 'WhatsApp', cls: 'text-emerald-700 bg-emerald-50 border-emerald-200', wa: true }
+  if (c.mailbox === 'gmail') return { label: 'Gmail', cls: 'text-rose-700 bg-rose-50 border-rose-200', wa: false }
+  return { label: 'YAH email', cls: 'text-blue-700 bg-blue-50 border-blue-200', wa: false }
+}
+function ChannelBadge({ c }: { c: Contact }) {
+  const info = channelInfo(c)
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${info.cls}`}>
+      {info.wa ? <MessageCircle className="w-3 h-3" /> : <Mail className="w-3 h-3" />}{info.label}
+    </span>
+  )
 }
 interface CommItem {
   id: string
@@ -70,6 +90,13 @@ export function NeedsYouClient() {
   const taRef = useRef<HTMLTextAreaElement | null>(null)
 
   const waiting = useMemo(() => contacts.filter((c) => c.needs_human), [contacts])
+  // Breakdown across the three client channels, shown in the top bar so it's
+  // obvious the queue spans WhatsApp + both email inboxes.
+  const breakdown = useMemo(() => {
+    let wa = 0, gmail = 0, yah = 0
+    for (const c of waiting) { const i = channelInfo(c); if (i.wa) wa++; else if (i.label === 'Gmail') gmail++; else yah++ }
+    return { wa, gmail, yah }
+  }, [waiting])
   const active = useMemo(() => contacts.find((c) => c.id === activeId) || null, [contacts, activeId])
   const pos = active ? waiting.findIndex((c) => c.id === active.id) : -1
 
@@ -197,9 +224,10 @@ export function NeedsYouClient() {
               <div className="w-10 h-10 rounded-full bg-[#cd2653]/10 text-[#cd2653] flex items-center justify-center text-sm font-bold shrink-0">{initials(nameOf(active))}</div>
               <div className="min-w-0">
                 <p className="font-serif text-base text-neutral-900 leading-tight truncate">{nameOf(active)}</p>
-                <div className="flex items-center gap-2 text-xs text-neutral-500 mt-0.5">
-                  {active.phone && <span className="inline-flex items-center gap-1"><MessageCircle className="w-3 h-3 text-emerald-600" />{active.phone}</span>}
-                  {active.email && <span className="inline-flex items-center gap-1 truncate max-w-[200px]"><Mail className="w-3 h-3 text-blue-600" />{active.email}</span>}
+                <div className="flex items-center gap-2 text-xs text-neutral-500 mt-1 flex-wrap">
+                  <ChannelBadge c={active} />
+                  {active.phone && <span className="inline-flex items-center gap-1">{active.phone}</span>}
+                  {active.email && <span className="inline-flex items-center gap-1 truncate max-w-[220px]">{active.email}</span>}
                   {active.last_message_at && <span className="text-amber-600 font-semibold">waiting {waitLabel(active.last_message_at)}</span>}
                 </div>
               </div>
@@ -270,9 +298,16 @@ export function NeedsYouClient() {
       <div className="flex flex-col h-[calc(100dvh-6rem)] lg:h-full">
         {/* Top bar: count + Focus toggle */}
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 border border-neutral-200 rounded-t-2xl bg-rose-50/70 shrink-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Bell className="w-4 h-4 text-[#cd2653]" />
             <span className="text-sm font-bold text-[#cd2653]">{waiting.length} waiting</span>
+            {(breakdown.wa > 0 || breakdown.gmail > 0 || breakdown.yah > 0) && (
+              <span className="text-[11px] font-medium text-neutral-500 flex items-center gap-1.5">
+                {breakdown.wa > 0 && <span className="inline-flex items-center gap-1"><MessageCircle className="w-3 h-3 text-emerald-600" />{breakdown.wa}</span>}
+                {breakdown.yah > 0 && <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3 text-blue-600" />{breakdown.yah} YAH</span>}
+                {breakdown.gmail > 0 && <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3 text-rose-500" />{breakdown.gmail} Gmail</span>}
+              </span>
+            )}
             {pos >= 0 && <span className="text-[11px] font-semibold text-rose-700/70">· on {pos + 1} of {waiting.length}</span>}
           </div>
           <button onClick={() => setFocus((v) => !v)}
@@ -305,6 +340,7 @@ export function NeedsYouClient() {
                               <span className="text-[10px] text-amber-600 font-semibold shrink-0">{waitLabel(c.last_message_at)}</span>
                             </div>
                             <p className="text-xs text-neutral-500 truncate mt-0.5">{c.last_preview || c.phone || c.email || ''}</p>
+                            <div className="mt-1.5"><ChannelBadge c={c} /></div>
                           </div>
                         </button>
                       )
