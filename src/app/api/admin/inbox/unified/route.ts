@@ -40,6 +40,22 @@ interface Contact {
 }
 
 const norm = (p: string) => p.replace(/^\+/, '')
+
+// Marketing / automated / newsletter senders that should NEVER count as "a human
+// is waiting" (they filled the Needs You queue with Smart Points travel deals,
+// Substack newsletters, etc.). Two axes: an automated local-part (noreply, deals,
+// newsletter…) OR a known bulk/ESP domain. Real cold enquiries from a person
+// (admin@somecompany.co.za) are NOT matched, so genuine new clients still show.
+// They remain visible in the main Inbox; this only drops them from Needs You.
+const AUTOMATED_LOCAL = /(^|[._-])(no?[._-]?reply|do[._-]?not[._-]?reply|donotreply|mailer[._-]?daemon|mailer|bounce|postmaster|newsletter|marketing|promo|promotions?|notifications?|notify|alerts?|updates?|deals?|offers?|campaigns?|automated)([._-]|$)/
+const BULK_DOMAIN = /(substack\.com|mailchimp|mcsv\.net|mcdlv\.net|sendgrid|sparkpostmail|mailgun|amazonses|sendinblue|brevo|hubspot|marketo|klaviyomail|list-manage|constantcontact|dollarflightclub\.com|thedailynavigator|beehiiv|convertkit|drip\.com|activehosted|customer\.io|intercom-mail|mailerlite|getresponse|aweber)/
+function isAutomatedEmail(email: string): boolean {
+  const at = email.toLowerCase().indexOf('@')
+  if (at < 0) return false
+  const local = email.slice(0, at).toLowerCase()
+  const domain = email.slice(at + 1).toLowerCase()
+  return AUTOMATED_LOCAL.test(local) || BULK_DOMAIN.test(domain)
+}
 // tag column is pipe-encoded: "starred", "payment", or "starred|payment".
 function parseTag(v: string | null): { starred: boolean; tag: string | null } {
   const parts = (v || '').split('|').map((s) => s.trim()).filter(Boolean)
@@ -395,7 +411,11 @@ export async function GET(req: NextRequest) {
     // resolved. Union of (unanswered inbound) ∪ (human took over) ∪ (open bot
     // escalation). Self-clears: a reply flips unread AND advances humanReplyAt;
     // Resolve removes it outright.
-    const needs_human = c.status !== 'resolved' && (unread || botPaused || openEscalation)
+    // Drop marketing/automated email-only senders from "needs a human" (they
+    // still show in the full Inbox). Vendors (application_id set) and anything
+    // with a phone/WhatsApp are always kept — only cold automated email is cut.
+    const automatedNoise = !c.phone && !c.application_id && !!c.email && isAutomatedEmail(c.email)
+    const needs_human = c.status !== 'resolved' && (unread || botPaused || openEscalation) && !automatedNoise
     // Mailbox tag for email contacts so the UI can tell the two email channels
     // apart (Gmail vs support@youngatheart). Null for WhatsApp-only contacts.
     const mailbox = c.email ? (mailboxByPeer.get(c.email.toLowerCase()) || 'youngatheart') : null
