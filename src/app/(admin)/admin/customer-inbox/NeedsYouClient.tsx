@@ -9,6 +9,7 @@
 // its own layout. Reply and Done both advance to the next waiting conversation.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { Loader2, Send, Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, MessageCircle, Mail, Bell } from 'lucide-react'
 
@@ -109,11 +110,55 @@ export function NeedsYouClient() {
     } finally { setLoading(false) }
   }, [])
 
+  // Refs so the realtime callback / poll read current state without re-subscribing.
+  const activeIdRef = useRef<string | null>(null); activeIdRef.current = activeId
+  const contactsRef = useRef<Contact[]>([]); contactsRef.current = contacts
+
+  // Silent refetch of the OPEN thread's messages — appends new inbound/outbound
+  // without disturbing scroll unless the count actually changed. This is what was
+  // missing: the thread never refreshed while open, so new messages never streamed.
+  const refreshOpenMessages = useCallback(async () => {
+    const c = contactsRef.current.find((x) => x.id === activeIdRef.current)
+    if (!c) return
+    try {
+      const params = new URLSearchParams()
+      if (c.phone) params.set('phone', c.phone)
+      if (c.email) params.set('email', c.email)
+      const res = await fetch(`/api/admin/inbox/unified/messages?${params}`)
+      const j = await res.json()
+      if (res.ok) setMessages((prev) => {
+        const next: CommItem[] = j.messages || []
+        if (next.length === prev.length) return prev
+        requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight })
+        return next
+      })
+    } catch { /* keep last good */ }
+  }, [])
+
+  const refreshNow = useCallback(() => {
+    if (document.hidden) return
+    loadList(true)
+    refreshOpenMessages()
+  }, [loadList, refreshOpenMessages])
+
+  useEffect(() => { loadList() }, [loadList])
+
+  // LIVE: same Supabase Realtime broadcast the main inbox uses — the WhatsApp
+  // webhook fires a content-free "refresh" the instant a message lands, and we
+  // re-fetch through the server route. Makes Needs You stream like the inbox.
   useEffect(() => {
-    loadList()
-    const id = setInterval(() => { if (!document.hidden) loadList(true) }, 15000)
-    return () => clearInterval(id)
-  }, [loadList])
+    const supabase = createClient()
+    const ch = supabase.channel('inbox-updates').on('broadcast', { event: 'refresh' }, () => refreshNow()).subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [refreshNow])
+
+  // Fallback poll (safety net if the socket drops): refresh the open thread every
+  // 6s and the list every 15s, so streaming works even without the broadcast.
+  useEffect(() => {
+    const fast = setInterval(() => { if (!document.hidden) refreshOpenMessages() }, 6000)
+    const slow = setInterval(() => { if (!document.hidden) loadList(true) }, 15000)
+    return () => { clearInterval(fast); clearInterval(slow) }
+  }, [refreshOpenMessages, loadList])
 
   // Always keep a waiting conversation open. When the open one is handled and
   // drops out of `waiting`, snap to the first still-waiting item.
