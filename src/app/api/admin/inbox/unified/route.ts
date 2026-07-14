@@ -102,6 +102,15 @@ export async function GET(req: NextRequest) {
 
   // Bot handover state per normalized phone (true = bot paused, human handling).
   const handoverPaused = new Map<string, boolean>()
+  // "Needs You" queue derivation (no DDL, Law 8) — all from wa_messages:
+  //   needsHumanAt: latest [NEEDS_HUMAN] escalation marker per phone (the bot
+  //     told the vendor "I've passed this to the team"; a human owes a follow-up).
+  //   humanReplyAt: latest OUTBOUND reply that carries metadata.sent_by (a real
+  //     human replied through the composer, not the bot). An escalation is
+  //     considered handled once a human reply lands AFTER it. Scan is created_at
+  //     DESC, so the first marker/reply seen per phone is the latest.
+  const needsHumanAt = new Map<string, string>()
+  const humanReplyAt = new Map<string, string>()
 
   // Contacts keyed by a stable conversation key (vendor id if resolved, else
   // the raw phone/email) so a vendor's WhatsApp + email merge into one.
@@ -206,6 +215,13 @@ export async function GET(req: NextRequest) {
         if (!handoverSeen.has(phone)) {
           if (/^\[HUMAN_HANDOVER_ON\]/.test(raw)) { handoverPaused.set(phone, true); handoverSeen.add(phone) }
           else if (/^\[HUMAN_HANDOVER_OFF\]/.test(raw)) { handoverPaused.set(phone, false); handoverSeen.add(phone) }
+        }
+        // Needs-You signals (recorded before the isMarker skip so the marker row
+        // itself never pollutes the preview but still flags the queue). First
+        // seen per phone = latest, since the scan runs created_at DESC.
+        if (/^\[NEEDS_HUMAN\]/.test(raw) && !needsHumanAt.has(phone)) needsHumanAt.set(phone, m.created_at)
+        if (m.direction === 'out' && (m.metadata as { sent_by?: string } | null)?.sent_by && !humanReplyAt.has(phone)) {
+          humanReplyAt.set(phone, m.created_at)
         }
         if (isMarker(raw)) continue
         // Strip a leading lowercase template tag (e.g. "[vendor_payment_confirmation] …")
@@ -340,14 +356,23 @@ export async function GET(req: NextRequest) {
   const list = Array.from(contacts.values()).map((c) => {
     const phoneDigits = c.phone ? c.phone.replace(/\D/g, '') : ''
     const readAt = (phoneDigits && waRead.get(phoneDigits)) || c.read_at
-    return {
-      ...c,
-      read_at: readAt,
-      unread:
-        c.last_direction === 'in' &&
-        (!readAt || !c.last_message_at || new Date(c.last_message_at) > new Date(readAt)),
-      bot_paused: c.phone ? (handoverPaused.get(norm(c.phone)) ?? false) : false,
-    }
+    const unread =
+      c.last_direction === 'in' &&
+      (!readAt || !c.last_message_at || new Date(c.last_message_at) > new Date(readAt))
+    const p = c.phone ? norm(c.phone) : ''
+    const botPaused = c.phone ? (handoverPaused.get(p) ?? false) : false
+    // Open escalation: the bot flagged a human follow-up and no human has
+    // replied since. This catches the "I've passed this to the team" case where
+    // the bot already replied, so `unread` is false yet a human still owes work.
+    const escAt = p ? needsHumanAt.get(p) : undefined
+    const repliedAt = p ? humanReplyAt.get(p) : undefined
+    const openEscalation = !!escAt && (!repliedAt || new Date(escAt) > new Date(repliedAt))
+    // "Needs You" = a human owes this conversation something, and it isn't
+    // resolved. Union of (unanswered inbound) ∪ (human took over) ∪ (open bot
+    // escalation). Self-clears: a reply flips unread AND advances humanReplyAt;
+    // Resolve removes it outright.
+    const needs_human = c.status !== 'resolved' && (unread || botPaused || openEscalation)
+    return { ...c, read_at: readAt, unread, bot_paused: botPaused, needs_human }
   })
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
 
@@ -359,6 +384,7 @@ export async function GET(req: NextRequest) {
     whatsapp: list.filter((c) => c.channels.includes('whatsapp')).length,
     email: list.filter((c) => c.channels.includes('email')).length,
     unread: list.filter((c) => c.unread).length,
+    needs_human: list.filter((c) => c.needs_human).length,
   }
 
   const displayList = channelFilter === 'all' ? list : list.filter((c) => c.channels.includes(channelFilter))

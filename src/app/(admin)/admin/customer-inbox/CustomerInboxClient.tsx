@@ -9,9 +9,10 @@ import {
   MoreHorizontal, Check, Clock, RotateCcw, Sparkles, Wand2, MessageSquarePlus,
   FileText, Paperclip, ListChecks, X, ExternalLink, Bot, UserCheck, Tag as TagIcon, StickyNote,
   IdCard, CreditCard, MapPin, FileCheck, ImageIcon, Film, Mic,
+  Bell, Maximize2, Minimize2, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
-type Tab = 'all' | 'mine' | 'open' | 'snoozed' | 'resolved' | 'unread'
+type Tab = 'all' | 'mine' | 'open' | 'snoozed' | 'resolved' | 'unread' | 'needs'
 type Channel = 'all' | 'whatsapp' | 'email'
 const INBOX_TAGS = ['payment', 'load-in', 'badges', 'contract', 'refund', 'general'] as const
 type InboxTag = (typeof INBOX_TAGS)[number]
@@ -34,6 +35,7 @@ interface Contact {
   application_id: string | null
   status: string
   bot_paused: boolean
+  needs_human: boolean
 }
 
 interface MediaInfo {
@@ -183,10 +185,11 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   const [tagFilter, setTagFilter] = useState<InboxTag | null>(null)
   const [channel, setChannel] = useState<Channel>('all')
   const [contacts, setContacts] = useState<Contact[]>([])
-  const [counts, setCounts] = useState<{ all: number; whatsapp: number; email: number; unread: number } | null>(null)
+  const [counts, setCounts] = useState<{ all: number; whatsapp: number; email: number; unread: number; needs_human: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [focusMode, setFocusMode] = useState(false)
   const [messages, setMessages] = useState<CommItem[]>([])
   const [msgsLoading, setMsgsLoading] = useState(false)
   const [reply, setReply] = useState('')
@@ -318,6 +321,7 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   const filtered = useMemo(() => {
     let list = contacts
     if (tab === 'unread') list = list.filter((c) => c.unread)
+    else if (tab === 'needs') list = list.filter((c) => c.needs_human)
     else if (tab === 'mine') list = list.filter((c) => c.assignee_id === currentUserId)
     else if (tab !== 'all') list = list.filter((c) => c.status === tab)
     if (tagFilter) list = list.filter((c) => c.tag === tagFilter)
@@ -326,6 +330,16 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
       nameOf(c).toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.phone || '').includes(q))
     return list
   }, [contacts, tab, search, tagFilter, currentUserId])
+
+  // Needs-You: keep a waiting conversation open. On entering the tab (or when the
+  // open one is answered/resolved and drops out of the list), snap to the first
+  // still-waiting item so she never lands on an empty pane with work left.
+  useEffect(() => {
+    if (tab !== 'needs') return
+    const stillOpen = activeId && filtered.some((c) => c.id === activeId)
+    if (!stillOpen) setActiveId(filtered.length ? filtered[0].id : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, contacts])
 
   const loadMessages = useCallback(async (c: Contact) => {
     setMsgsLoading(true)
@@ -499,6 +513,20 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
     reader.readAsDataURL(file)
   }, [])
 
+  // In Focus mode, after a conversation is handled (replied or resolved), jump
+  // to the NEXT still-waiting one so she clears the stack without leaving the
+  // screen. The just-handled id is excluded because local state hasn't refetched
+  // its (now-false) needs_human yet.
+  const advanceNeeds = useCallback((handledId: string) => {
+    if (!focusMode || tab !== 'needs') return
+    const order = contacts.filter((c) => c.needs_human && c.status !== 'resolved')
+    const idx = order.findIndex((c) => c.id === handledId)
+    const next = order.slice(idx + 1).find((c) => c.id !== handledId)
+      || order.find((c) => c.id !== handledId)
+      || null
+    setActiveId(next ? next.id : null)
+  }, [focusMode, tab, contacts])
+
   const submitReply = useCallback(async () => {
     if (!active || (!reply.trim() && !attachment)) return
     const text = reply.trim()
@@ -536,12 +564,13 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
       }
       setWindowClosed(false)
       await loadMessages(active)
+      advanceNeeds(active.id)
     } catch {
       setMessages((prev) => prev.filter((m) => m.id !== tempId))
       if (text) setReply(text)
       setSendMsg('Send failed.')
     } finally { setSending(false) }
-  }, [active, reply, replyChannel, attachment, loadMessages])
+  }, [active, reply, replyChannel, attachment, loadMessages, advanceNeeds])
 
   // Outside the 24h window: send the same text as an approved announcement template.
   const sendAsTemplate = useCallback(async () => {
@@ -606,13 +635,14 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
       if (action === 'untag') return { ...c, tag: null }
       return c
     }))
+    if (action === 'resolve') advanceNeeds(active.id)
     try {
       await fetch('/api/admin/inbox/unified/status', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, applicationId: active.application_id || undefined, phone: active.phone || undefined, email: active.email || undefined, assigneeId: extra?.assigneeId, tag: extra?.tag }),
       })
     } catch { /* optimistic */ }
-  }, [active])
+  }, [active, advanceNeeds])
 
   const addNote = useCallback(async () => {
     if (!active?.application_id || !noteText.trim()) return
@@ -642,12 +672,54 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
 
   const assigneeEmail = (id: string | null) => operators.find((o) => o.id === id)?.email || null
 
+  // Needs-You queue position for the Focus-mode carousel (prev / "3 of 7" / next).
+  const inNeeds = tab === 'needs'
+  const needsPos = inNeeds && active ? filtered.findIndex((c) => c.id === active.id) : -1
+  const needsPrev = needsPos > 0 ? filtered[needsPos - 1] : null
+  const needsNext = needsPos >= 0 && needsPos < filtered.length - 1 ? filtered[needsPos + 1] : null
+  const focus = focusMode && inNeeds
+
   return (
     <AdminPage fill title="Inbox" caption="UNIFIED" subtitle="Every WhatsApp, bot and email conversation in one place.">
-      <div className="grid lg:grid-cols-[1fr_380px] grid-rows-[minmax(0,1fr)] h-[calc(100dvh-6rem)] lg:h-full gap-4">
+      <div className={`grid ${focus ? 'grid-cols-1' : 'lg:grid-cols-[1fr_380px]'} grid-rows-[minmax(0,1fr)] h-[calc(100dvh-6rem)] lg:h-full gap-4`}>
 
         {/* LEFT: conversation */}
         <div className="flex flex-col min-h-0 border border-neutral-200 rounded-2xl overflow-hidden bg-white">
+          {/* Needs-You strip: the queue's home base. In split it carries the
+              Focus toggle + counter; in Focus mode it adds the prev/next
+              carousel controls so she clears the stack without leaving. */}
+          {inNeeds && (
+            <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-rose-100 bg-rose-50/70 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <Bell className="w-4 h-4 text-[#cd2653] shrink-0" />
+                <span className="text-xs font-bold text-[#cd2653]">Needs You</span>
+                {filtered.length > 0 && (
+                  <span className="text-[11px] font-semibold text-rose-700/80 whitespace-nowrap">
+                    {needsPos >= 0 ? `${needsPos + 1} of ${filtered.length}` : `${filtered.length}`} waiting
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {focus && (
+                  <>
+                    <button onClick={() => needsPrev && setActiveId(needsPrev.id)} disabled={!needsPrev}
+                      title="Previous" className="w-7 h-7 rounded-lg border border-rose-200 bg-white hover:bg-rose-100 flex items-center justify-center disabled:opacity-40">
+                      <ChevronLeft className="w-4 h-4 text-[#cd2653]" />
+                    </button>
+                    <button onClick={() => needsNext && setActiveId(needsNext.id)} disabled={!needsNext}
+                      title="Next" className="w-7 h-7 rounded-lg border border-rose-200 bg-white hover:bg-rose-100 flex items-center justify-center disabled:opacity-40">
+                      <ChevronRight className="w-4 h-4 text-[#cd2653]" />
+                    </button>
+                  </>
+                )}
+                <button onClick={() => setFocusMode((v) => !v)}
+                  title={focus ? 'Exit focus (show the list)' : 'Focus mode (clear them one by one)'}
+                  className="h-7 px-2 rounded-lg border border-rose-200 bg-white hover:bg-rose-100 flex items-center gap-1 text-[11px] font-semibold text-[#cd2653]">
+                  {focus ? <><Minimize2 className="w-3.5 h-3.5" />Exit focus</> : <><Maximize2 className="w-3.5 h-3.5" />Focus</>}
+                </button>
+              </div>
+            </div>
+          )}
           {!active ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
               <MessageCircle className="w-8 h-8 text-neutral-300 mb-3" />
@@ -878,7 +950,8 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
           )}
         </div>
 
-        {/* RIGHT: list */}
+        {/* RIGHT: list — hidden in Focus mode so the card gets the full width */}
+        {!focus && (
         <div className="flex flex-col min-h-0 border border-neutral-200 rounded-2xl overflow-hidden bg-white">
           {/* Vendor context (at-a-glance facts) — relocated here so the thread
               gets the full left-column height. Toggled from the More menu. */}
@@ -931,6 +1004,21 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
           )}
 
           <div className="px-4 pt-4 pb-3 border-b border-neutral-100 space-y-3">
+            {/* Needs You: the action queue. One click gathers every waiting
+                conversation across ALL channels (forces channel=all) so nothing
+                hides behind a channel filter. Toggles back to All. */}
+            <button
+              onClick={() => { if (tab === 'needs') { setTab('all'); setFocusMode(false) } else { setChannel('all'); setTab('needs') } }}
+              className={`w-full inline-flex items-center justify-center gap-2 text-sm font-bold px-3 py-2.5 rounded-xl border transition-colors ${
+                tab === 'needs'
+                  ? 'bg-[#cd2653] text-white border-[#cd2653] shadow-sm'
+                  : counts?.needs_human
+                    ? 'bg-rose-50 text-[#cd2653] border-rose-200 hover:bg-rose-100'
+                    : 'bg-neutral-50 text-neutral-500 border-neutral-200 hover:bg-neutral-100'
+              }`}>
+              <Bell className="w-4 h-4" />
+              Needs You{counts ? ` (${counts.needs_human})` : ''}
+            </button>
             {/* Channel is the PRIMARY axis: a prominent segmented control,
                 counted, server-side filtered via setChannel -> load(). The
                 status row below stays the secondary axis. */}
@@ -950,7 +1038,7 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
             </div>
             <div className="flex gap-0.5 rounded-lg bg-neutral-100 p-0.5">
               {(['all', 'unread', 'open', 'resolved'] as const).map((t) => (
-                <button key={t} onClick={() => setTab(t)}
+                <button key={t} onClick={() => { setTab(t); setFocusMode(false) }}
                   className={`flex-1 text-[11px] font-semibold px-1 py-1 rounded-md capitalize ${tab === t ? 'bg-white text-[#cd2653] shadow-sm' : 'text-neutral-500 hover:text-neutral-900'}`}>
                   {t}{t === 'unread' && counts?.unread ? ` ${counts.unread}` : ''}
                 </button>
@@ -987,7 +1075,9 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
             {loading ? (
               <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-neutral-400" /></div>
             ) : filtered.length === 0 ? (
-              <p className="p-6 text-sm text-neutral-400 text-center">No conversations match.</p>
+              tab === 'needs'
+                ? <div className="p-8 text-center"><Check className="w-6 h-6 text-emerald-500 mx-auto mb-2" /><p className="text-sm font-semibold text-neutral-700">You&apos;re all caught up.</p><p className="text-xs text-neutral-400 mt-0.5">Nobody is waiting on a human right now.</p></div>
+                : <p className="p-6 text-sm text-neutral-400 text-center">No conversations match.</p>
             ) : (
               <div className="divide-y divide-neutral-100">
                 {filtered.map((c) => {
@@ -1026,6 +1116,7 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
             )}
           </div>
         </div>
+        )}
       </div>
     </AdminPage>
   )

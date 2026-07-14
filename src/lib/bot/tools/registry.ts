@@ -267,6 +267,28 @@ function getLogoUploadLink(): string {
   return `You can upload your logo in the portal at ${PORTAL_LOGIN}. Log in, open Profile, and use the logo upload (JPG or PNG works best). It appears on the public festival map once your stall is confirmed.`
 }
 
+// Drop a [NEEDS_HUMAN] breadcrumb on the vendor's own WhatsApp thread so the
+// admin "Needs You" queue can surface a follow-up the bot promised ("I've passed
+// this to the team"). Same marker doctrine as [HUMAN_HANDOVER_*]: the unified
+// inbox scan reads it and isMarker() hides it from previews. It clears when a
+// human replies through the composer (metadata.sent_by) or the thread is
+// resolved. Best-effort: never breaks the tool it rides on.
+async function flagNeedsHuman(vendorId: string, label: string): Promise<void> {
+  try {
+    const db = createAdminClient()
+    const { data } = await db.from('vendor_applications').select('phone').eq('id', vendorId).maybeSingle()
+    const phone = ((data as { phone?: string | null } | null)?.phone || '').replace(/\D/g, '')
+    if (!phone) return
+    await db.from('wa_messages').insert({
+      direction: 'out',
+      wa_phone: phone,
+      body: `[NEEDS_HUMAN] ${label}`.slice(0, 300),
+      status: 'sent',
+      metadata: { system: true, needs_human: true },
+    })
+  } catch (e) { console.error('[flagNeedsHuman] failed:', (e as Error).message) }
+}
+
 async function requestStallChange(vendorId: string, requestedTier: string): Promise<string> {
   const row = await ownRow(vendorId)
   if (!row) return 'I could not find your application.'
@@ -289,6 +311,7 @@ async function requestStallChange(vendorId: string, requestedTier: string): Prom
       audience: 'all',
     })
   } catch (e) { console.error('[tool request_stall_change] notify failed:', (e as Error).message) }
+  await flagNeedsHuman(vendorId, `stall change request: "${clean}"`)
   return `Done. I have submitted your request to change from ${currentTier} to "${clean}". The team will review it (stall changes affect pricing and placement, so a person confirms them) and get back to you. You can also track it in your portal.`
 }
 
@@ -307,6 +330,7 @@ async function escalateToHuman(vendorId: string, note: string): Promise<string> 
       audience: 'all',
     })
   } catch (e) { console.error('[tool escalate_to_human] notify failed:', (e as Error).message) }
+  await flagNeedsHuman(vendorId, `asked for a human: "${clean.slice(0, 120)}"`)
   return `I have logged this for the festival team and notified them: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". They will follow up with you here. Anything else in the meantime?`
 }
 
