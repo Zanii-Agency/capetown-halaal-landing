@@ -84,7 +84,7 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
   const [supportUnread, setSupportUnread] = useState(0)
-  const [needsHuman, setNeedsHuman] = useState(0)
+  const [needsResponse, setNeedsResponse] = useState(0)
   const [pendingApps, setPendingApps] = useState<number | null>(null)
   // Collapsed state for desktop (lg+) sidebar. Persisted to localStorage so the
   // operator's preference survives reloads. Mobile drawer is unaffected.
@@ -122,7 +122,7 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
         const j = await res.json()
         if (cancelled) return
         setSupportUnread(j.counts?.unread || 0)
-        setNeedsHuman(j.counts?.needs_human || 0)
+        setNeedsResponse(j.counts?.needs_response || 0)
       } catch { /* swallow */ }
     }
     tick()
@@ -255,7 +255,7 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
                 : item.href === '/admin/customer-inbox'
                   ? (onInbox && !isNeedsView)
                   : isItemActive(item.href)
-              const badgeNum = item.href.includes('view=needs') ? needsHuman
+              const badgeNum = item.href.includes('view=needs') ? needsResponse
                 : item.href === '/admin/customer-inbox' ? supportUnread
                 : item.href === '/admin/applications' ? pendingApps
                 : null

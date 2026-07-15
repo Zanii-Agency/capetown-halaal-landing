@@ -2,7 +2,7 @@
 
 // Needs You — a PURPOSE-BUILT triage surface, deliberately NOT the inbox shell.
 // No channel tabs, no Unread/Open/Resolved, no search, no tag filter. Just the
-// people waiting on a human, the conversation, and a reply box. Two modes:
+// people awaiting a response, the conversation, and a reply box. Two modes:
 //   SPLIT  — [ WAITING list ] | [ chat + reply ]   (default)
 //   FOCUS  — [ chat + reply ] + ‹ prev  ● ○○○  next ›  (carousel, list hidden)
 // Reuses the unified inbox pipes (list / messages / reply / status); owns only
@@ -23,7 +23,7 @@ interface Contact {
   last_message_at: string | null
   last_preview: string | null
   application_id: string | null
-  needs_human: boolean
+  needs_response: boolean
   last_channel: 'whatsapp' | 'email'
   mailbox: 'gmail' | 'youngatheart' | null
 }
@@ -90,7 +90,7 @@ export function NeedsYouClient() {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
 
-  const waiting = useMemo(() => contacts.filter((c) => c.needs_human), [contacts])
+  const waiting = useMemo(() => contacts.filter((c) => c.needs_response), [contacts])
   // Breakdown across the three client channels, shown in the top bar so it's
   // obvious the queue spans WhatsApp + both email inboxes.
   const breakdown = useMemo(() => {
@@ -239,7 +239,7 @@ export function NeedsYouClient() {
   const markDone = useCallback(async () => {
     if (!active) return
     const handled = active.id
-    setContacts((prev) => prev.map((c) => (c.id === handled ? { ...c, needs_human: false } : c)))
+    setContacts((prev) => prev.map((c) => (c.id === handled ? { ...c, needs_response: false } : c)))
     advance(handled)
     try {
       await fetch('/api/admin/inbox/unified/status', {
@@ -259,7 +259,7 @@ export function NeedsYouClient() {
         <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-16">
           <Check className="w-8 h-8 text-emerald-500 mb-3" />
           <p className="text-sm font-semibold text-neutral-700">You&apos;re all caught up.</p>
-          <p className="text-xs text-neutral-400 mt-0.5">Nobody is waiting on a human right now.</p>
+          <p className="text-xs text-neutral-400 mt-0.5">Nobody is awaiting a response right now.</p>
         </div>
       ) : (
         <>
@@ -339,7 +339,7 @@ export function NeedsYouClient() {
   )
 
   return (
-    <AdminPage fill title="Needs You" caption="ACTION QUEUE" subtitle="Everyone waiting on a human, in one place. Reply and move to the next.">
+    <AdminPage fill title="Needs You" caption="ACTION QUEUE" subtitle="Everyone awaiting a response, in one place. Reply and move to the next.">
       <div className="flex flex-col h-[calc(100dvh-6rem)] lg:h-full">
         {/* Top bar: count + Focus toggle */}
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 border border-neutral-200 rounded-t-2xl bg-rose-50/70 shrink-0">

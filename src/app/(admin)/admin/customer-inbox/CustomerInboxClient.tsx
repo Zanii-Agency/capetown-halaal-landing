@@ -35,7 +35,7 @@ interface Contact {
   application_id: string | null
   status: string
   bot_paused: boolean
-  needs_human: boolean
+  needs_response: boolean
 }
 
 interface MediaInfo {
@@ -185,7 +185,7 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   const [tagFilter, setTagFilter] = useState<InboxTag | null>(null)
   const [channel, setChannel] = useState<Channel>('all')
   const [contacts, setContacts] = useState<Contact[]>([])
-  const [counts, setCounts] = useState<{ all: number; whatsapp: number; email: number; unread: number; needs_human: number } | null>(null)
+  const [counts, setCounts] = useState<{ all: number; whatsapp: number; email: number; unread: number; needs_response: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -330,7 +330,7 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   const filtered = useMemo(() => {
     let list = contacts
     if (tab === 'unread') list = list.filter((c) => c.unread)
-    else if (tab === 'needs') list = list.filter((c) => c.needs_human)
+    else if (tab === 'needs') list = list.filter((c) => c.needs_response)
     else if (tab === 'mine') list = list.filter((c) => c.assignee_id === currentUserId)
     else if (tab !== 'all') list = list.filter((c) => c.status === tab)
     if (tagFilter) list = list.filter((c) => c.tag === tagFilter)
@@ -525,10 +525,10 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   // In Focus mode, after a conversation is handled (replied or resolved), jump
   // to the NEXT still-waiting one so she clears the stack without leaving the
   // screen. The just-handled id is excluded because local state hasn't refetched
-  // its (now-false) needs_human yet.
+  // its (now-false) needs_response yet.
   const advanceNeeds = useCallback((handledId: string) => {
     if (!focusMode || tab !== 'needs') return
-    const order = contacts.filter((c) => c.needs_human && c.status !== 'resolved')
+    const order = contacts.filter((c) => c.needs_response && c.status !== 'resolved')
     const idx = order.findIndex((c) => c.id === handledId)
     const next = order.slice(idx + 1).find((c) => c.id !== handledId)
       || order.find((c) => c.id !== handledId)

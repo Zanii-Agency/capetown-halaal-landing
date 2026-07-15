@@ -410,19 +410,21 @@ export async function GET(req: NextRequest) {
     const escAt = p ? needsHumanAt.get(p) : undefined
     const repliedAt = p ? humanReplyAt.get(p) : undefined
     const openEscalation = !!escAt && (!repliedAt || new Date(escAt) > new Date(repliedAt))
-    // "Needs You" = a human owes this conversation something, and it isn't
-    // resolved. Union of (unanswered inbound) ∪ (human took over) ∪ (open bot
-    // escalation). Self-clears: a reply flips unread AND advances humanReplyAt;
-    // Resolve removes it outright.
-    // Drop marketing/automated email-only senders from "needs a human" (they
-    // still show in the full Inbox). Vendors (application_id set) and anything
-    // with a phone/WhatsApp are always kept — only cold automated email is cut.
+    // "Needs a RESPONSE" (not just needs a human): the customer sent the last
+    // message and no reply has gone back, OR the bot escalated a follow-up a
+    // human still owes. Keyed on last_direction === 'in', NOT read state — so
+    // merely OPENING a conversation does not clear it; only actually replying
+    // (which flips last_direction to 'out') or resolving does. That is the
+    // difference: a read-but-unanswered thread still needs a response. (`unread`
+    // and `bot_paused` are still returned for the main inbox's own badges.)
+    // Drop marketing/automated email-only senders (they still show in the full
+    // Inbox). Vendors and anything on WhatsApp are always kept.
     const automatedNoise = !c.phone && !c.application_id && !!c.email && isAutomatedEmail(c.email)
-    const needs_human = c.status !== 'resolved' && (unread || botPaused || openEscalation) && !automatedNoise
+    const needs_response = c.status !== 'resolved' && (c.last_direction === 'in' || openEscalation) && !automatedNoise
     // Mailbox tag for email contacts so the UI can tell the two email channels
     // apart (Gmail vs support@youngatheart). Null for WhatsApp-only contacts.
     const mailbox = c.email ? (mailboxByPeer.get(c.email.toLowerCase()) || 'youngatheart') : null
-    return { ...c, read_at: readAt, unread, bot_paused: botPaused, needs_human, mailbox }
+    return { ...c, read_at: readAt, unread, bot_paused: botPaused, needs_response, mailbox }
   })
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
 
@@ -434,7 +436,7 @@ export async function GET(req: NextRequest) {
     whatsapp: list.filter((c) => c.channels.includes('whatsapp')).length,
     email: list.filter((c) => c.channels.includes('email')).length,
     unread: list.filter((c) => c.unread).length,
-    needs_human: list.filter((c) => c.needs_human).length,
+    needs_response: list.filter((c) => c.needs_response).length,
   }
 
   const displayList = channelFilter === 'all' ? list : list.filter((c) => c.channels.includes(channelFilter))
