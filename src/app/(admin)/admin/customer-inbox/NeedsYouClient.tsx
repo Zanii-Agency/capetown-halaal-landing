@@ -346,13 +346,13 @@ export function NeedsYouClient() {
           <div className="flex items-center gap-2 flex-wrap">
             <Bell className="w-4 h-4 text-[#cd2653]" />
             <span className="text-sm font-bold text-[#cd2653]">{waiting.length} waiting</span>
-            {(breakdown.wa > 0 || breakdown.gmail > 0 || breakdown.yah > 0) && (
-              <span className="text-[11px] font-medium text-neutral-500 flex items-center gap-1.5">
-                {breakdown.wa > 0 && <span className="inline-flex items-center gap-1"><MessageCircle className="w-3 h-3 text-emerald-600" />{breakdown.wa}</span>}
-                {breakdown.yah > 0 && <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3 text-blue-600" />{breakdown.yah} YAH</span>}
-                {breakdown.gmail > 0 && <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3 text-rose-500" />{breakdown.gmail} Gmail</span>}
-              </span>
-            )}
+            {/* Always show all three channels (even at 0) so it's clear the queue
+                covers WhatsApp + both email inboxes at a glance. */}
+            <span className="text-[11px] font-medium text-neutral-500 flex items-center gap-2">
+              <span className="inline-flex items-center gap-1"><MessageCircle className="w-3 h-3 text-emerald-600" />{breakdown.wa} WhatsApp</span>
+              <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3 text-blue-600" />{breakdown.yah} YAH</span>
+              <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3 text-rose-500" />{breakdown.gmail} Gmail</span>
+            </span>
             {pos >= 0 && <span className="text-[11px] font-semibold text-rose-700/70">· on {pos + 1} of {waiting.length}</span>}
           </div>
           <button onClick={() => setFocus((v) => !v)}
