@@ -18,7 +18,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { classifyIntent, intentFaqKeys, Intent, IntentResult } from './festival-brain/intents'
-import { matchFaq, buildGroundingContext, FaqEntry } from './festival-brain/faq'
+import { matchFaq, buildGroundingContext, FaqEntry, FAQ, FaqKey } from './festival-brain/faq'
 import {
   buildSystemPrompt,
   stripEmDashes,
@@ -347,11 +347,15 @@ export async function askFestivalBrain(
     }
   }
 
-  // Grounding keys must obey the same public/vendor wall as the FAQ
-  // short-circuit: on the public surface, strip vendor-operational keys
-  // (stall prices, electricity, halaal-cert detail) so their facts never reach
-  // the LLM and get echoed past PUBLIC_VENDOR_SCOPE. (KT #323)
-  let groundingKeys = intentFaqKeys(intent.intent)
+  // FULL-CONTEXT GROUNDING: inject the ENTIRE FAQ every turn, not just the
+  // classified intent's keys. The whole FAQ is ~3k tokens (fits the window 60x
+  // over), so there is no reason to retrieve a subset — a keyword/intent miss was
+  // the #1 cause of the bot deferring a question it actually had the answer to.
+  // The model sees every fact and can always answer what is covered. Still obeys
+  // the public/vendor wall: on the public surface, vendor-operational keys (stall
+  // prices, electricity, halaal-cert detail) are stripped so they never leak past
+  // PUBLIC_VENDOR_SCOPE. (Supersedes the intent-scoped grounding, KT #323.)
+  let groundingKeys = Object.keys(FAQ) as FaqKey[]
   if (context.surface !== 'vendor') {
     groundingKeys = groundingKeys.filter((k) => !VENDOR_ONLY_FAQ.has(k))
   }

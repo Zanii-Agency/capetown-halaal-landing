@@ -33,6 +33,10 @@ export type FaqKey =
   | 'ticket_collection'
   | 'ticket_scan_issue'
   | 'vendor_payment_method'
+  | 'stall_allocation'
+  | 'vendor_approval_time'
+  | 'vendor_after_payment'
+  | 'vendor_gate_passes'
 
 export interface FaqEntry {
   key: FaqKey
@@ -353,6 +357,59 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
       'If an e-ticket will not scan, go to the customer service desk at the entrance with the booking confirmation email ready. Staff will assist.',
     answer:
       'If your e-ticket will not scan, head to the customer service desk at the entrance with your booking confirmation email ready, and staff will sort it out.',
+  },
+  // Vendor-lifecycle facts — public-safe (no prices, no floor-plan detail), so
+  // the WhatsApp bot can answer "when do I get my stall / has allocation started"
+  // without deferring. Operational pricing stays in VENDOR_ONLY_FAQ.
+  stall_allocation: {
+    key: 'stall_allocation',
+    patterns: [
+      /\b(stall|spot|space|pitch|table).{0,20}\b(alloc|assign|number|placement|where|which|get|receive|confirm)\b/i,
+      /\b(alloc|placement)\b/i,
+      /\bwhere.{0,10}(is|will).{0,10}(my|the).{0,10}(stall|spot|space)\b/i,
+      /\bhas.{0,15}(allocation|stall).{0,15}(start|begun|happen)\b/i,
+      /\bwhen.{0,20}(get|know|receive).{0,15}(my )?(stall|spot|space|placement)\b/i,
+    ],
+    fact:
+      'Stall allocation happens closer to the festival, not yet. After a vendor is approved and has paid, they wait for their stall to be allocated and emailed to them. Outdoor spots (trucks, bedouin) are allocated on setup day, not in advance.',
+    answer:
+      'Stall allocation happens closer to the festival, so it has not started yet. Once you are approved and have paid, you wait for your stall to be allocated and emailed to you. Outdoor spots are allocated on setup day.',
+  },
+  vendor_approval_time: {
+    key: 'vendor_approval_time',
+    patterns: [
+      /\b(how long|when).{0,25}(approv|accept|hear back|response|review)\b/i,
+      /\bapprov.{0,15}(take|long|time|wait)\b/i,
+      /\bstill.{0,10}waiting.{0,15}(approv|review|response)\b/i,
+    ],
+    fact:
+      'Vendor applications are reviewed and approval takes a few working days.',
+    answer:
+      'Applications are reviewed and approval usually takes a few working days. Once you are approved you will be able to pay and manage everything in your exhibitor portal.',
+  },
+  vendor_after_payment: {
+    key: 'vendor_after_payment',
+    patterns: [
+      /\b(paid|payment done|after.{0,10}pay|next step|what.{0,10}now).{0,20}(stall|next|happen|then)?\b/i,
+      /\bi.{0,5}(have )?paid\b/i,
+      /\bwhat.{0,15}(happens|next).{0,15}(after|once).{0,10}(i )?pay\b/i,
+    ],
+    fact:
+      'After paying, the vendor gets a confirmation and tax invoice by email, then waits for their stall to be allocated closer to the festival. Everything (invoice, documents, staff passes, stall) is managed in the exhibitor portal.',
+    answer:
+      'After you pay, you get a confirmation and tax invoice by email. Your stall is then allocated closer to the festival and emailed to you. You can view your invoice, upload documents, and add staff in your exhibitor portal.',
+  },
+  vendor_gate_passes: {
+    key: 'vendor_gate_passes',
+    patterns: [
+      /\b(staff|team|helper|worker).{0,15}(pass|gate|entry|access|badge|ticket)\b/i,
+      /\bgate pass|access pass|staff badge\b/i,
+      /\bhow many.{0,10}(staff|people|team).{0,15}(bring|allow|pass)\b/i,
+    ],
+    fact:
+      'Approved vendors add their staff for gate passes in the exhibitor portal, so their team can get through the gate on event days.',
+    answer:
+      'You add your staff for gate passes in your exhibitor portal at cthalaal.co.za/exhibitor/login, so your team can get through the gate on event days.',
   },
 }
 
