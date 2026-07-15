@@ -126,7 +126,9 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
       } catch { /* swallow */ }
     }
     tick()
-    const id = setInterval(tick, 60000)
+    // 30s (was 60s) so the Needs You / unread badges track the inbox page more
+    // closely — a 60s badge visibly lagged the live queue count.
+    const id = setInterval(tick, 30000)
     return () => { cancelled = true; clearInterval(id) }
   }, [])
 

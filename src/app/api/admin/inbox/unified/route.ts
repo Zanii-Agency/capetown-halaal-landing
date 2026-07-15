@@ -48,13 +48,16 @@ const norm = (p: string) => p.replace(/^\+/, '')
 // (admin@somecompany.co.za) are NOT matched, so genuine new clients still show.
 // They remain visible in the main Inbox; this only drops them from Needs You.
 const AUTOMATED_LOCAL = /(^|[._-])(no?[._-]?reply|do[._-]?not[._-]?reply|donotreply|mailer[._-]?daemon|mailer|bounce|postmaster|newsletter|marketing|promo|promotions?|notifications?|notify|alerts?|updates?|deals?|offers?|campaigns?|automated)([._-]|$)/
-const BULK_DOMAIN = /(substack\.com|mailchimp|mcsv\.net|mcdlv\.net|sendgrid|sparkpostmail|mailgun|amazonses|sendinblue|brevo|hubspot|marketo|klaviyomail|list-manage|constantcontact|dollarflightclub\.com|thedailynavigator|beehiiv|convertkit|drip\.com|activehosted|customer\.io|intercom-mail|mailerlite|getresponse|aweber)/
+const BULK_DOMAIN = /(substack\.com|mailchimp|mcsv\.net|mcdlv\.net|sendgrid|sparkpostmail|mailgun|amazonses|sendinblue|brevo|brevosend|metamail\.com|hubspot|marketo|klaviyomail|list-manage|constantcontact|dollarflightclub\.com|thedailynavigator|sage\.com|smartcall\.co\.za|beehiiv|convertkit|drip\.com|activehosted|customer\.io|intercom-mail|mailerlite|getresponse|aweber)/
+// Our OWN addresses landing as a "peer" = a system self-notification (e.g. the
+// notifyOwners email backstop "[YAH] vendor support message"), never a client.
+const INTERNAL_DOMAIN = /(^|\.)(youngatheart\.co\.za|cthalaal\.co\.za)$/
 function isAutomatedEmail(email: string): boolean {
   const at = email.toLowerCase().indexOf('@')
   if (at < 0) return false
   const local = email.slice(0, at).toLowerCase()
   const domain = email.slice(at + 1).toLowerCase()
-  return AUTOMATED_LOCAL.test(local) || BULK_DOMAIN.test(domain)
+  return AUTOMATED_LOCAL.test(local) || BULK_DOMAIN.test(domain) || INTERNAL_DOMAIN.test(domain)
 }
 // tag column is pipe-encoded: "starred", "payment", or "starred|payment".
 function parseTag(v: string | null): { starred: boolean; tag: string | null } {
