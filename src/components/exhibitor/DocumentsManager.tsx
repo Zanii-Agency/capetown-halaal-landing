@@ -70,7 +70,7 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-semibold text-red-800 text-sm">{doc.type} — Rejected</p>
+                    <p className="font-semibold text-red-800 text-sm">{doc.type}: Rejected</p>
                     <p className="text-red-700 text-xs mt-1">{doc.note}</p>
                     <button onClick={() => { inputs.current[r.type]?.click() }}
                       className="mt-2 text-xs font-medium text-red-700 underline hover:text-red-800">

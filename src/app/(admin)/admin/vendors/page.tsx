@@ -89,9 +89,7 @@ export default async function VendorsListPage() {
     )
   }
 
-  return (
-    <AdminPage title="Approved vendors" caption="VENDORS">
-      <VendorsList rows={rows} />
-    </AdminPage>
-  )
+  // VendorsList carries its own page header + padding, so it renders directly
+  // (wrapping it in AdminPage would double the "Approved vendors / VENDORS" header).
+  return <VendorsList rows={rows} />
 }

@@ -345,8 +345,19 @@ export default function HomePage() {
                   )
                 ))}
                 <a
+                  href="https://tickets.youngatheart.co.za"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="w-full mt-2 flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold text-white bg-gradient-to-r from-[#cd2653] to-[#bf3026] rounded-xl"
+                >
+                  <Ticket className="w-4 h-4" />
+                  Get Tickets
+                </a>
+                <a
                   href="/apply"
-                  className="w-full mt-2 flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium text-white bg-gradient-to-r from-[#cd2653] to-[#bf3026] rounded-xl sm:hidden"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="w-full flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium text-[#cd2653] border border-[#cd2653]/30 hover:bg-[#cd2653]/5 rounded-xl"
                 >
                   <Store className="w-4 h-4" />
                   Vendor Application

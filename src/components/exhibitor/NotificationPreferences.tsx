@@ -31,12 +31,12 @@ const DEFAULT_PREFS: Prefs = {
 }
 
 const ROWS: { key: PrefKey; label: string }[] = [
-  { key: 'stall_allocated_whatsapp', label: 'Stall allocation — WhatsApp' },
-  { key: 'stall_allocated_email', label: 'Stall allocation — Email' },
-  { key: 'document_approved_whatsapp', label: 'Document approved — WhatsApp' },
-  { key: 'document_approved_email', label: 'Document approved — Email' },
-  { key: 'document_rejected_whatsapp', label: 'Document needs attention — WhatsApp' },
-  { key: 'document_rejected_email', label: 'Document needs attention — Email' },
+  { key: 'stall_allocated_whatsapp', label: 'Stall allocation: WhatsApp' },
+  { key: 'stall_allocated_email', label: 'Stall allocation: Email' },
+  { key: 'document_approved_whatsapp', label: 'Document approved: WhatsApp' },
+  { key: 'document_approved_email', label: 'Document approved: Email' },
+  { key: 'document_rejected_whatsapp', label: 'Document needs attention: WhatsApp' },
+  { key: 'document_rejected_email', label: 'Document needs attention: Email' },
 ]
 
 function coercePrefs(raw: unknown): Prefs {

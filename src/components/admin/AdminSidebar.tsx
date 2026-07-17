@@ -315,8 +315,10 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
       </nav>
 
       {/* Sidebar collapse toggle — dedicated row between nav and account
-          section. Always in the same position regardless of state. */}
-      <div className={cn('border-t border-neutral-200', collapsed ? 'px-2 py-2' : 'px-3 py-2')}>
+          section. Always in the same position regardless of state. Desktop
+          only: on mobile the sidebar is a full-width drawer, so collapsing
+          (which just narrows the md+ rail) is meaningless clutter. */}
+      <div className={cn('hidden md:block border-t border-neutral-200', collapsed ? 'px-2 py-2' : 'px-3 py-2')}>
         <button
           type="button"
           onClick={() => setCollapsed((c) => !c)}
