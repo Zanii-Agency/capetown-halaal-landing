@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { matchFaq, FAQ } from './faq'
+import { matchFaq, buildGroundingContext, FAQ, FaqKey } from './faq'
 import { classifyIntent, intentFaqKeys } from './intents'
+import { VENDOR_ONLY_FAQ } from '../festival-brain'
 
 // Stall-fee payment asks must never be answered with the TICKET-buyer payment
 // entry. payment_methods says "we accept Visa, Mastercard and cash at the
@@ -120,6 +121,39 @@ test('part-payment outranks payment-method when an ask hits both', () => {
   for (const msg of ['can i pay my stall fee in instalments', 'can i put down a deposit on my stall']) {
     assert.equal(matchFaq(msg)?.key, 'vendor_part_payment', `expected part-payment for: ${msg}`)
   }
+})
+
+// PUBLIC SURFACE. The gate mirror above models only the Step-1 intent gate, so it
+// proves nothing about the public/vendor wall: festival-brain.ts drops a FAQ hit
+// whose key is in VENDOR_ONLY_FAQ whenever surface !== 'vendor'. These two assert
+// against the real exported set, so adding the key fails here instead of silently
+// changing what the public bot says. Rationale for keeping it public is on the
+// entry in faq.ts.
+test('stall-fee payment asks still answer on the public surface', () => {
+  assert.equal(
+    VENDOR_ONLY_FAQ.has('vendor_payment_method'),
+    false,
+    'vendor_payment_method is deliberately public, see the rationale comment on the entry in faq.ts',
+  )
+  for (const msg of VENDOR_PAYMENT_ASKS) {
+    const hit = matchFaq(msg)
+    // Mirrors the public-surface drop in festival-brain.ts (surface !== 'vendor').
+    const dropped = !!hit && VENDOR_ONLY_FAQ.has(hit.key)
+    assert.equal(dropped, false, `"${msg}" was dropped on the public surface and now falls to the LLM`)
+  }
+})
+
+// The load-bearing half. VENDOR_ONLY_FAQ also filters LLM grounding, so putting
+// this key in the set would strip "no EFT" from the public model's canonical
+// facts and leave "what are your eft details" unguarded, which is the 2026-07-11
+// invented-EFT incident shape.
+test('the no-EFT fact stays in public LLM grounding', () => {
+  const publicKeys = (Object.keys(FAQ) as FaqKey[]).filter((k) => !VENDOR_ONLY_FAQ.has(k))
+  assert.match(
+    buildGroundingContext(publicKeys),
+    /no EFT or bank transfer/i,
+    'public grounding lost the card-only fact, the LLM can now invent bank details',
+  )
 })
 
 test('the vendor payment answer stays card-only and doctrine-clean', () => {

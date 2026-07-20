@@ -77,7 +77,7 @@ const HOLDING_MESSAGE =
 // allowed publicly. (KT #323 — a public-vs-vendor wall must hold at the
 // grounding layer too, not just the short-circuit; loosening Step 2 exposed
 // that the grounding still leaked stall_sizes prices through the LLM.)
-const VENDOR_ONLY_FAQ = new Set<string>(['halaal_cert', 'stall_sizes', 'electricity'])
+export const VENDOR_ONLY_FAQ = new Set<string>(['halaal_cert', 'stall_sizes', 'electricity'])
 
 const client = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null
 
