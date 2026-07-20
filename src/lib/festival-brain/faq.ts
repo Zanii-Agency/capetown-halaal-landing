@@ -37,6 +37,7 @@ export type FaqKey =
   | 'vendor_approval_time'
   | 'vendor_after_payment'
   | 'vendor_gate_passes'
+  | 'vendor_part_payment'
 
 export interface FaqEntry {
   key: FaqKey
@@ -44,6 +45,13 @@ export interface FaqEntry {
   answer: string
   // Short factual snippet used for LLM grounding (no greeting, no sign-off)
   fact: string
+  /**
+   * Tie-break weight, default 0. matchFaq scores by raw pattern-hit count, so a
+   * narrow entry matching one exact phrase loses to a broad entry that happens to
+   * match one generic word, and on a tie the earlier-declared key wins. Raise this
+   * on entries whose patterns are specific enough that a hit is decisive.
+   */
+  priority?: number
 }
 
 export const FAQ: Record<FaqKey, FaqEntry> = {
@@ -411,6 +419,42 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
     answer:
       'You add your staff for gate passes in your exhibitor portal at cthalaal.co.za/exhibitor/login, so your team can get through the gate on event days.',
   },
+  // Part-payment asks on the STALL FEE. Deliberately absent from intentFaqKeys(),
+  // so the Step-1 intent gate in festival-brain.ts always drops it as a canned
+  // short-circuit and it reaches the model as grounding instead. That is load
+  // bearing twice over: the reply comes out personal (first name + mirrored ask
+  // from the ABOUT THE SENDER block) rather than a canned notice, and grounding
+  // only ever speaks when asked, so the bot cannot volunteer or broadcast it.
+  // Public-safe: states terms, never prices. Directly addresses the misroute
+  // logged at festival-brain.ts:272 (an instalment question answered with
+  // payment methods).
+  vendor_part_payment: {
+    key: 'vendor_part_payment',
+    // These patterns only fire on explicit part-payment language, so one hit is
+    // decisive. Without this, "can I do a part payment" ties payment_methods on
+    // the bare word "payment" and loses on declaration order, which is the
+    // instalment-answered-with-payment-methods misroute all over again.
+    priority: 1,
+    patterns: [
+      /\bpart[\s-]?payments?\b/i,
+      /\binstall?ments?\b/i,
+      /\blay[\s-]?(by|bye|away)\b/i,
+      /\bdeposit\b/i,
+      /\bpay\b.{0,20}\bin\s+(parts|bits|stages|chunks|install?ments?)\b/i,
+      /\bpay\b.{0,15}\b(half|some|a portion|a part|a percentage)\b/i,
+      /\b(half|50\s?%)\b.{0,10}\bnow\b/i,
+      /\bsplit\b.{0,15}\b(the\s+)?(payment|fee|cost|amount|bill)\b/i,
+      /\bpay\b.{0,10}\b(it\s+)?off\b/i,
+      /\bnow\b.{0,20}\brest\b.{0,20}\blater\b/i,
+      /\bpay\b.{0,15}\bmonthly\b/i,
+    ],
+    fact:
+      'Stall fees are not split into part payments, instalments or deposits. The full amount is what settles the stall. A vendor who cannot meet their own payment due date can take until 31 August 2026 to settle in full and keeps their reserved space until then, but this is only offered when they ask for it. Their original due date still stands, so they keep seeing the payment as due and may still receive reminders in the meantime.',
+    // zanii-codef: unreachable while this key stays out of intentFaqKeys(); kept
+    // truthful so it degrades correctly if anyone ever wires it as a canned answer.
+    answer:
+      'We are not able to take the stall fee in parts. The full amount is what settles the stall, and your space stays reserved for you. If the due date on your account is tight, you can take until 31 August 2026 to settle in full. Your account will still show the payment as due and you may still get reminders in the meantime, that is expected as long as you settle by then.',
+  },
 }
 
 /**
@@ -419,15 +463,18 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
  */
 export function matchFaq(message: string): FaqEntry | null {
   const text = message.toLowerCase()
-  let best: { entry: FaqEntry; score: number } | null = null
+  let best: { entry: FaqEntry; score: number; priority: number } | null = null
 
   for (const entry of Object.values(FAQ)) {
     let score = 0
     for (const pat of entry.patterns) {
       if (pat.test(text)) score += 1
     }
-    if (score > 0 && (!best || score > best.score)) {
-      best = { entry, score }
+    if (score === 0) continue
+    const priority = entry.priority ?? 0
+    // Priority dominates, hit-count breaks ties within a priority band.
+    if (!best || priority > best.priority || (priority === best.priority && score > best.score)) {
+      best = { entry, score, priority }
     }
   }
 

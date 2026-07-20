@@ -34,9 +34,14 @@ const TONES: Record<number, { heading: string; lede: string }> = {
     heading: 'Almost time, your stall is at risk',
     lede: `Your deadline is close. After it passes, the spot may be re-allocated to another approved vendor.`,
   },
+  // weekNumber caps at 4, so this tone repeats every week until the vendor pays
+  // or the final settlement date passes. It must not name a countdown it cannot
+  // keep: the old copy promised the spot would be released "within 7 days", which
+  // then repeated weekly without the spot ever being released. Inviting them to
+  // reply is what actually surfaces the on-request extension, so that stays.
   4: {
     heading: 'Final notice, payment overdue',
-    lede: `Your payment is now past due. Reply to this email if you need an extension, otherwise the spot will be released within 7 days.`,
+    lede: `Your payment is now past due and your spot is no longer guaranteed. If you need more time, reply to this email and an organiser will work something out with you.`,
   },
 }
 
@@ -86,8 +91,13 @@ export function VendorPaymentReminder({
 
       <Button href={payUrl}>Pay now via Yoco card</Button>
 
+      {/* Never offer EFT here. Stall fees are card-only via Yoco and there is no
+          bank-transfer option, so naming EFT sends vendors chasing a payment
+          method that does not exist. That exact promise caused a production
+          incident on 2026-07-11 and is a hard rule in the festival brain (see
+          FAQ.vendor_payment_method and INTENT_HINTS.vendor_payment). */}
       <Paragraph>
-        Prefer EFT or have a query? Reply to this email and an organiser will help, or message us on{' '}
+        Have a query? Reply to this email and an organiser will help, or message us on{' '}
         <InlineLink href={`mailto:${brand.contact.email}`}>{brand.contact.email}</InlineLink>{' '}
         or {brand.contact.phone}.
       </Paragraph>
