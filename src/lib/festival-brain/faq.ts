@@ -230,12 +230,54 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
   // a production bot invented "the team will send EFT details" and left a
   // vendor stuck waiting for a payment method that doesn't exist). Card only,
   // via the Yoco link in the exhibitor portal.
+  // PUBLIC-SAFE, deliberately. This entry is NOT in VENDOR_ONLY_FAQ and serves on
+  // the public site and WhatsApp. Reviewed and kept public because:
+  //   1. VENDOR_ONLY_FAQ strips a key from LLM grounding too, not just the
+  //      canonical short-circuit (festival-brain.ts, the groundingKeys filter).
+  //      Adding this key would pull the "there is no EFT" fact out of the public
+  //      model's facts, so "what are your eft details" would reach the LLM with
+  //      nothing pinning it to card-only. That is the 2026-07-11 invented-EFT
+  //      incident shape, restored. Dropping the answer here costs more than it saves.
+  //   2. The answer discloses nothing Law 2 protects: no vendor name, phone,
+  //      address, stall code, payment status or admin note, and no price. The
+  //      VENDOR_ONLY_FAQ convention above is about operational PRICING; this entry
+  //      carries none, which is why it sits with vendor_apply and stall_allocation.
+  //   3. It IS the deflection. "No EFT, card via Yoco, log into your portal" is
+  //      what PUBLIC_VENDOR_SCOPE tells the LLM to say anyway, served
+  //      deterministically instead of hopefully.
+  // Known tension, weighed and accepted: PUBLIC_VENDOR_SCOPE lists "how to pay"
+  // among the generic portal questions not to answer for unidentified callers.
+  // That rule guards per-vendor operational data; a categorical card-only answer
+  // exposes none, and the cost of staying silent is a hallucinated bank account.
+  // Change this only alongside a way to keep the fact in public grounding.
   vendor_payment_method: {
     key: 'vendor_payment_method',
+    // A vendor noun ("stall in cash", "the invoice") is decisive: no ticket
+    // buyer phrases a question that way. Without this, payment_methods wins on
+    // the bare word "pay" plus declaration order and answers a stall-fee ask
+    // with "we accept cash at the event", which is false for stall fees. The
+    // intent gate in festival-brain.ts catches most of those, but not when the
+    // classifier reads the message as ticket_buyer ("can I pay my stall in
+    // cash"), where payment_methods is an allowed key and serves canned.
+    priority: 1,
     patterns: [
-      /\b(eft|bank\s*(details|account|transfer)|swift|account\s*number)\b/i,
-      /\bhow (can|do) i pay\b.*\b(stall|stand|fee|invoice)\b/i,
-      /\b(stall|stand|fee|invoice).{0,15}\bpay\b/i,
+      // Any EFT/banking ask is decisive on its own: CTH has never had a
+      // bank-transfer option, so the question can only be about a stall fee.
+      // "banking" needs the optional -ing, without it "banking details" matched
+      // nothing at all and fell through to the LLM unguarded, which is the exact
+      // shape of the 2026-07-11 invented-EFT incident.
+      /\b(eft|bank(ing)?\s*(details|account|transfer)|swift|account\s*number)\b/i,
+      // Bare "fee" is a ticket-buyer word (booking fee, service fee), so it only
+      // counts here when a vendor noun scopes it. Plural both sides: a vendor
+      // holding two stalls asks about "my stall fees" (multi-stall, c96fb91).
+      /\b(stall|stand|booth|exhibitor|vendor)s?\s*(fee|payment|invoice)s?\b/i,
+      // "invoice" and "exhibitor" are unambiguous, no determiner needed.
+      /\bpay\b.{0,20}\b(invoice|exhibitor)\b/i,
+      // stall/stand/booth need a possessive here. Bare nouns would hijack ticket
+      // buyers two ways: "stand" is also a verb ("pay to stand at the front"),
+      // and "stalls" is what a ticket buyer calls the food traders ("pay the
+      // food stalls in cash"). Both are this entry's own misroute, reversed.
+      /\bpay\b.{0,15}\b(my|our|both)\b.{0,10}\b(stall|stand|booth)s?\b/i,
     ],
     fact:
       'Vendor stall fees are paid by card only (Yoco), through the exhibitor portal at cthalaal.co.za/exhibitor/login. There is no EFT or bank transfer option.',
@@ -434,7 +476,10 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
     // decisive. Without this, "can I do a part payment" ties payment_methods on
     // the bare word "payment" and loses on declaration order, which is the
     // instalment-answered-with-payment-methods misroute all over again.
-    priority: 1,
+    // Band 2, above vendor_payment_method's 1: "pay my stall fee in instalments"
+    // hits both, and HOW to pay is the wrong answer to WHETHER it can be split.
+    // Same band would hand it to vendor_payment_method on declaration order.
+    priority: 2,
     patterns: [
       /\bpart[\s-]?payments?\b/i,
       /\binstall?ments?\b/i,
