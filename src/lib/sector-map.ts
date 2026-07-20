@@ -114,3 +114,27 @@ export function deriveSector(
 }
 
 export const SECTORS: ReadonlyArray<Sector> = SECTOR_RULES.map((r) => r.sector)
+
+/**
+ * Canonicalise a single raw category string (e.g. "food", "beverage", "halal",
+ * "Food & Beverage") to one of the fixed {@link Sector} labels. Returns null
+ * when nothing matches, so the caller can bucket unmatched values under a
+ * single "Other" label instead of leaking lowercase dupes into a dropdown.
+ *
+ * Pure / no side effects. Used by the admin allocation sector filter to dedupe
+ * the legacy + proper-case category soup down to the canonical set.
+ */
+export function canonicalSector(raw: string | null | undefined): Sector | null {
+  if (!raw) return null
+  const blob = raw.trim().toLowerCase()
+  if (!blob) return null
+  // Exact canonical match first (proper-case rows already store the label).
+  for (const rule of SECTOR_RULES) {
+    if (rule.sector.toLowerCase() === blob) return rule.sector
+  }
+  // Token match for legacy lowercase fragments ("food", "beverage", "halal"…).
+  for (const rule of SECTOR_RULES) {
+    if (matchAny(blob, rule.tokens)) return rule.sector
+  }
+  return null
+}

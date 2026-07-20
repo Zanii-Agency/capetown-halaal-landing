@@ -14,9 +14,10 @@ import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import {
-  Loader2, CheckCircle2, XCircle, Search, Hash, QrCode, ExternalLink,
+  Loader2, CheckCircle2, XCircle, Search, Hash, QrCode,
   ChevronDown, ChevronUp, RefreshCw, ShieldCheck,
 } from 'lucide-react'
+import { QrCameraScanner } from '@/components/admin/verifier/QrCameraScanner'
 
 type Mode = 'qr' | 'number' | 'search'
 
@@ -92,15 +93,20 @@ function VerifierPageInner() {
     window.setTimeout(() => setToast(null), 2500)
   }, [])
 
-  const runLookup = useCallback(async () => {
-    if (!value.trim()) return
+  // runLookup reads from state by default, but accepts explicit overrides so
+  // the camera scanner can drive a lookup with a freshly decoded payload
+  // without waiting for a setState round-trip.
+  const runLookup = useCallback(async (override?: { mode: Mode; value: string }) => {
+    const useMode = override?.mode ?? mode
+    const useValue = (override?.value ?? value).trim()
+    if (!useValue) return
     setBusy(true)
     setResult(null)
     try {
       const res = await fetch('/api/admin/verifier/lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, value: value.trim() }),
+        body: JSON.stringify({ mode: useMode, value: useValue }),
       })
       const j = await res.json() as LookupResult
       setResult(j)
@@ -111,6 +117,15 @@ function VerifierPageInner() {
       setBusy(false)
     }
   }, [mode, value])
+
+  // Camera scan handler: a decoded QR payload flows straight into the existing
+  // `qr` lookup mode. We also reflect it into the QR input so the operator sees
+  // what was scanned and can re-run or edit if needed. Check-in stays on-platform.
+  const onCameraScan = useCallback((raw: string) => {
+    setMode('qr')
+    setValue(raw)
+    runLookup({ mode: 'qr', value: raw })
+  }, [runLookup])
 
   // Auto-run a lookup when arriving with ?mode=&value= deep-links from
   // /admin/people. Guarded so we only fire once per inbound URL change.
@@ -240,7 +255,7 @@ function VerifierPageInner() {
           </p>
           <button
             type="button"
-            onClick={runLookup}
+            onClick={() => runLookup()}
             disabled={busy || !value.trim()}
             className="px-4 py-2 bg-[#cd2653] text-white text-sm font-semibold rounded-lg hover:bg-[#b01f45] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
@@ -262,7 +277,10 @@ function VerifierPageInner() {
         />
       )}
 
-      {/* Express Check-In embed */}
+      {/* On-platform camera scanner. Replaces the old cross-origin WordPress
+          iframe embed (which rendered blank): we read the QR off the device
+          camera in-page and feed it into the existing verifier lookup, so
+          check-in never leaves this page. */}
       <div className="mt-8 bg-white border border-neutral-200 rounded-xl overflow-hidden">
         <button
           type="button"
@@ -271,33 +289,13 @@ function VerifierPageInner() {
         >
           <div className="flex items-center gap-2">
             <QrCode className="w-4 h-4 text-neutral-500" />
-            <span className="font-semibold text-neutral-900 text-sm">Open FooEvents scanner (camera)</span>
+            <span className="font-semibold text-neutral-900 text-sm">Scan with camera</span>
           </div>
           {scannerOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>
         {scannerOpen && (
           <div className="border-t border-neutral-200 p-4">
-            <p className="text-xs text-neutral-600 mb-3">
-              The scanner lives on the ticket store WordPress side. Some browsers block embedding,
-              so the link below opens it in a new tab.
-            </p>
-            <a
-              href={SCANNER_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white text-sm font-semibold rounded-lg hover:bg-neutral-800"
-            >
-              <ExternalLink className="w-4 h-4" />
-              Open Express Check-In
-            </a>
-            <div className="mt-4 rounded-lg overflow-hidden border border-neutral-200">
-              <iframe
-                src={SCANNER_URL}
-                className="w-full h-[60vh] bg-white"
-                title="FooEvents Express Check-In"
-                referrerPolicy="no-referrer"
-              />
-            </div>
+            <QrCameraScanner onScan={onCameraScan} fallbackUrl={SCANNER_URL} />
           </div>
         )}
       </div>

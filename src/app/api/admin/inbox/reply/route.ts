@@ -38,12 +38,12 @@
  */
 
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendText, sendTemplate, toE164 } from '@/lib/whatsapp'
 import { sendEmail } from '@/lib/email/resend'
 import { findWaTemplate, buildWaTemplateParams } from '@/lib/templates/wa-meta'
 import { findMailTemplate, renderMailTemplate, validateMailTemplate } from '@/lib/mail/templates'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -60,32 +60,16 @@ interface ReplyBody {
   mark_done?: boolean
 }
 
-async function requireAdmin(): Promise<{ userId: string; email: string } | null> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return null
-  const admin = createAdminClient()
-  const { data } = await admin
-    .from('admin_users')
-    .select('id,email')
-    .eq('id', user.id)
-    .limit(1)
-  if (!data || data.length === 0) return null
-  return { userId: user.id, email: (data[0].email as string) ?? '' }
-}
-
 function makeMessageId(threadId: string): string {
   const rand = Math.random().toString(36).slice(2, 10)
   return `<${threadId}.${Date.now()}.${rand}@youngatheart.co.za>`
 }
 
 export async function POST(req: Request) {
-  const session = await requireAdmin()
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // SENDS WhatsApp/email + writes message rows + mutates threads. Owner/operator.
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
+  const session = { userId: gate.user.id, email: gate.adminUser.email ?? '' }
 
   let payload: ReplyBody
   try {

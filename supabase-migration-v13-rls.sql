@@ -1,4 +1,25 @@
 -- =====================================================
+-- ⛔ DO NOT APPLY THIS FILE AS-IS. NOT APPLIED TO PROD. (verified 2026-06-22)
+--
+-- Skeptic probe of the live CTH DB (project dtdqopjdxwfvtyrnygdt, via mgmt API):
+--   * is_admin() / is_owner() functions DO NOT EXIST in prod -> this migration
+--     was never run.
+--   * RLS IS already enabled on admin_users / vendor_applications / mail_messages /
+--     mail_optout / wa_threads, governed by OLDER, WORKING policies that check
+--     plain membership: EXISTS (select 1 from admin_users where id = auth.uid()).
+--     Those policies have NO role-enum check, so there is NO operator lockout.
+--   * The app reads/writes these tables via the SERVICE ROLE client
+--     (createAdminClient), which bypasses RLS entirely. RLS here is defence in
+--     depth, not load-bearing.
+--
+-- Therefore the `role IN ('admin','owner')` check below is a latent bug ONLY in
+-- this unran file (the app's real enum is 'owner'|'operator'|'viewer'). Applying
+-- this file would REPLACE the working membership policies with role-gated ones
+-- that exclude 'operator' -> a NEW breakage, not a fix. If RLS role-hardening is
+-- ever wanted, treat it as a deliberate Tier-1 change with its own spec + test,
+-- fix the enum to ('owner','operator') first, and verify against the live app's
+-- service-role bypass. Until then: leave prod's membership policies untouched.
+-- =====================================================
 -- Migration V13: Row Level Security policies for sensitive surfaces
 -- Run AFTER Streams B, C, G land the underlying tables/columns.
 -- Idempotent + re-runnable. Defines policies ONLY (does not ENABLE RLS).

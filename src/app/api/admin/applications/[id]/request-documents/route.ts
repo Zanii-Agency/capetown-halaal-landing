@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { sendEmail } from '@/lib/email/resend'
+import { assertRole } from '@/lib/admin-rbac'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -19,6 +20,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const db = createAdminClient()
   const { data: adminUser } = await db.from('admin_users').select('id').eq('id', user.id).maybeSingle()
   if (!adminUser) return NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 })
+
+  // Role gate: requesting documents sends a live WhatsApp + email — owner/operator only.
+  try {
+    await assertRole(user.id, ['owner', 'operator'])
+  } catch {
+    return NextResponse.json({ ok: false, error: 'insufficient_role' }, { status: 403 })
+  }
 
   const body = await req.json().catch(() => ({}))
   const docs: string[] = Array.isArray(body.docs) ? body.docs.slice(0, 10).map((d: unknown) => String(d).trim()).filter(Boolean) : []

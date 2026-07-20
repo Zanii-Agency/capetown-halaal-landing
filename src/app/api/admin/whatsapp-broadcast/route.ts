@@ -20,8 +20,11 @@
 //   sector            = matches inside vendor_applications.product_categories[]
 //   booth_tier        = exact match on preferred_booth_tier
 //   has_docs          = true|false (true = admin_notes contains '⟦DOCS:complete⟧')
-//   contract_signed   = true|false (admin_notes contains '⟦CONTRACT_SIGNED⟧')
-//   paid              = true|false (admin_notes contains '⟦PAID⟧')
+//   contract_signed   = true|false (true = vendor_applications.contract_signed_at IS NOT NULL,
+//                       the column the /exhibitor/contract/sign route stamps)
+//   paid              = true|false (true = paid_at IS NOT NULL OR
+//                       parsePortalState(admin_notes).payment.status==='paid', same isPaid()
+//                       truth the paygate + confirm.ts use; NO ⟦PAID⟧ marker is ever written)
 //
 // Doctrine notes:
 //   - Outbound mail always goes through zanii-sender (Resend only).
@@ -42,6 +45,9 @@ import { sendTemplate } from '@/lib/whatsapp/sender'
 import { renderTemplate, TEMPLATE_KEYS, type TemplateKey, type TemplateVars } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
+import { parseAllocation } from '@/lib/stalls'
+import { parsePortalState } from '@/lib/portal-state'
+import { assertRole } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -69,8 +75,11 @@ async function assertAdmin(
     .maybeSingle()
   if (!adminUser) return { ok: false, status: 403, error: 'Forbidden' }
   if (requireRole) {
-    const role = ((adminUser as { role?: string }).role || 'operator').toLowerCase()
-    if (!['owner', 'operator'].includes(role)) {
+    // Fail-closed role gate. A null/unknown role must NOT default to operator —
+    // assertRole throws on anything outside owner|operator.
+    try {
+      await assertRole(user.id, ['owner', 'operator'])
+    } catch {
       return { ok: false, status: 403, error: 'insufficient_role' }
     }
   }
@@ -167,18 +176,34 @@ interface AudienceRow {
   product_categories: string[] | null
   status: string | null
   admin_notes: string | null
+  paid_at: string | null
+  contract_signed_at: string | null
 }
 
-const STALL_MARKER_RE = /⟦STALL:([^⟧]+)⟧/
 const DOCS_COMPLETE_MARKER = '⟦DOCS:complete⟧'
-const CONTRACT_SIGNED_MARKER = '⟦CONTRACT_SIGNED⟧'
-const PAID_MARKER = '⟦PAID⟧'
+
+/**
+ * Single source of "paid" truth. Mirrors lib/exhibitor-paygate.ts isPaid():
+ * a vendor counts as paid when the first-class column says so (Yoco webhook /
+ * admin mark-paid via confirm.ts) OR the legacy base64 portal-state marker
+ * does. NO code ever writes a literal ⟦PAID⟧ marker, so the old
+ * notes.includes('⟦PAID⟧') predicate always matched zero rows.
+ */
+function isPaidRow(r: AudienceRow): boolean {
+  if (r.paid_at) return true
+  return parsePortalState(r.admin_notes).payment?.status === 'paid'
+}
+
+/** Contract-signed truth: the column the /exhibitor/contract/sign route stamps. */
+function isContractSignedRow(r: AudienceRow): boolean {
+  return !!r.contract_signed_at
+}
 
 async function buildAudience(filters: BroadcastFilters): Promise<AudienceRow[]> {
   const admin = createAdminClient()
   let q = admin
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, preferred_booth_tier, product_categories, status, admin_notes')
+    .select('id, business_name, contact_name, email, phone, preferred_booth_tier, product_categories, status, admin_notes, paid_at, contract_signed_at')
 
   if (filters.status) q = q.eq('status', filters.status)
   if (filters.booth_tier) q = q.eq('preferred_booth_tier', filters.booth_tier)
@@ -194,10 +219,10 @@ async function buildAudience(filters: BroadcastFilters): Promise<AudienceRow[]> 
     const notes = r.admin_notes || ''
     if (filters.has_docs === true && !notes.includes(DOCS_COMPLETE_MARKER)) return false
     if (filters.has_docs === false && notes.includes(DOCS_COMPLETE_MARKER)) return false
-    if (filters.contract_signed === true && !notes.includes(CONTRACT_SIGNED_MARKER)) return false
-    if (filters.contract_signed === false && notes.includes(CONTRACT_SIGNED_MARKER)) return false
-    if (filters.paid === true && !notes.includes(PAID_MARKER)) return false
-    if (filters.paid === false && notes.includes(PAID_MARKER)) return false
+    if (filters.contract_signed === true && !isContractSignedRow(r)) return false
+    if (filters.contract_signed === false && isContractSignedRow(r)) return false
+    if (filters.paid === true && !isPaidRow(r)) return false
+    if (filters.paid === false && isPaidRow(r)) return false
     return true
   })
 }
@@ -290,8 +315,9 @@ function firstName(contact?: string | null): string | null {
 
 function stallFromNotes(notes?: string | null): string | undefined {
   if (!notes) return undefined
-  const m = STALL_MARKER_RE.exec(notes)
-  return m ? m[1].trim() : undefined
+  // Multi-booth: join the vendor's code list for the {{stall}} merge token.
+  const { stalls } = parseAllocation(notes)
+  return stalls.length ? stalls.join(', ') : undefined
 }
 
 export async function POST(req: NextRequest) {

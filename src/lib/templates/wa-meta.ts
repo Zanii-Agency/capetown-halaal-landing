@@ -120,6 +120,98 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
     ],
   },
+  // ---------------------------------------------------------------------------
+  // PENDING META APPROVAL — added 2026-06-22 to stop notifyVendor silently 400ing
+  // on template names Meta never had. The two events below (document approved /
+  // document rejected) fire from an ADMIN action in the workbench, so the vendor
+  // is almost never inside the 24h customer service window. A free-form sendText
+  // would be blocked by canSend and never deliver, so these MUST go via a
+  // business-initiated template. The exact `key` names below must be CREATED AND
+  // APPROVED in Meta Business Manager against the YAH WABA before they will
+  // actually deliver. Until approved, the send will skip/fail observably (logged
+  // by notifyVendor) instead of silently 400ing on a name that can never exist.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'vendor_document_approved',
+    label: 'Vendor document approved',
+    description: 'Confirm to a vendor that a submitted document was approved.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, good news. Your {{2}} has been approved. Thank you for submitting. You can review your documents in the vendor portal.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'document_label', label: 'Document', placeholder: 'food handling certificate', required: true },
+    ],
+  },
+  {
+    key: 'vendor_document_rejected',
+    label: 'Vendor document needs attention',
+    description: 'Tell a vendor a submitted document was not approved and why.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, your {{2}} was not approved. Reason: {{3}}. Please log in to the vendor portal to upload a replacement.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'document_label', label: 'Document', placeholder: 'food handling certificate', required: true },
+      { key: 'reason', label: 'Reason', placeholder: 'image was blurry', required: true },
+    ],
+  },
+  // ---------------------------------------------------------------------------
+  // PENDING META APPROVAL — added 2026-06-23 to stop confirmPayment() silently
+  // skipping the paid-confirmation WhatsApp. confirmPayment() (lib/payments/
+  // confirm.ts) fires this template on the unpaid -> paid transition, but the
+  // name was never registered here, so findWaTemplate('vendor_payment_
+  // confirmation') returned undefined and the vendor got the email but no
+  // WhatsApp. Param order below MUST match the exact sendTemplate() call in
+  // confirm.ts: [firstName, formatRand(amount), pricing.stallLabel]
+  //   {{1}} = first_name      (e.g. "Aisha")
+  //   {{2}} = amount          (already a formatted Rand string, e.g. "R3,500")
+  //   {{3}} = stall_label     (e.g. "Food stall F-12")
+  // NOTE: amount arrives PRE-FORMATTED as "R3,500" (formatRand), so the approved
+  // Meta body must NOT prepend its own "R" before {{2}}.
+  // ACTION REQUIRED (operator): this exact `key` ('vendor_payment_confirmation')
+  // must be CREATED AND APPROVED in Meta Business Manager against the YAH WABA
+  // before it will actually deliver. Until approved, the send fails observably
+  // (logged + written to wa_messages with status 'failed') instead of silently
+  // skipping.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'vendor_payment_confirmation',
+    label: 'Vendor payment confirmation',
+    description: 'Confirm to a vendor that their stall payment was received.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Payment received, {{1}}. We have confirmed {{2}} for your stall: {{3}}. Your trading spot at Young at Heart Festival 2026 is secured. Welcome to the family.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'amount', label: 'Amount (formatted Rand)', placeholder: 'R3,500', required: true },
+      { key: 'stall_label', label: 'Stall', placeholder: 'Food stall F-12', required: true },
+    ],
+  },
+  // ---------------------------------------------------------------------------
+  // PENDING META APPROVAL — added 2026-06-25 for the logo-upload campaign. Paid
+  // vendors are almost never inside the 24h customer service window, so this
+  // proactive nudge MUST go via a business-initiated template. Create + approve
+  // a template named EXACTLY `vendor_logo_reminder` (English, Utility category)
+  // in Meta Business Manager against the YAH WABA with this body before it will
+  // deliver. Until approved, notifyVendor / the logo-campaign endpoint will skip
+  // observably (logged) instead of silently failing.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'vendor_logo_reminder',
+    label: 'Vendor logo reminder',
+    description: 'Ask a paid vendor to upload their logo so they go live in the public sector listings.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, your stall at Young at Heart Festival 2026 is paid and confirmed. One step left: upload your logo in your vendor portal so you appear with your branding in the public sector listings shoppers browse. It takes under a minute: https://cthalaal.co.za/exhibitor/portal/profile',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+    ],
+  },
 ]
 
 export function findWaTemplate(key: string): WaTemplateSpec | undefined {

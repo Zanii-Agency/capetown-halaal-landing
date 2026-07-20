@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 
 const client = new Anthropic()
 
@@ -12,21 +11,9 @@ Return only the rewritten announcement, no preamble.`
 
 export async function POST(req: NextRequest) {
   try {
-    // Admin auth
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    const admin = createAdminClient()
-    const { data: adminUser } = await admin
-      .from('admin_users')
-      .select('id')
-      .eq('id', user.id)
-      .single()
-    if (!adminUser) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
+    // Role-gated: AI polish burns Anthropic budget, operator tool.
+    const gate = await requireOperator()
+    if (!gate.ok) return gate.response
 
     const { text } = await req.json()
     if (!text || typeof text !== 'string') {

@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
   try {
+    // Was previously UNAUTHENTICATED. Writes a site_events row; gate it.
+    const gate = await requireOperator()
+    if (!gate.ok) return gate.response
+
     const { taskId } = await req.json()
     if (!taskId) {
       return NextResponse.json({ error: 'taskId required' }, { status: 400 })

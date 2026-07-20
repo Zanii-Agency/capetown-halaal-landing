@@ -124,12 +124,31 @@ export async function POST(req: NextRequest) {
         subject: 'Reset your Young at Heart Festival exhibitor password',
         react: PasswordReset({ resetUrl, contactName }),
         text: `Hi ${contactName || 'there'},\n\nWe received a request to reset your Young at Heart Festival exhibitor password. Use this link (expires in 1 hour) to choose a new one:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.\n\nWarm regards,\nThe Young at Heart Festival Team`,
+        // KT #206657: Resend can accept the send and then silently suppress the
+        // recipient. Confirm it actually left so the ops alert below fires on
+        // suppression too, not just on hard API failures.
+        confirmDelivery: true,
       })
 
       if (sendRes?.ok) {
         console.log(`${tag} reset email sent OK`)
       } else {
         console.error(`${tag} sendEmail FAILED:`, sendRes?.error || '(no error message)')
+        // MONITORING (KT #206651 P0.5): the endpoint deliberately returns
+        // {ok:true} to avoid account enumeration, so a real send failure is
+        // otherwise invisible until a vendor complains. Surface it to ops so a
+        // rotated/expired RESEND key or a Resend suppression is caught fast.
+        // Best-effort; never changes the user-facing contract.
+        try {
+          const { notifyOwners } = await import('@/lib/bot/notify')
+          await notifyOwners({
+            event: 'system_alert',
+            body: `Password-reset email FAILED to send to a vendor (${email.trim()}). Reason: ${sendRes?.error || 'unknown'}. Check the Resend key + suppression list.`,
+            audience: 'all',
+          })
+        } catch (e) {
+          console.error(`${tag} ops-alert on send failure failed:`, (e as Error).message)
+        }
       }
     } catch (e) {
       console.error(`${tag} threw:`, (e as Error).message)

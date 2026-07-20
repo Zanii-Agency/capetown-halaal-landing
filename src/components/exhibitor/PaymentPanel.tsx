@@ -6,11 +6,12 @@ import { useSearchParams } from 'next/navigation'
 import { CreditCard, CheckCircle2, Clock, Loader2, Info, RefreshCw, MessageSquare } from 'lucide-react'
 
 export default function PaymentPanel({
-  enabled, status, amount, reference, dueDate, attemptedAt, failedAttempts,
+  enabled, status, amount, outstanding, reference, dueDate, attemptedAt, failedAttempts,
 }: {
   enabled: boolean
   status: string
   amount: number | null
+  outstanding?: number | null
   reference: string | null
   dueDate: string
   attemptedAt?: string | null
@@ -25,16 +26,22 @@ export default function PaymentPanel({
   const [error, setError] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(false)
 
-  const isPaid = status === 'paid' || justPaid
+  const isPaidStatus = status === 'paid' || justPaid
+  // A top-up: the vendor already paid, but the operator added charges after
+  // payment, so a balance is outstanding. `outstanding` is what is due NOW (the
+  // difference). `fullyPaid` is paid with nothing left to settle.
+  const payAmount = typeof outstanding === 'number' ? outstanding : amount
+  const topUpDue = isPaidStatus && (payAmount || 0) > 0
+  const fullyPaid = isPaidStatus && !topUpDue
   // "Pending" only counts if the attempt is FRESH. Yoco checkouts time out
   // after about 15 minutes — anything older is a stale row from an abandoned
   // attempt, treat it as "ready to retry" so we don't lie about progress.
   const PENDING_TTL_MIN = 15
   const attemptAgeMs = attemptedAt ? Date.now() - new Date(attemptedAt).getTime() : Infinity
-  const isFreshPending = !isPaid && status === 'pending' && attemptAgeMs < PENDING_TTL_MIN * 60_000
-  const isStalePending = !isPaid && status === 'pending' && attemptAgeMs >= PENDING_TTL_MIN * 60_000
+  const isFreshPending = !isPaidStatus && status === 'pending' && attemptAgeMs < PENDING_TTL_MIN * 60_000
+  const isStalePending = !isPaidStatus && status === 'pending' && attemptAgeMs >= PENDING_TTL_MIN * 60_000
   const tooManyFails = (failedAttempts || 0) >= 3
-  const showPayBlock = !isPaid && (!isFreshPending || retrying || cancelled || failed || isStalePending)
+  const showPayBlock = !fullyPaid && (topUpDue || !isFreshPending || retrying || cancelled || failed || isStalePending)
 
   async function payByCard() {
     setPaying(true); setError(null)
@@ -53,17 +60,17 @@ export default function PaymentPanel({
       {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
 
       {/* fee status */}
-      <div className={`rounded-2xl p-6 border ${isPaid ? 'bg-green-50 border-green-200' : 'bg-[#1a1416] border-[#1a1416] text-white'}`}>
+      <div className={`rounded-2xl p-6 border ${fullyPaid ? 'bg-green-50 border-green-200' : 'bg-[#1a1416] border-[#1a1416] text-white'}`}>
         <div className="flex items-center gap-3">
-          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${isPaid ? 'bg-green-100 text-green-600' : 'bg-white/10 text-[#ff7a9c]'}`}>
-            {isPaid ? <CheckCircle2 className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${fullyPaid ? 'bg-green-100 text-green-600' : 'bg-white/10 text-[#ff7a9c]'}`}>
+            {fullyPaid ? <CheckCircle2 className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
           </div>
           <div>
-            <p className={`text-sm ${isPaid ? 'text-green-700' : 'text-white/60'}`}>Stall fee</p>
-            <p className={`text-2xl font-bold ${isPaid ? 'text-green-900' : 'text-white'}`}>
-              {isPaid ? 'Paid' : amount ? `R${amount.toFixed(2)} due` : 'Amount pending'}
+            <p className={`text-sm ${fullyPaid ? 'text-green-700' : 'text-white/60'}`}>{topUpDue ? 'Additional payment due' : 'Stall fee'}</p>
+            <p className={`text-2xl font-bold ${fullyPaid ? 'text-green-900' : 'text-white'}`}>
+              {fullyPaid ? 'Paid' : payAmount ? `R${payAmount.toFixed(2)} due` : 'Amount pending'}
             </p>
-            {!isPaid && <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Payable by {dueDate}{reference ? ` · ref ${reference}` : ''}</p>}
+            {!fullyPaid && <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {topUpDue ? 'Extra charges were added to your stall' : `Payable by ${dueDate}`}{reference ? ` · ref ${reference}` : ''}</p>}
           </div>
         </div>
       </div>
@@ -118,7 +125,7 @@ export default function PaymentPanel({
       )}
 
       {/* Repeated failures: route them to WhatsApp support directly */}
-      {tooManyFails && !isPaid && (
+      {tooManyFails && !isPaidStatus && (
         <div className="bg-[#cd2653]/8 border border-[#cd2653]/40 rounded-2xl p-5 flex items-start gap-3">
           <MessageSquare className="w-5 h-5 text-[#cd2653] shrink-0 mt-0.5" />
           <div className="flex-1">
@@ -146,10 +153,10 @@ export default function PaymentPanel({
             {enabled ? (
               <>
                 <p className="text-sm text-neutral-500 mb-4">Secure card payment in South African Rand (ZAR), processed on FNB&rsquo;s 3D-Secure page. We never see or store your card number.</p>
-                <button onClick={payByCard} disabled={paying || !amount}
+                <button onClick={payByCard} disabled={paying || !payAmount}
                   className="bg-[#cd2653] hover:bg-[#b01f45] text-white font-semibold rounded-lg px-5 py-3 text-sm flex items-center gap-2 disabled:opacity-60">
                   {paying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-                  {amount ? `Pay R${amount.toFixed(2)} now` : 'Amount pending'}
+                  {payAmount ? `Pay R${payAmount.toFixed(2)} now` : 'Amount pending'}
                 </button>
                 <p className="text-xs text-neutral-400 mt-3">By paying you agree to our <a href="/terms" className="underline hover:text-neutral-600">Terms</a> and <a href="/refund-policy" className="underline hover:text-neutral-600">Refund &amp; Cancellation Policy</a>.</p>
               </>

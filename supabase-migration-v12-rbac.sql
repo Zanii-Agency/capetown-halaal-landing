@@ -26,7 +26,6 @@ SET role = 'owner'
 WHERE LOWER(email) IN (
   'taonac96@gmail.com',
   'taona@zanii.agency',
-  'admin@sinan.agency',
   'samreen@globalcuisine.co.za'
 );
 

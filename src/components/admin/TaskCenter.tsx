@@ -41,10 +41,9 @@ export function TaskCenter() {
     let cancelled = false
     async function load() {
       try {
-        const [appsRes, supportRes, waRes, statsRes] = await Promise.all([
+        const [appsRes, supportRes, statsRes] = await Promise.all([
           fetch('/api/admin/applications?status=pending&limit=1'),
           fetch('/api/admin/support-inbox/threads?status=open'),
-          fetch('/api/admin/whatsapp-broadcast?limit=1'),
           fetch('/api/admin/stats'),
         ])
 
@@ -78,22 +77,6 @@ export function TaskCenter() {
               category: 'support',
               priority: unread > 10 ? 'high' : 'medium',
               actionUrl: '/admin/support-inbox',
-            })
-          }
-        }
-
-        // WhatsApp failures
-        if (waRes.ok) {
-          const wa = await waRes.json()
-          const failedCount = wa.failedCount ?? wa.failed ?? 0
-          if (failedCount > 0) {
-            incoming.push({
-              id: 'wa-failures',
-              title: `${failedCount} failed WhatsApp message${failedCount !== 1 ? 's' : ''}`,
-              description: 'Broadcast or auto-reply delivery failures. Check the bot inbox.',
-              category: 'whatsapp',
-              priority: failedCount > 5 ? 'high' : 'medium',
-              actionUrl: '/admin/bot-inbox',
             })
           }
         }

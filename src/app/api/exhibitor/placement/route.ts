@@ -44,14 +44,15 @@ export async function POST() {
     // codeToOwner maps stall code → owning application id (to gate name reveal).
     const codeToOwner = new Map<string, string>()
     for (const a of (apps || []) as Array<{ id: string; business_name: string; admin_notes: string | null }>) {
-      const { stall } = parseAllocation(a.admin_notes)
-      if (stall) codeToOwner.set(stall, a.id)
+      const { stalls } = parseAllocation(a.admin_notes)
+      for (const stall of stalls) codeToOwner.set(stall, a.id)
     }
 
     const myAlloc = parseAllocation(app.admin_notes)
     const me = {
       business_name: app.business_name,
-      stall: myAlloc.stall,
+      stall: myAlloc.stall,             // first code (primary "you are here")
+      stalls: myAlloc.stalls,           // full list (all my booths)
       stall_status: myAlloc.status,
       tier: app.preferred_booth_tier,
       status: app.status,
@@ -84,7 +85,8 @@ export async function POST() {
     const stalls = STALL_LIST.map((s) => ({
       code: s.code, type: s.type, num: s.num, col: s.col, row: s.row, w: s.w, h: s.h,
       status: (codeToOwner.has(s.code) ? 'allocated' : 'available') as 'allocated' | 'available',
-      occupant: s.code === me.stall ? { business_name: me.business_name } : null,
+      // Reveal the owner's name on ANY of their own booths (multi-booth), never others'.
+      occupant: me.stalls.includes(s.code) ? { business_name: me.business_name } : null,
     }))
 
     return NextResponse.json({

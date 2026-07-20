@@ -16,9 +16,7 @@ const CLIP_DURATION = 3000
 
 function VideoReel() {
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [ready, setReady] = useState(false)
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([])
-  const loadedCount = useRef(0)
 
   const advance = useCallback(() => {
     setCurrentIndex((prev) => {
@@ -30,6 +28,8 @@ function VideoReel() {
         currentVideo.currentTime = 0
       }
       if (nextVideo) {
+        // preload="none" means this clip only starts downloading now, when it
+        // becomes visible — not all 6 up front. This is the egress fix.
         nextVideo.currentTime = 0
         nextVideo.play().catch(() => {})
       }
@@ -38,7 +38,6 @@ function VideoReel() {
   }, [])
 
   useEffect(() => {
-    if (!ready) return
     const first = videoRefs.current[0]
     if (first) {
       first.currentTime = 0
@@ -46,14 +45,7 @@ function VideoReel() {
     }
     const interval = setInterval(advance, CLIP_DURATION)
     return () => clearInterval(interval)
-  }, [ready, advance])
-
-  const handleCanPlay = () => {
-    loadedCount.current += 1
-    if (loadedCount.current >= 2 && !ready) {
-      setReady(true)
-    }
-  }
+  }, [advance])
 
   return (
     <div className="relative aspect-[16/9] rounded-2xl md:rounded-3xl overflow-hidden bg-neutral-900">
@@ -63,10 +55,11 @@ function VideoReel() {
           ref={(el) => { videoRefs.current[i] = el }}
           muted
           playsInline
-          preload="auto"
-          onCanPlayThrough={handleCanPlay}
+          // preload="none": the browser downloads a clip only when we play it,
+          // instead of eagerly pulling all six on page load (the 1GB+ spike).
+          preload="none"
           className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
-          style={{ opacity: i === currentIndex && ready ? 1 : 0 }}
+          style={{ opacity: i === currentIndex ? 1 : 0 }}
         >
           <source src={src} type="video/mp4" />
         </video>
@@ -113,7 +106,9 @@ export function VideoSection() {
           transition={{ duration: 0.8, delay: 0.2 }}
           className="max-w-5xl mx-auto"
         >
-          <VideoReel />
+          {/* Only mount the reel once the section scrolls into view, so visitors
+              who never reach it (or bounce/convert first) download zero video. */}
+          {isInView && <VideoReel />}
         </motion.div>
       </div>
     </section>

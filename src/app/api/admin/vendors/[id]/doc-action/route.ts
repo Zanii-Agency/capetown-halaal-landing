@@ -12,37 +12,35 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, syncPortalState } from '@/lib/portal-state'
 import { notifyVendor } from '@/lib/notifications'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
+// Canonical required-set for the ⟦DOCS:complete⟧ rollup. These MUST be doc
+// types the exhibitor portal can actually upload (see DocumentsManager.REQUIRED
+// + the ALLOWED list in /api/exhibitor/documents/route.ts), otherwise the
+// marker can never fire. Previously this checked `halal_cert` (one a) plus
+// food_handler_cert/id_document/business_reg which the portal never uploads,
+// so DOCS:complete was unreachable. Canonical spelling: `halaal_cert` (two a's).
+// gas_cert is intentionally NOT required for everyone (conditional on gas use).
 export const REQUIRED_DOC_TYPES = [
-  'halal_cert',
-  'public_liability',
-  'food_handler_cert',
-  'id_document',
-  'business_reg',
+  'halaal_cert',
+  'health_permit',
 ] as const
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
+  const { user } = gate
 
   const db = createAdminClient()
-  const { data: adminUser } = await db.from('admin_users').select('id, role').eq('id', user.id).maybeSingle()
-  if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  const role = ((adminUser as { role?: string }).role || 'operator').toLowerCase()
-  if (!['owner', 'operator'].includes(role)) {
-    return NextResponse.json({ error: 'insufficient_role' }, { status: 403 })
-  }
 
   const body = await req.json().catch(() => ({}))
   const type = String(body.type || '').trim()

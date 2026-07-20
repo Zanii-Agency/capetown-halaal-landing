@@ -32,6 +32,16 @@ export interface VendorApplication {
   dup_marker?: string | null
   completeness_score?: number | null
   documents?: VendorApplicationDocument[] | null
+
+  // Payment + contract first-class columns. Source of truth for the "paid" /
+  // "contract_signed" triage buckets (and the whatsapp-broadcast audience).
+  // payment_status / paid_at written by the Yoco webhook + admin mark-paid
+  // (confirm.ts, which also stamps paid_at on a fee waiver); contract_signed_at
+  // stamped by the /exhibitor/contract/sign route. Legacy/portal payment state
+  // also lives in the ⟦PORTAL:..⟧ marker on admin_notes (parsePortalState).
+  payment_status?: string | null
+  paid_at?: string | null
+  contract_signed_at?: string | null
 }
 
 export interface VendorApplicationDocument {

@@ -93,6 +93,8 @@ interface VendorLite {
   business_description: string | null
   website: string | null
   instagram: string | null
+  logo_url: string | null
+  has_profile: boolean
 }
 
 interface MenuItem { name: string; price?: string; desc?: string }
@@ -349,25 +351,53 @@ function VendorDrawerPanel({ sector, onClose }: { sector: Sector; onClose: () =>
                             key={v.id}
                             type="button"
                             onClick={() => setSelected(profSlug)}
-                            className="relative snap-start text-left p-5 rounded-2xl bg-neutral-900/80 backdrop-blur-sm border border-white/5 hover:border-[#cd2653]/40 transition-all duration-300 flex flex-col group h-full"
+                            className="relative snap-start text-left p-4 rounded-2xl bg-neutral-900/80 backdrop-blur-sm border border-white/5 hover:border-[#cd2653]/40 transition-all duration-300 flex flex-col gap-3 group h-full"
                           >
-                            <div
-                              className={cn('w-11 h-11 rounded-xl flex items-center justify-center mb-3 bg-gradient-to-br shadow-lg shrink-0', sector.color)}
-                              style={{ boxShadow: `0 8px 30px ${sector.bgGlow}` }}
-                            >
-                              <sector.icon className="w-5 h-5 text-white" />
+                            {/* Logo and name sit side by side: the logo alone
+                                doesn't identify a vendor, so the name always
+                                rides with it. zanii-codef: `truncate` not
+                                `line-clamp-*` here, a line-clamped element that
+                                is a direct flex child gets blockified to
+                                flow-root and collapses to height 0. */}
+                            <div className="flex items-center gap-3 min-w-0">
+                              {v.logo_url ? (
+                                // Vendor's own logo on a white tile (logos are
+                                // public brand assets). Falls back to the sector
+                                // icon when no logo has been uploaded yet.
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={v.logo_url}
+                                  alt={`${v.business_name.trim()} logo`}
+                                  // zanii-codef: NOT loading="lazy". These sit in an
+                                  // overflow-x:auto track, where Chrome's lazy heuristic
+                                  // never fires and the logos silently never load. The
+                                  // panel only mounts on click, so nothing loads up front
+                                  // anyway, that was the real saving.
+                                  decoding="async"
+                                  className="w-12 h-12 rounded-xl object-contain bg-white p-1.5 shadow-lg shrink-0"
+                                  style={{ boxShadow: `0 8px 30px ${sector.bgGlow}` }}
+                                />
+                              ) : (
+                                <div
+                                  className={cn('w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-br shadow-lg shrink-0', sector.color)}
+                                  style={{ boxShadow: `0 8px 30px ${sector.bgGlow}` }}
+                                >
+                                  <sector.icon className="w-5 h-5 text-white" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-neutral-50 transition-colors truncate">
+                                  {v.business_name.trim()}
+                                </h4>
+                                <p className={cn(
+                                  'text-[11px] leading-snug truncate transition-colors',
+                                  v.business_description ? 'text-neutral-500 group-hover:text-neutral-400' : 'text-neutral-600 italic'
+                                )}>
+                                  {v.business_description?.replace(/\s+/g, ' ').trim() || 'Profile coming soon'}
+                                </p>
+                              </div>
                             </div>
-                            <h4 className="text-sm font-bold text-white group-hover:text-neutral-50 transition-colors line-clamp-1 mb-1">
-                              {v.business_name}
-                            </h4>
-                            {v.business_description ? (
-                              <p className="text-xs text-neutral-500 group-hover:text-neutral-400 transition-colors leading-relaxed line-clamp-2">
-                                {v.business_description}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-neutral-600 italic">Profile coming soon</p>
-                            )}
-                            <div className="flex items-center gap-2 mt-auto pt-3 text-[11px] text-neutral-500">
+                            <div className="flex items-center gap-2 mt-auto text-[11px] text-neutral-500">
                               <span className="text-[#cd2653] font-medium group-hover:text-[#ff7a9c] transition-colors">View →</span>
                               {v.website && <span className="flex items-center gap-1"><Globe className="w-3 h-3" /> Web</span>}
                               {v.instagram && <span className="flex items-center gap-1"><Instagram className="w-3 h-3" /> IG</span>}

@@ -6,6 +6,10 @@
 // that point nowhere.
 
 import { FileText, FileSignature, IdCard, Download, Loader2 } from 'lucide-react'
+import SafeDownloadLink from './SafeDownloadLink'
+
+const slug = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'file'
 
 export interface StaffBadgeRef {
   name: string
@@ -95,12 +99,13 @@ export default function GeneratedDocsPanel({
                         <p className="text-[11px] text-neutral-500 capitalize">{s.role || 'staff'}</p>
                       </div>
                       {ready ? (
-                        <a
+                        <SafeDownloadLink
                           href={`/api/exhibitor/portal/badge/${s.wc_order_id}/pdf`}
-                          className="inline-flex items-center gap-1.5 text-xs font-medium text-[#cd2653] border border-[#cd2653]/30 rounded-lg px-3 py-1.5 hover:bg-[#cd2653] hover:text-white transition-colors shrink-0"
+                          filename={`CTH-Badge-${slug(s.name)}.pdf`}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium text-[#cd2653] border border-[#cd2653]/30 rounded-lg px-3 py-1.5 hover:bg-[#cd2653] hover:text-white transition-colors shrink-0 disabled:opacity-50"
                         >
                           <Download className="w-3.5 h-3.5" /> PDF
-                        </a>
+                        </SafeDownloadLink>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 text-xs text-neutral-400 shrink-0">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating
@@ -141,6 +146,11 @@ function Row({
       : tone === 'warn'
       ? 'text-[#cd2653] border-[#cd2653]/30 hover:bg-[#cd2653] hover:text-white'
       : 'text-neutral-700 border-neutral-200 hover:bg-neutral-50'
+  // API routes are file downloads that can return a JSON error on failure; route
+  // them through SafeDownloadLink so an error is never saved as a misnamed file.
+  // Plain page-navigation hrefs (e.g. /exhibitor/portal/contract) stay anchors.
+  const isDownload = href.startsWith('/api/')
+  const ctaClass = `inline-flex items-center gap-1.5 text-sm font-medium rounded-lg px-3 py-2 border transition-colors shrink-0 ${toneClass}`
   return (
     <div className="bg-white border border-neutral-200 rounded-2xl p-5 flex items-start gap-4">
       <div className="w-10 h-10 rounded-lg bg-[#cd2653]/10 text-[#cd2653] flex items-center justify-center shrink-0">
@@ -150,12 +160,15 @@ function Row({
         <p className="font-semibold text-neutral-900">{title}</p>
         <p className="text-xs text-neutral-500 mt-0.5">{subtitle}</p>
       </div>
-      <a
-        href={href}
-        className={`inline-flex items-center gap-1.5 text-sm font-medium rounded-lg px-3 py-2 border transition-colors shrink-0 ${toneClass}`}
-      >
-        <Download className="w-4 h-4" /> {cta}
-      </a>
+      {isDownload ? (
+        <SafeDownloadLink href={href} filename={`CTH-${slug(title)}.pdf`} className={`${ctaClass} disabled:opacity-50`}>
+          <Download className="w-4 h-4" /> {cta}
+        </SafeDownloadLink>
+      ) : (
+        <a href={href} className={ctaClass}>
+          <Download className="w-4 h-4" /> {cta}
+        </a>
+      )}
     </div>
   )
 }

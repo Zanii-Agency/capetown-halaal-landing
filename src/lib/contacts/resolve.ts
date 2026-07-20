@@ -156,10 +156,11 @@ async function lookupWaContact(supabase: SbClient, phone: string): Promise<{ pro
 
 async function lookupWooBillingByEmail(email: string): Promise<{ name: string | null } | null> {
   try {
+    // Law 6: do NOT hardcode an after= (it drifts to the wrong year every January).
+    // getOrders applies the canonical FESTIVAL_CYCLE_AFTER default when after= is omitted.
     const orders = await getOrders({
       search: email,
       per_page: '1',
-      after: `${new Date().getUTCFullYear() - 1}-01-01T00:00:00`,
     })
     const order = orders[0]
     if (!order) return null

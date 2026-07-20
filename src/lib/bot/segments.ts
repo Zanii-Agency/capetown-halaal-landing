@@ -5,6 +5,16 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 
+// Canonical "paid" test for the CTH table. There is NO payment_status column
+// here (verified against information_schema); the only real top-level payment
+// column is paid_at, and the rest of the payment detail lives in the ⟦PORTAL⟧
+// marker on admin_notes. So paid = paid_at set OR marker payment.status==='paid'.
+// paid_at also covers waived vendors (confirm.ts stamps paid_at on a waiver).
+function isRowPaid(r: { paid_at: string | null; admin_notes: string | null }): boolean {
+  if (r.paid_at) return true
+  return parsePortalState(r.admin_notes).payment?.status === 'paid'
+}
+
 export type SegmentKey =
   | 'pending'
   | 'approved'
@@ -67,7 +77,7 @@ export async function resolveSegment(key: SegmentKey): Promise<Recipient[]> {
   const baseStatus = key === 'approved_unpaid' || key === 'approved_paid' ? 'approved' : key
   const { data } = await db
     .from('vendor_applications')
-    .select('id, email, business_name, contact_name, admin_notes')
+    .select('id, email, business_name, contact_name, admin_notes, paid_at')
     .eq('status', baseStatus)
     .limit(5000)
   let rows = (data || []) as Array<{
@@ -76,13 +86,16 @@ export async function resolveSegment(key: SegmentKey): Promise<Recipient[]> {
     business_name: string | null
     contact_name: string | null
     admin_notes: string | null
+    paid_at: string | null
   }>
 
+  // approved_paid and approved_unpaid are exact complements over the approved
+  // set, partitioned on isRowPaid (see helper above).
   if (key === 'approved_unpaid') {
-    rows = rows.filter((r) => parsePortalState(r.admin_notes).payment?.status !== 'paid')
+    rows = rows.filter((r) => !isRowPaid(r))
   }
   if (key === 'approved_paid') {
-    rows = rows.filter((r) => parsePortalState(r.admin_notes).payment?.status === 'paid')
+    rows = rows.filter((r) => isRowPaid(r))
   }
 
   return rows

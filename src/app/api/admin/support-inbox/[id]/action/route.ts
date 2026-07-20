@@ -15,8 +15,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -41,13 +41,10 @@ function nextMorningIso(): string {
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
 
   const db = createAdminClient()
-  const { data: adminUser } = await db.from('admin_users').select('id').eq('id', user.id).maybeSingle()
-  if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const { id } = await params
   if (!id) return NextResponse.json({ error: 'thread id required' }, { status: 400 })

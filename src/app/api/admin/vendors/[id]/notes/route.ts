@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalStateImpl, type PortalState } from '@/lib/portal-state'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -65,17 +66,11 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid application id' }, { status: 400 })
     }
 
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const gate = await requireOperator()
+    if (!gate.ok) return gate.response
+    const { adminUser } = gate
 
     const admin = createAdminClient()
-    const { data: adminUser } = await admin
-      .from('admin_users')
-      .select('id, email')
-      .eq('id', user.id)
-      .single()
-    if (!adminUser) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const body = await req.json()
     const text = (body.text as string ?? '').trim()
@@ -86,7 +81,7 @@ export async function POST(
       return NextResponse.json({ error: 'Note exceeds 5000 characters' }, { status: 400 })
     }
 
-    const author = (adminUser.email as string | null) || user.email || null
+    const author = adminUser.email
 
     // Read current portal state, append note
     const { data: app } = await admin

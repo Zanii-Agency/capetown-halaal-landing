@@ -19,12 +19,19 @@ function resolveMediaRef(text) {
     return /^(this|here|see|attached|image|photo|pic|screenshot|look|check|this is|here is|see attached|see this)$/i
         .test(String(text || "").trim());
 }
-export async function shouldProcess(adapterName, sender, wamid, text, adapters) {
+export async function shouldProcess(adapterName, sender, wamid, text, adapters, opts) {
     if (wamid) {
         const seen = await adapters.seenByWamid(wamid);
         if (seen)
             return { action: "skip", reason: "duplicate_wamid" };
     }
+    // A message that actually CARRIES media must never enter the media-pending
+    // buffer below. The buffer exists to hold a SHORT TEXT reference ("here",
+    // "see attached") until the image webhook lands. If the inbound is itself
+    // the media (e.g. a captioned image whose caption happens to be "here" or
+    // "photo"), buffering it risks a `merged_with_media` skip that DROPS the
+    // image before it is ever logged — losing the media row entirely.
+    const carriesMedia = Boolean(opts && opts.hasMedia);
     const now = Date.now();
     const lockKey = `${adapterName}::${sender}`;
     // Try optional cross-instance lock first. If another Vercel instance holds
@@ -44,7 +51,7 @@ export async function shouldProcess(adapterName, sender, wamid, text, adapters) 
     // text webhook's lock (June 18 bug: lock before buffer made the
     // entire media-pending path non-functional because the image arrived
     // while the text held the lock).
-    if (text && resolveMediaRef(text)) {
+    if (!carriesMedia && text && resolveMediaRef(text)) {
         MEDIA_PENDING.set(sender, { text, ts: now });
         let timedOut = false;
         await new Promise((resolve) => {

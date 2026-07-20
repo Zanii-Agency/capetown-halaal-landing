@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
+import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getOrders, type WCOrder } from '@/lib/woocommerce'
 
 export const runtime = 'nodejs'
@@ -15,7 +16,9 @@ interface PaymentRow {
   phone: string | null
   status: string | null
   admin_notes: string | null
+  paid_at: string | null
   preferred_booth_tier: string | null
+  special_requirements: unknown
   created_at: string
 }
 
@@ -44,7 +47,7 @@ export async function GET(req: NextRequest) {
     // read payment from portal_state below, and apply the payment filter in-code.
     const { data: vendors, error } = await admin
       .from('vendor_applications')
-      .select('id, business_name, contact_name, email, phone, status, admin_notes, preferred_booth_tier, created_at')
+      .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, created_at')
       .in('status', ['approved', 'pending', 'info_requested'])
       .order('business_name', { ascending: true })
     if (error) {
@@ -59,10 +62,17 @@ export async function GET(req: NextRequest) {
     const payments = rows.map((v) => {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
-      const paidAt = p.paid_at || null
-      const amount = p.amount || null
+
+      // Derived from REAL sources only (no phantom columns). isPaid mirrors the
+      // exhibitor-paygate rule: the real paid_at column OR a marker status of
+      // 'paid'. amount prefers the marker, else the computed stall+electrical+
+      // hire total. due/paid_at come from the marker, paid_at falls back to the
+      // real column.
+      const isPaid = !!v.paid_at || p.status === 'paid'
+      const paidAt = p.paid_at || v.paid_at || null
+      const amount = p.amount ?? computeVendorPricing(v).total
       const dueDate = p.due || null
-      const paymentStatus = p.status || 'none'
+      const paymentStatus = p.status ?? (v.paid_at ? 'paid' : 'none')
 
       let overdue = false
       if (paymentStatus === 'pending' && dueDate) {
@@ -76,10 +86,11 @@ export async function GET(req: NextRequest) {
         email: v.email,
         phone: v.phone,
         status: v.status,
-        payment_status: paymentStatus,
+        payment_status: isPaid ? 'paid' : paymentStatus,
         payment_amount: amount,
         payment_due_date: dueDate,
         paid_at: paidAt,
+        is_paid: isPaid,
         preferred_booth_tier: v.preferred_booth_tier,
         created_at: v.created_at,
         overdue,
@@ -87,12 +98,12 @@ export async function GET(req: NextRequest) {
     })
 
     // Stats
-    const totalPaid = payments.filter(p => p.payment_status === 'paid').length
-    const totalPending = payments.filter(p => p.payment_status === 'pending' || p.payment_status === 'deferred').length
-    const totalNone = payments.filter(p => p.payment_status === 'none').length
+    const totalPaid = payments.filter(p => p.is_paid).length
+    const totalPending = payments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
+    const totalNone = payments.filter(p => !p.is_paid && p.payment_status === 'none').length
     const totalOverdue = payments.filter(p => p.overdue).length
     const totalRevenue = payments
-      .filter(p => p.payment_status === 'paid')
+      .filter(p => p.is_paid)
       .reduce((sum, p) => sum + (p.payment_amount || 0), 0)
 
     // WooCommerce reconciliation: fetch completed orders for comparison
@@ -125,7 +136,7 @@ export async function GET(req: NextRequest) {
           vendor_amount: p.payment_amount,
           wc_order_count: matches.length,
           wc_total: totalWc,
-          reconciled: p.payment_status === 'paid' && totalWc > 0,
+          reconciled: p.is_paid && totalWc > 0,
         }
       })
 
@@ -144,10 +155,10 @@ export async function GET(req: NextRequest) {
 
     // Apply the payment filter in-code (the DB can't filter a marker).
     const list = !paymentFilter ? payments : payments.filter((p) => {
-      if (paymentFilter === 'paid') return p.payment_status === 'paid'
-      if (paymentFilter === 'pending') return p.payment_status === 'pending' || p.payment_status === 'deferred'
+      if (paymentFilter === 'paid') return p.is_paid
+      if (paymentFilter === 'pending') return !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')
       if (paymentFilter === 'overdue') return p.overdue
-      if (paymentFilter === 'none') return p.payment_status === 'none'
+      if (paymentFilter === 'none') return !p.is_paid && p.payment_status === 'none'
       return true
     })
 

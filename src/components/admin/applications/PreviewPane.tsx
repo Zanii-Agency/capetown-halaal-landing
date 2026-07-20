@@ -24,7 +24,11 @@ import {
   XCircle,
   Loader2,
   RotateCcw,
+  Plus,
+  X,
+  Zap,
 } from 'lucide-react'
+import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import type {
   WorkbenchApplication,
   SuggestResponse,
@@ -42,6 +46,47 @@ function daysAgo(iso: string): number {
 function last9(phone: string | null | undefined): string {
   const digits = (phone ?? '').replace(/\D+/g, '')
   return digits.slice(-9)
+}
+
+interface CustomElectrical {
+  label: string
+  amount: number
+  qty: number
+}
+
+// Read the operator-set custom electrical charges out of special_requirements,
+// which may be a JSON string or an object. Mirrors readCustomElectrical in
+// Vendor360.tsx: parse, pull the electrical_custom array, coerce label to a
+// string / amount to a number / qty to >= 1. Defaults to [] on any drift.
+function readCustomElectrical(raw: unknown): CustomElectrical[] {
+  let reqs: unknown = raw
+  if (typeof raw === 'string') {
+    try { reqs = JSON.parse(raw) } catch { return [] }
+  }
+  if (!reqs || typeof reqs !== 'object') return []
+  const custom = (reqs as { electrical_custom?: unknown }).electrical_custom
+  if (!Array.isArray(custom)) return []
+  const out: CustomElectrical[] = []
+  for (const row of custom) {
+    if (!row || typeof row !== 'object') continue
+    const r = row as { label?: unknown; amount?: unknown; qty?: unknown }
+    const label = typeof r.label === 'string' ? r.label : ''
+    const amount = Number(r.amount) || 0
+    const qty = Math.max(1, Math.floor(Number(r.qty) || 1))
+    out.push({ label, amount, qty })
+  }
+  return out
+}
+
+// Parse special_requirements (JSON string or object) to a plain object so we
+// can merge a fresh electrical_custom override for the live total recompute.
+function parseReqs(raw: unknown): Record<string, unknown> {
+  let reqs: unknown = raw
+  if (typeof raw === 'string') {
+    try { reqs = JSON.parse(raw) } catch { return {} }
+  }
+  if (!reqs || typeof reqs !== 'object' || Array.isArray(reqs)) return {}
+  return reqs as Record<string, unknown>
 }
 
 function CompletenessBadge({ score }: { score: number | null | undefined }) {
@@ -85,13 +130,25 @@ export function PreviewPane({
   // because only one row is focused at a time.
   const [pendingAction, setPendingAction] = useState<PreviewAction | null>(null)
 
+  // Operator-set custom electrical charges. Samreen adds charges here at
+  // approval time for appliances the vendor under-declared (e.g. picked None
+  // but listed real equipment in free-text). Saved to special_requirements
+  // .electrical_custom; computeVendorPricing folds them into the total.
+  const [customElec, setCustomElec] = useState<CustomElectrical[]>([])
+  const [savingElec, setSavingElec] = useState(false)
+  const [elecMsg, setElecMsg] = useState<string | null>(null)
+
   // Reset event-pane state whenever the focused row changes so the previous
   // row's events don't ghost into the next one. Also clear stale pending
-  // state so the toolbar isn't disabled when we land on the new row.
+  // state so the toolbar isn't disabled when we land on the new row. Re-seed
+  // the custom-electrical editor from the new row so charges don't leak across.
   useEffect(() => {
     setEvents([])
     setShowEvents(false)
     setPendingAction(null)
+    setCustomElec(readCustomElectrical(row?.special_requirements))
+    setSavingElec(false)
+    setElecMsg(null)
   }, [row?.id])
 
   // Pull suggestions whenever the focused row changes. Best-effort.
@@ -161,6 +218,46 @@ export function PreviewPane({
   const phoneLast9 = last9(row.phone)
   const isDupeFromPhone = duplicateSiblings.length > 0
   const isDuplicate = row.is_duplicate || isDupeFromPhone
+
+  // Merge the live editor state over the row's parsed requirements so the
+  // recomputed total reflects what Samreen is typing before she saves.
+  const parsedReqs = parseReqs(row.special_requirements)
+  const livePricing = computeVendorPricing({
+    preferred_booth_tier: row.preferred_booth_tier,
+    special_requirements: { ...parsedReqs, electrical_custom: customElec },
+  })
+
+  // Persist the custom charges. Drop blank-label rows, coerce amount/qty, then
+  // PATCH /api/admin/vendors/[id] with { electrical_custom } (the route merges
+  // into special_requirements without clobbering electrical_appliances). Stays
+  // on the row on success so she can review the corrected total then approve.
+  async function handleSaveElec() {
+    if (!row) return
+    setSavingElec(true)
+    setElecMsg(null)
+    try {
+      const electrical_custom = customElec
+        .filter((c) => (Number(c.amount) || 0) > 0)
+        .map((c) => ({
+          label: c.label.trim() || 'Additional charge',
+          amount: Number(c.amount) || 0,
+          qty: Math.max(1, Math.floor(Number(c.qty) || 1)),
+        }))
+      const r = await fetch(`/api/admin/vendors/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ electrical_custom }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { setElecMsg(j.error || 'Failed to save charges'); return }
+      setCustomElec(readCustomElectrical({ ...parsedReqs, electrical_custom }))
+      setElecMsg('Saved')
+    } catch (e) {
+      setElecMsg((e as Error).message || 'Failed to save charges')
+    } finally {
+      setSavingElec(false)
+    }
+  }
 
   return (
     <div className="h-full overflow-y-auto">
@@ -321,6 +418,97 @@ export function PreviewPane({
             <SpecialRequirementsView raw={row.special_requirements} />
           </section>
         )}
+
+        {/* Operator electrical charges. Vendors game the electrical fee by
+            picking "None" and listing real appliances in free-text. Samreen
+            adds the missing charges here at approval time; they fold into the
+            total via computeVendorPricing and persist to electrical_custom. */}
+        <section className="space-y-2">
+          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-neutral-400">
+            <Zap className="w-3 h-3" /> Additional charges (operator)
+          </div>
+          <p className="text-[11px] text-neutral-500">
+            Add a charge to this vendor (off-list appliances, extra space, or any additional payment request). Each adds to their total and what they pay.
+          </p>
+          <div className="space-y-1.5">
+            {customElec.map((charge, i) => {
+              const subtotal = (Number(charge.amount) || 0) * Math.max(1, Math.floor(Number(charge.qty) || 1))
+              return (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={charge.label}
+                    onChange={(e) => setCustomElec((prev) =>
+                      prev.map((r, idx) => idx === i ? { ...r, label: e.target.value } : r)
+                    )}
+                    placeholder="e.g. 2 x Slurpee machine"
+                    aria-label="Charge label"
+                    className="flex-1 min-w-0 border border-neutral-200 rounded px-2 py-1 text-[12px]"
+                  />
+                  <input
+                    type="number"
+                    value={charge.amount}
+                    onChange={(e) => setCustomElec((prev) =>
+                      prev.map((r, idx) => idx === i ? { ...r, amount: Number(e.target.value) } : r)
+                    )}
+                    placeholder="R / unit"
+                    aria-label="Amount in Rand per unit"
+                    className="w-16 shrink-0 border border-neutral-200 rounded px-2 py-1 text-[12px] tabular-nums"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    value={charge.qty}
+                    onChange={(e) => setCustomElec((prev) =>
+                      prev.map((r, idx) => idx === i ? { ...r, qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) } : r)
+                    )}
+                    aria-label="Quantity"
+                    className="w-12 shrink-0 border border-neutral-200 rounded px-2 py-1 text-[12px] tabular-nums"
+                  />
+                  <span className="w-16 shrink-0 text-right text-[11px] text-neutral-500 tabular-nums">
+                    {formatRand(subtotal)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCustomElec((prev) => prev.filter((_, idx) => idx !== i))}
+                    aria-label="Remove charge"
+                    className="w-5 h-5 shrink-0 rounded border border-neutral-200 text-neutral-500 hover:bg-neutral-50 inline-flex items-center justify-center"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setCustomElec((prev) => [...prev, { label: '', amount: 0, qty: 1 }])}
+              className="text-[11px] text-neutral-600 hover:text-neutral-900 inline-flex items-center gap-1 underline-offset-2 hover:underline"
+            >
+              <Plus className="w-3 h-3" /> Add charge
+            </button>
+            <span className="text-[11px] font-medium text-neutral-700 tabular-nums">
+              New total: {formatRand(livePricing.total)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSaveElec}
+              disabled={savingElec}
+              className="px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1.5 bg-neutral-900 text-white hover:bg-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {savingElec ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              Save charges
+            </button>
+            {elecMsg && (
+              <span className={cn('text-[11px]', elecMsg === 'Saved' ? 'text-emerald-600' : 'text-rose-600')}>
+                {elecMsg}
+              </span>
+            )}
+          </div>
+        </section>
 
         {/* Duplicate siblings */}
         {duplicateSiblings.length > 0 && (

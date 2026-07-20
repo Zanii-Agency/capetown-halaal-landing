@@ -106,10 +106,21 @@ export async function GET(request: NextRequest) {
       .eq('status', 'pending')
       .or('is_duplicate.is.null,is_duplicate.eq.false')
 
+    // Approved counter: drives the capacity view (approved of 308 total spaces,
+    // remaining = 308 - approved). The festival has a fixed 308 spaces (243
+    // marquee + 20 bedouin + 30 food/drink trucks + 10 dessert + 5 snack), so
+    // "remaining" is the real number that matters, not a row-fetch cap.
+    const { count: approvedTotal } = await admin
+      .from('vendor_applications')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'approved')
+      .or('is_duplicate.is.null,is_duplicate.eq.false')
+
     return NextResponse.json({
       applications: data ?? [],
       total: count ?? 0,
       pending_total: pendingTotal ?? 0,
+      approved_total: approvedTotal ?? 0,
       limit,
       offset,
     })

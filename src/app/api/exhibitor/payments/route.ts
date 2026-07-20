@@ -30,17 +30,30 @@ export async function POST() {
   if (!paymentsEnabled()) {
     return NextResponse.json({ error: 'Online card payment is not enabled yet' }, { status: 503 })
   }
-  const state = parsePortalState(app.admin_notes as string)
-  // Compute amount from the application's stall + electricals + furniture. An
-  // organiser-set state.payment.amount overrides for special-case quotes.
+  // Bill the LIVE computed total (stall + electricals incl. admin-added custom
+  // charges + furniture), recomputed at pay-time. This is what the vendor
+  // currently owes, so an operator amendment (e.g. adding an electrical charge)
+  // automatically re-bills on the next Pay with no manual step. A stored
+  // state.payment.amount is the locked RECORD of what was actually paid (written
+  // at payment time), not a pre-payment quote, so it never overrides here.
   const { computeVendorPricing } = await import('@/lib/payments/pricing')
   const pricing = computeVendorPricing({
     preferred_booth_tier: app.preferred_booth_tier as string,
     special_requirements: app.special_requirements,
   })
-  const amount = state.payment?.amount && state.payment.amount > 0 ? state.payment.amount : pricing.total
-  if (!amount || amount <= 0) {
+  // Bill the OUTSTANDING balance: the live total minus what the vendor has
+  // already paid. For a first payment that is the full total. For a top-up
+  // (operator added charges after the vendor paid) it is just the difference,
+  // so the vendor is never charged twice for the same amount.
+  const state = parsePortalState(app.admin_notes as string)
+  const alreadyPaid = Number(state.payment?.amount) || 0
+  const owed = pricing.total
+  const amount = Math.max(0, owed - alreadyPaid)
+  if (!owed || owed <= 0) {
     return NextResponse.json({ error: 'Your stall fee could not be computed. Please contact the team.' }, { status: 400 })
+  }
+  if (amount <= 0) {
+    return NextResponse.json({ error: 'Your account is settled. There is nothing to pay right now.', settled: true }, { status: 400 })
   }
   const reference = paymentReference(applicationId)
   try {
@@ -62,18 +75,23 @@ export async function POST() {
       cancelUrl: `${SITE}/exhibitor/payment-return?status=cancelled`,
       failureUrl: `${SITE}/exhibitor/payment-return?status=failed`,
     })
-    await updatePortalState(applicationId, (s) => ({
-      ...s,
-      payment: {
-        ...(s.payment || {}),
-        status: 'pending',
-        amount,
-        reference,
-        provider_ref: providerRef,
-        attempted_at: new Date().toISOString(),
-        attempts: ((s.payment?.attempts as number) || 0) + 1,
-      },
-    }))
+    await updatePortalState(applicationId, (s) => {
+      // Already-paid vendor doing a top-up: keep them 'paid' (do not downgrade
+      // to 'pending', which would re-lock the portal). Never overwrite the
+      // cumulative-paid `amount`; confirmPayment accumulates that on success.
+      const settled = s.payment?.status === 'paid' || !!s.payment?.paid_at
+      return {
+        ...s,
+        payment: {
+          ...(s.payment || {}),
+          status: settled ? 'paid' : 'pending',
+          reference,
+          provider_ref: providerRef,
+          attempted_at: new Date().toISOString(),
+          attempts: ((s.payment?.attempts as number) || 0) + 1,
+        },
+      }
+    })
     return NextResponse.json({ url })
   } catch (e) {
     console.error('[payments] initiate failed:', (e as Error).message)

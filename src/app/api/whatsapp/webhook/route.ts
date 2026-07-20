@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import {
   verifyWebhook,
   verifySignature,
@@ -6,6 +6,7 @@ import {
   parseStatuses,
   sendText,
   toE164,
+  fetchMediaBytes,
 } from '@/lib/whatsapp'
 import {
   recordOptOut,
@@ -19,15 +20,24 @@ import { detectHumanIntent, escalateToHuman, isInHandover, isPendingHandover, se
 import { notifyOwners } from '@/lib/bot/notify'
 import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { findAdmin } from '@/lib/bot/admins'
-import { resolveIdentity, identityBriefing } from '@/lib/bot/identity'
+import { findAdmin, isDevNumber } from '@/lib/bot/admins'
+import { resolveIdentity } from '@/lib/bot/identity'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
+import { routeToBrain } from '@/lib/bot/brains'
+import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
+import { resolveVendorSession, confirmVendorVerification } from '@/lib/bot/vendor-session'
+import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { isMaintenanceEnabled } from '@/lib/maintenance'
 import { guardReply, logGuardRedaction } from '@/lib/bot/reply-guard'
 import { shouldProcess } from '@/lib/brain-core/index.js'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Raised so a deferred after() task (e.g. rendering an invoice PDF with puppeteer
+// then sendMedia) has time to finish post-200. The 200 itself still returns fast;
+// this only extends how long the function may keep running for the after() work.
+export const maxDuration = 60
 
 // ---------------------------------------------------------------------------
 // N2: per-sender LLM rate limit.
@@ -60,6 +70,48 @@ function checkLLMBucket(waId: string): boolean {
     }
   }
   return entry.count <= LLM_MAX_PER_5MIN
+}
+
+// DURABLE + GLOBAL rate limit (cost-drain defense). The LLM_BUCKET Map above is
+// process-local: it resets on cold start and is per-Vercel-instance, so a burst
+// fanned across instances (or repeated cold starts) multiplies the per-sender
+// allowance — effectively unbounded Anthropic spend. This second gate counts the
+// `wa_messages` rows we already insert per inbound (no new table — DDL is blocked,
+// Law 8), so the cap is durable across instances AND adds a GLOBAL circuit
+// breaker against a distributed flood from many numbers. The current inbound is
+// already logged before this runs, so it is included in the count.
+// Fails OPEN on a DB error (the Map backstop still caps per-instance) — a DB
+// hiccup must not mute the bot for everyone.
+async function durableLLMRateOk(e164: string): Promise<boolean> {
+  try {
+    const db = createAdminClient()
+    const since = new Date(Date.now() - LLM_WINDOW_MS).toISOString()
+    const { count: perPhone } = await db
+      .from('wa_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('wa_phone', e164)
+      .eq('direction', 'in')
+      .gte('created_at', since)
+    if ((perPhone ?? 0) > LLM_MAX_PER_5MIN) {
+      await logLLMThrottle(e164, perPhone ?? 0)
+      return false
+    }
+    // Global breaker: generous env-tunable backstop, trips only on a flood.
+    const globalMax = Number(process.env.LLM_GLOBAL_MAX_PER_5MIN || 500)
+    const { count: globalCount } = await db
+      .from('wa_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('direction', 'in')
+      .gte('created_at', since)
+    if ((globalCount ?? 0) > globalMax) {
+      console.error(JSON.stringify({ at: 'webhook', event: 'llm_global_breaker_tripped', global: globalCount, globalMax }))
+      return false
+    }
+    return true
+  } catch (e) {
+    console.error('[wa-webhook] durable rate check failed (allowing; Map backstop applies):', (e as Error).message)
+    return true
+  }
 }
 
 async function logLLMThrottle(waId: string, count: number) {
@@ -138,6 +190,7 @@ async function handleInbound(msg: {
   text: string
   name?: string
   replyToWamid?: string
+  media?: { kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'; id: string; mimeType?: string; filename?: string; caption?: string }
 }) {
   const e164 = toE164(msg.from)
 
@@ -145,9 +198,25 @@ async function handleInbound(msg: {
   const guard = await shouldProcess("cth", e164, msg.messageId, msg.text, {
     seenByWamid: async (id) => alreadySeen(id),
     logToChat: async (_sender, _text) => {},
-  })
+  }, { hasMedia: Boolean(msg.media) })
   if (guard.action !== "process") return
-  await logMessage({ direction: 'in', wa_phone: e164, body: msg.text, status: 'received', providerMessageId: msg.messageId })
+
+  // D2) DEVELOPER-ROLE ROUTING. Taona's test number is encoded as a `developer`
+  // (master doctrine). A dev test must NOT pollute the real vendor inbox/data:
+  // we SKIP persistence entirely (no wa_messages row, no wa_thread, no ticket
+  // auto-link) so the dev conversation never appears as a real vendor thread.
+  // We still run the brain so Taona can test the answer, and the reply is sent
+  // with a `[DEV] ` prefix at the chokepoint so it's clearly marked. STOP/START
+  // and the bot-guards wall still apply (handled inside handleDev). Dev sits
+  // AFTER signature verify (POST) + dedup guard, BEFORE any persistence.
+  // Admin ALWAYS wins over dev: an admin number (e.g. Taona's master number)
+  // keeps full admin-chat even if it were ever added to DEV_WHATSAPP by mistake.
+  if (isDevNumber(e164) && !findAdmin(e164)) {
+    await handleDev(e164, msg)
+    return
+  }
+
+  await logMessage({ direction: 'in', wa_phone: e164, body: msg.text, status: 'received', providerMessageId: msg.messageId, media: msg.media })
 
   // 1) STOP — hard opt-out, confirm once, then go silent.
   if (isStopKeyword(msg.text)) {
@@ -173,8 +242,8 @@ async function handleInbound(msg: {
   // and AFTER message logging (audit preserved). Master (Taona) bypasses
   // entirely so testing the bot during sweep still works. Festival_owner
   // (Samreen) gets a personalized soft message. Everyone else gets the
-  // generic maintenance reply with ticket purchase still pointed at
-  // tickets.youngatheart.co.za (Doctrine Laws 3+4 stay live).
+  // generic maintenance reply with ticket purchase still pointed at the one
+  // canonical ticket URL cthalaal.co.za (Doctrine Laws 3+4 stay live).
   if (isMaintenanceEnabled()) {
     const known = findAdmin(e164)
     if (known?.role === 'master') {
@@ -192,7 +261,7 @@ async function handleInbound(msg: {
       })
       return
     } else {
-      const genericMsg = `Hi! The Cape Town Halaal vendor portal is being tuned up tonight. Back online tomorrow. Festival tickets are still available now at tickets.youngatheart.co.za. If you started a vendor application, your progress is saved. Reply STOP to unsubscribe.`
+      const genericMsg = `Hi! The Cape Town Halaal vendor portal is being tuned up tonight. Back online tomorrow. Festival tickets are still available now at cthalaal.co.za. If you started a vendor application, your progress is saved. Reply STOP to unsubscribe.`
       const res = await sendText(e164, genericMsg)
       await logMessage({
         direction: 'out',
@@ -221,6 +290,15 @@ async function handleInbound(msg: {
       status: res.skipped ? 'failed' : 'sent',
       providerMessageId: res.messageId,
     })
+    return
+  }
+
+  // 3-REACTION) Reactions / location / contacts / system messages. These were
+  // logged above (as "reacted 👍", "📍 shared a location", etc.) so the inbox
+  // shows them, but there is NOTHING to auto-reply to. Return before the brain
+  // and the media-ack path, which was wrongly sending "Thanks, I have your
+  // document" to a thumbs-up reaction. (Taona 2026-06-29.)
+  if (msg.type === 'reaction' || msg.type === 'location' || msg.type === 'contacts' || msg.type === 'system' || msg.type === 'unsupported') {
     return
   }
 
@@ -274,6 +352,33 @@ async function handleInbound(msg: {
       }
     }
 
+    // EMAIL CONCIERGE: if this admin has an email awaiting their confirm, their
+    // reply (SEND / SEND: <text> / SKIP) acts on THAT email, not normal admin
+    // chat. Takes priority so a "send" isn't swallowed by the chat handler.
+    if (emailConciergeEnabled()) {
+      try {
+        const pendingEmail = await pendingEmailForAdmin(e164)
+        if (pendingEmail) {
+          const r = await handleEmailConfirm(pendingEmail, msg.text)
+          // Only act + stop when she actually used a concierge verb (SEND/SEND:/
+          // SKIP). Any other message (stats, a blast confirm, anything) falls
+          // THROUGH to normal admin chat and leaves the email pending — so an
+          // unrelated message can never fire an email (skeptic CRITICAL #2).
+          if (r.recognized) {
+            const er = await sendText(e164, r.reply)
+            await logMessage({ direction: 'out', wa_phone: e164, body: r.reply, status: er.skipped ? 'failed' : 'sent', providerMessageId: er.messageId })
+            // Mirror the email action to Taona (Samreen replied SEND/SKIP -> result).
+            if (admin.role === 'festival_owner') {
+              await mirrorToMaster(admin, `Samreen on an email: "${msg.text.slice(0, 200)}"\nBot: ${r.reply.slice(0, 500)}`)
+            }
+            return
+          }
+        }
+      } catch (e) {
+        console.error('[email-concierge] confirm handling failed:', (e as Error).message)
+      }
+    }
+
     const adminResult = await handleAdminMessage(admin, msg.text)
     const reply = adminResult.reply ||
       (admin.role === 'festival_owner'
@@ -287,13 +392,28 @@ async function handleInbound(msg: {
       status: res.skipped ? 'failed' : 'sent',
       providerMessageId: res.messageId,
     })
-    // Only notify master on free-form (non-intent) admin messages — proposals
-    // and stats queries are noise to forward.
-    if (!adminResult.reply) await notifyMaster(admin, msg.text)
+    // MIRROR to Taona: he sees EVERYTHING Samreen does with the bot — her
+    // command AND the bot's reply (stats, blasts, drafts, acks). Best-effort.
+    if (admin.role === 'festival_owner') {
+      await mirrorToMaster(admin, `Samreen: "${msg.text.slice(0, 300)}"\nBot: ${reply.slice(0, 700)}`)
+    }
     return
   }
 
   if (msg.type !== 'text' || !msg.text.trim()) {
+    // Non-text inbound (image / document / sticker). The media bytes are already
+    // captured to vendor-docs by logMessage above. Resolve who sent it so a known
+    // vendor gets a warm "got your document, attached it to your application"
+    // acknowledgement instead of the generic tour. Never deflect a document.
+    const mediaSender = await resolveIdentity(e164)
+    if (mediaSender.role === 'vendor' && msg.type !== 'sticker') {
+      const ack = mediaSender.firstName
+        ? `Thanks ${mediaSender.firstName}, I have your document and attached it to your application. The team will review it. Anything else I can help with in the meantime?`
+        : `Thanks, I have your document and attached it to your application. The team will review it. Anything else I can help with in the meantime?`
+      const res = await sendText(e164, ack)
+      await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+      return
+    }
     await sendText(e164, "Hi! I'm the Young at Heart Festival assistant. Ask me about tickets, vendors, directions, or anything about the festival. Type 'talk to human' to reach our support team. Reply STOP to unsubscribe.")
     return
   }
@@ -353,6 +473,18 @@ async function handleInbound(msg: {
     return
   }
 
+  // Input-shape guard: vendors' OWN WhatsApp Business autoresponders echo back
+  // at us ("Thank you for contacting Frullato!", catalogue links, business
+  // hours). The transcript shows ~30 such echoes; the bot was treating them as
+  // real queries and replying with a confused answer (wasted LLM + a pointless
+  // message into Meta's frequency cap). Detect a clear autoresponder and do NOT
+  // reply (still logged on the inbound). Conservative patterns only, so a real
+  // question is never suppressed.
+  if (isLikelyAutoresponder(msg.text)) {
+    console.log(JSON.stringify({ at: 'webhook', event: 'autoresponder_echo_suppressed', e164_last4: e164.slice(-4) }))
+    return
+  }
+
   // Resolve who this is so every reply is personalised (vendor name, ticket
   // count, etc.). Admins are already handled above; resolution here is for
   // vendors / ticket buyers / unknowns.
@@ -363,28 +495,65 @@ async function handleInbound(msg: {
   // history, and per-caller identity briefing as extraSystem. The brain owns
   // the system prompt, intent routing, FAQ short-circuit, and sign-off rule.
   let reply = ''
+  // Slow follow-ups (e.g. render + send an invoice PDF) handed back by the brain
+  // or the agent; run AFTER the 200 via after() so the response is never blocked.
+  const deferredActions: Array<() => Promise<void>> = []
   // N2: per-sender LLM rate limit. If this caller has already burned 10 LLM
   // turns in the last 5 minutes, skip the Haiku call and respond with a
   // pre-written line so a spammer can't pin our Anthropic spend.
-  const llmAllowed = checkLLMBucket(e164)
+  // Two gates ANDed: the cheap process-local Map first (short-circuits the DB
+  // query under normal load), then the durable + global cap. Either tripping
+  // routes to the static reply, never the LLM.
+  const llmAllowed = checkLLMBucket(e164) && (await durableLLMRateOk(e164))
   if (!llmAllowed) {
     await logLLMThrottle(e164, LLM_MAX_PER_5MIN + 1)
     reply = identity.firstName
-      ? `Thanks ${identity.firstName}, we've received your message. A human will respond shortly. For tickets visit tickets.youngatheart.co.za`
-      : "We've received your message. A human will respond shortly. For tickets visit tickets.youngatheart.co.za"
+      ? `Thanks ${identity.firstName}, we've received your message. A human will respond shortly. For tickets visit cthalaal.co.za`
+      : "We've received your message. A human will respond shortly. For tickets visit cthalaal.co.za"
   } else {
     try {
-      const result = await askFestivalBrain(msg.text, {
-        waId: e164,
-        history,
-        extraSystem: identityBriefing(identity),
-      })
-      reply = result.message
+      // Phase D (ADR-0005): when CTH_AGENT is on, vendors and unknown senders go
+      // through the Sonnet tool-calling agent (session-scoped tools + email-OTP
+      // step-up). ticket_buyer keeps the read-only attendee brain (ticket-resend
+      // grounding); admins are handled above. Flag off = the ADR-004 mesh, unchanged.
+      if (vendorAgentEnabled() && (identity.role === 'vendor' || identity.role === 'unknown')) {
+        // Deterministic verification: a bare 6-digit code confirms a pending
+        // step-up. Identity binding is never model-driven (invariant 3). If there
+        // is no pending challenge, fall through and treat it as an ordinary message.
+        const codeOnly = msg.text.trim().match(/^(\d{6})$/)
+        let handled = false
+        if (codeOnly) {
+          const r = await confirmVendorVerification(e164, codeOnly[1])
+          if (r.reason !== 'no_pending') {
+            reply = r.ok
+              ? "You're verified. How can I help with your stall, payment, contract, or documents?"
+              : r.reason === 'expired'
+                ? "That code has expired. Tell me your application email again and I'll send a fresh one."
+                : r.reason === 'too_many_attempts'
+                  ? 'Too many attempts. Tell me your application email again for a fresh code.'
+                  : `That code was not correct.${typeof r.remaining === 'number' ? ` ${r.remaining} attempt${r.remaining === 1 ? '' : 's'} left.` : ''}`
+            handled = true
+          }
+        }
+        if (!handled) {
+          const session = await resolveVendorSession(e164)
+          const out = await runVendorAgent(session, msg.text, { history })
+          reply = out.message
+          deferredActions.push(...out.deferred)
+        }
+      } else {
+        // Brain mesh (ADR-004): identity-partitioned. routeToBrain sends a vendor
+        // to the scoped vendor brain and a ticket_buyer / unknown to the read-only
+        // attendee brain.
+        const result = await routeToBrain(identity, msg.text, { history })
+        reply = result.message
+        if (result.deferred) deferredActions.push(result.deferred)
+      }
     } catch (e) {
       console.error('brain error', e)
       reply = identity.firstName
-        ? `Thanks for your message, ${identity.firstName}! Our team will get back to you. For tickets visit tickets.youngatheart.co.za`
-        : 'Thanks for your message! Our team will get back to you. For tickets visit tickets.youngatheart.co.za'
+        ? `Thanks for your message, ${identity.firstName}! Our team will get back to you. For tickets visit cthalaal.co.za`
+        : 'Thanks for your message! Our team will get back to you. For tickets visit cthalaal.co.za'
     }
   }
   // OUTPUT-side PII guard (KT #114 pattern). Redact phones/emails/IDs in
@@ -401,27 +570,70 @@ async function handleInbound(msg: {
   }
   const res = await sendText(e164, guarded.reply)
   await logMessage({ direction: 'out', wa_phone: e164, body: guarded.reply, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+
+  // Deliver any heavy follow-up (e.g. the invoice PDF) AFTER the 200. after()
+  // survives past the response on Vercel (unlike a floating promise) and runs
+  // within maxDuration (raised to 60s below for the puppeteer render). Fully
+  // best-effort: a failure here never affects the inbound 200 or the text reply.
+  for (const run of deferredActions) {
+    after(async () => {
+      try { await run() } catch (e) { console.error('[wa-webhook] deferred action failed:', (e as Error).message) }
+    })
+  }
+}
+
+// D2) Developer-session handler. Runs the festival brain so Taona can test the
+// answer, but NEVER persists (no logMessage / touchThread / ticket auto-link),
+// so a dev test creates no real vendor thread or data. Every outbound is sent
+// through devSend, which prepends `[DEV] ` at the chokepoint and still routes
+// through sendText's bot-guards wall + consent gate. STOP/START are recognised
+// so Taona can eyeball the copy, but consent state is NOT recorded (this is a
+// test handset, not a real opt-out).
+async function handleDev(
+  e164: string,
+  msg: { type: string; text: string; media?: unknown }
+) {
+  const devSend = (body: string) => sendText(e164, `[DEV] ${body}`)
+
+  if (isStopKeyword(msg.text)) {
+    await devSend("STOP recognised (test mode, consent not recorded). Reply START to test the opt-back-in copy.")
+    return
+  }
+  if (isStartKeyword(msg.text)) {
+    await devSend("START recognised (test mode). You're back in 🎉 How can I help?")
+    return
+  }
+
+  if (msg.type !== 'text' || !msg.text.trim()) {
+    await devSend("Hi! I'm the Young at Heart Festival assistant. Ask me about tickets, vendors, directions, or anything about the festival.")
+    return
+  }
+
+  let reply = ''
+  try {
+    const result = await askFestivalBrain(msg.text, { waId: e164, history: [] })
+    reply = result.message
+  } catch (e) {
+    console.error('[dev] brain error', e)
+    reply = 'Thanks for your message! Our team will get back to you. For tickets visit cthalaal.co.za'
+  }
+  await devSend(reply)
 }
 
 // Forward an admin's inbound straight to the master (Taona) so he sees it
 // without waiting to open /admin/bot-inbox. Best-effort: a failure here never
 // blocks the 200 to Meta because the caller logs and swallows errors.
-async function notifyMaster(from: { role: string; name: string }, body: string) {
+// Mirror Samreen's bot activity (her command + the bot's reply) to Taona, so he
+// sees everything she does. FYI only: not logged to wa_messages (keeps his own
+// inbox thread clean), and his replies are never treated as Samreen's actions.
+async function mirrorToMaster(from: { role: string; name: string }, text: string) {
+  if (from.role === 'master') return // don't mirror Taona's own activity to himself
   const master = findAdmin('+971501168462')
   if (!master || master.role !== 'master') return
-  if (master.name === from.name) return // Taona pinging himself
-  const text = `🛎️ ${from.name} (${from.role}) said:\n\n"${(body || '').slice(0, 400)}"\n\nReply in /admin/bot-inbox or here.`
   try {
-    const res = await sendText(master.phone, text)
-    await logMessage({
-      direction: 'out',
-      wa_phone: master.phone,
-      body: text,
-      status: res.skipped ? 'failed' : 'sent',
-      providerMessageId: res.messageId,
-    })
+    await sendText(master.phone, `🪞 ${from.name.split(' ')[0]}'s desk:\n${(text || '').slice(0, 900)}`)
   } catch (e) {
-    console.error('notifyMaster error', e)
+    console.error('mirrorToMaster error', e)
   }
 }
 
@@ -434,21 +646,148 @@ async function alreadySeen(providerMessageId: string): Promise<boolean> {
   return Boolean(data)
 }
 
+// B6: Inbound-media durability. Meta media ids are short-lived (~1h), so we copy
+// the bytes into the private `vendor-docs` bucket at receipt under
+// `wa-media/<mediaId>.<ext>` and return the storage path to stash in metadata.
+// Strictly best-effort: any failure (fetch, upload, missing token) returns
+// undefined and the caller keeps the legacy id-only behavior. Never throws.
+const WA_MEDIA_BUCKET = 'vendor-docs'
+const WA_MEDIA_PREFIX = 'wa-media'
+
+function extFromMime(mime?: string): string {
+  const map: Record<string, string> = {
+    'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+    'image/gif': 'gif', 'application/pdf': 'pdf', 'video/mp4': 'mp4', 'audio/ogg': 'ogg',
+    'audio/mpeg': 'mp3', 'audio/mp4': 'm4a',
+  }
+  if (!mime) return 'bin'
+  const base = mime.split(';')[0].trim().toLowerCase()
+  return map[base] || 'bin'
+}
+
+async function captureMediaToStorage(
+  db: ReturnType<typeof createAdminClient>,
+  media: { kind: string; id: string; mimeType?: string; filename?: string }
+): Promise<string | undefined> {
+  try {
+    const fetched = await fetchMediaBytes(media.id)
+    if (!fetched) return undefined
+    const contentType = fetched.contentType || media.mimeType || 'application/octet-stream'
+    const ext = extFromMime(media.mimeType || fetched.contentType)
+    const path = `${WA_MEDIA_PREFIX}/${media.id}.${ext}`
+    const { error } = await db.storage.from(WA_MEDIA_BUCKET).upload(path, fetched.bytes, {
+      contentType,
+      upsert: true,
+    })
+    if (error) {
+      console.error('[wa-media] storage upload failed:', error.message)
+      return undefined
+    }
+    return path
+  } catch (e) {
+    console.error('[wa-media] capture failed:', (e as Error).message)
+    return undefined
+  }
+}
+
+// Deferred (post-response) capture: fetch+upload the bytes, then PATCH the
+// existing wa_messages row to add metadata.media.storage_path. Runs inside
+// after() so it never blocks the webhook 200. Best-effort end to end: every
+// failure (fetch null, timeout, oversized, upload error, missing row) is caught
+// and logged, never thrown — the id-only row stays valid and the proxy serves
+// from the live Meta id until/unless storage_path lands.
+//
+// CLOBBER-SAFETY: we RE-READ the row's current metadata jsonb and merge the
+// storage_path into the EXISTING media object, rather than writing a fresh
+// metadata literal. This preserves any other metadata fields (and any media
+// fields) that may have been written in the meantime.
+async function captureMediaToStorageAndPatch(
+  rowId: string,
+  media: { kind: string; id: string; mimeType?: string; filename?: string }
+) {
+  try {
+    const db = createAdminClient()
+    const storagePath = await captureMediaToStorage(db, media)
+    // Capture skipped (oversized / timeout / fetch fail / upload fail). Leave
+    // the row id-only; the proxy falls back to the Meta id. Not an error.
+    if (!storagePath) return
+
+    // Re-read the live metadata so we merge instead of overwrite.
+    const { data: current } = await db
+      .from('wa_messages')
+      .select('metadata')
+      .eq('id', rowId)
+      .maybeSingle()
+
+    const existingMeta = ((current as { metadata?: Record<string, unknown> } | null)?.metadata ?? {}) as Record<string, unknown>
+    const existingMedia = (existingMeta.media ?? {}) as Record<string, unknown>
+    const mergedMetadata = {
+      ...existingMeta,
+      media: { ...existingMedia, storage_path: storagePath },
+    }
+
+    const { error } = await db
+      .from('wa_messages')
+      .update({ metadata: mergedMetadata })
+      .eq('id', rowId)
+    if (error) {
+      console.error('[wa-media] storage_path patch failed:', error.message)
+    }
+  } catch (e) {
+    console.error('[wa-media] deferred capture/patch error:', (e as Error).message)
+  }
+}
+
 async function logMessage(row: {
   direction: 'in' | 'out'
   wa_phone: string
   body: string
   status: string
   providerMessageId?: string
+  media?: { kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'; id: string; mimeType?: string; filename?: string; caption?: string }
 }) {
   const db = createAdminClient()
-  await db.from('wa_messages').insert({
+  // Persist the media descriptor into the existing `metadata` jsonb (no DDL,
+  // Doctrine Law 8). The unified inbox media proxy reads metadata.media.id to
+  // fetch the bytes from the Graph API. The wamid alone CANNOT retrieve media.
+  //
+  // HOT-PATH FIX (B6.2, 2026-06-23): the row is INSERTED id-only (NO
+  // storage_path) and that single cheap INSERT is the only thing the webhook
+  // 200 waits on. The slow Meta fetch + Supabase upload (captureMediaToStorage)
+  // is deferred to Next's after() so it runs AFTER the response is flushed.
+  // Until the capture lands, the proxy falls back to the live Meta media id
+  // (~1h TTL) — a fully working intermediate state. Once after() patches in the
+  // storage_path, the proxy serves from durable storage (no expiry).
+  const idOnlyMetadata = row.media
+    ? { media: { kind: row.media.kind, id: row.media.id, mime_type: row.media.mimeType, filename: row.media.filename, caption: row.media.caption } }
+    : null
+  const { data: inserted } = await db.from('wa_messages').insert({
     direction: row.direction,
     wa_phone: row.wa_phone,
     body: row.body,
     status: row.status,
     provider_message_id: row.providerMessageId || null,
-  })
+    ...(idOnlyMetadata ? { metadata: idOnlyMetadata } : {}),
+  }).select('id').single()
+
+  // Defer the slow media capture off the synchronous 200 path. after() runs
+  // post-response on Vercel and survives the function (unlike a bare floating
+  // promise, which Vercel kills once the response is flushed). Best-effort:
+  // EVERYTHING inside is wrapped so a capture error can NEVER throw into the
+  // webhook handler — the id-only row already exists and the proxy still works.
+  const mediaToCapture = row.media
+  const insertedId = (inserted as { id?: string } | null)?.id
+  if (mediaToCapture?.id && insertedId) {
+    after(async () => {
+      try {
+        await captureMediaToStorageAndPatch(insertedId, mediaToCapture)
+      } catch (e) {
+        // Defensive: captureMediaToStorageAndPatch already swallows its own
+        // errors, but this outer catch guarantees after() never rejects.
+        console.error('[wa-media] deferred capture failed:', (e as Error).message)
+      }
+    })
+  }
   // Spine: keep wa_threads in lockstep with wa_messages so the admin Bot Inbox
   // can render. Prod schema is migration v9 (PK = wa_phone). Inbound bumps
   // last_inbound_at + unread_count; outbound bumps last_outbound_at and zeroes
@@ -458,6 +797,9 @@ async function logMessage(row: {
   } catch (e) {
     console.error('wa_threads touch error', e)
   }
+
+  // Live inbox: ping the admin inbox to refresh instantly (no PII in the ping).
+  await broadcastInboxRefresh(row.direction).catch(() => {})
 }
 
 async function touchThread(
@@ -542,6 +884,40 @@ async function logStatuses(statuses: Array<{ messageId: string; status: string; 
   }
 }
 
+// Detect a vendor's own WhatsApp Business autoresponder echoing back at us, so
+// the bot does not reply to a robot. Conservative: only clear automated-greeting
+// phrasings, so a genuine vendor question is never suppressed.
+function isLikelyAutoresponder(text: string): boolean {
+  const t = (text || '').toLowerCase().trim()
+  if (!t || t.length > 600) return false
+  // Specific automated-greeting phrasings only, so a genuine vendor message is
+  // never suppressed. Covers both "thanks" and "thank you" forms + the
+  // unavailable / business-hours / auto-reply variants that were slipping
+  // through and getting a (pointless) bot reply (Taona 2026-06-28).
+  const AUTORESPONDER_PATTERNS = [
+    /thank(s| you)( so much)? for (contacting|reaching out|getting in touch|your (message|enquiry|inquiry|order|email|patience))/,
+    /this is an automat(ed|ic) (reply|message|response)/,
+    /automatic reply/,
+    /auto[- ]?reply/,
+    /we (will|'ll|are going to|shall) (get|be|get back|be back|revert) ?(back)? to you/,
+    /we (have|'ve) received your (message|enquiry|order)/,
+    /your (message|enquiry) is important to us/,
+    /(our|the) (business|operating|working|trading|office) hours/,
+    /outside (of )?(our )?(normal |regular )?(business|office|working|trading) hours/,
+    /out of (the |our )?office/,
+    /away from (my|the|our) (phone|desk|office)/,
+    /we (are|'re) (currently |temporarily )?(closed|away|unavailable|not available|offline)/,
+    /(currently|temporarily) (closed|away|unavailable|not available|offline)/,
+    /(not |un)available (to reply|to respond|at the moment|right now|at present)/,
+    /not (currently )?available to reply/,
+    /kindly await/,
+    /we will respond (as soon as|asap|shortly|when we)/,
+    /our team will (get back|respond|be in touch)/,
+    /please bear with us/,
+  ]
+  return AUTORESPONDER_PATTERNS.some((re) => re.test(t))
+}
+
 async function recentHistory(e164: string): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
   const db = createAdminClient()
   const { data } = await db
@@ -576,7 +952,7 @@ async function sendRaw(e164: string, body: string) {
     // wall must never block the send
   }
   try {
-    await fetch(`https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -589,6 +965,13 @@ async function sendRaw(e164: string, body: string) {
         text: { preview_url: false, body: sendBody },
       }),
     })
+    // Best-effort: opted_out is already persisted by recordOptOut(), so a failed
+    // confirmation must NOT throw or block. Without an .ok check, a non-2xx from
+    // Graph (the send silently failing) would vanish. Log it so it is observable.
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      console.warn('stop-confirm send non-ok:', res.status, detail)
+    }
   } catch (e) {
     console.error('stop-confirm send error', e)
   }

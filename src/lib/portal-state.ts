@@ -71,7 +71,11 @@ export interface PortalState {
   v: number
   payment?: {
     status?: 'none' | 'deferred' | 'pending' | 'paid' | 'waived'
+    /** Cumulative amount PAID so far (Rand), across the first payment plus any
+     *  operator-requested top-ups. Outstanding = computeVendorPricing.total - amount. */
     amount?: number
+    /** Provider refs already settled, for top-up idempotency (de-dup). */
+    refs?: string[]
     due?: string
     reference?: string
     provider_ref?: string   // gateway's own txn id (FNB txnToken), used to validate on return
@@ -85,14 +89,22 @@ export interface PortalState {
     attempts?: number
     /** Number of attempts the webhook marked failed. */
     failed_attempts?: number
-    /** How the payment was taken. 'manual' = operator captured an outside /
-     *  non-marquee vendor's payment (EFT, cash, etc.) — see /admin/finance. */
-    method?: 'yoco' | 'fnb' | 'manual'
+    /** How the payment was taken. 'manual' = the /admin/finance outside-zone
+     *  capture flow (its own overwrite, always wins for that flow). 'eft' |
+     *  'cash' | 'manual_card' | 'waived' = the specific method an admin picked
+     *  on the standard vendor Mark Paid flow (vendors/[id]/mark-paid) — this is
+     *  what the invoice line and VendorPaymentsSection "Method" field show. */
+    method?: 'yoco' | 'fnb' | 'manual' | 'eft' | 'cash' | 'manual_card' | 'waived'
     /** Venue zone (venue-zones.ts key) for non-marquee vendors that are
      *  payment-tracked + acknowledged but NOT allocated on the floor plan. */
     zone?: string
     /** Free-text note the operator added when capturing a manual payment. */
     capture_note?: string
+    /** EFT receipt / refund proof files an operator uploaded. The file lives in
+     *  the private vendor-docs bucket; only the storage path is stored here, the
+     *  vendor portal mints a short-lived signed URL server-side (Law 2). Writer:
+     *  /api/admin/vendors/[id]/payment-proof. */
+    proofs?: Array<{ path: string; kind: 'receipt' | 'refund'; note?: string; uploaded_at: string }>
   }
   docs?: DocRecord[]
   staff?: StaffMember[]
@@ -124,7 +136,16 @@ export interface PortalState {
     created_at: string
     author: string | null
   }>
-  /** Stall change request submitted by vendor (Agent 12). */
+  /** Per-vendor notification channel preferences. Keys are `${event}_${channel}`
+   *  (e.g. `stall_allocated_whatsapp`, `document_approved_email`) and are read
+   *  VERBATIM by lib/notifications.ts `notifyVendor` to gate outbound sends:
+   *  a missing/true value means send, an explicit false suppresses that channel.
+   *  Writer: /api/exhibitor/notification-prefs. Keep keys in lockstep with the
+   *  NotifyEvent union. */
+  notification_preferences?: Record<string, boolean>
+  /** Stall SIZE change request submitted by vendor (Agent 12). Changes the
+   *  booth tier/dimensions (preferred_booth_tier). Distinct from the POSITION
+   *  request below. */
   stallChangeRequest?: {
     requestedTier: string
     currentTier: string
@@ -132,6 +153,57 @@ export interface PortalState {
     status: 'pending' | 'approved' | 'rejected'
     createdAt: string
     adminNote?: string
+  }
+  /** Stall POSITION / location change request. Distinct from stallChangeRequest
+   *  (which changes the booth SIZE). A position request is a preference for a
+   *  different spot on the floor; the operator allocates by hand on
+   *  /admin/vendor-ops, so resolving it never auto-mutates the ⟦STALL:..⟧
+   *  marker — same discipline as a tier change. Available pre-allocation.
+   *  Writer: /api/exhibitor/stand/move. Setter: /api/admin/stall-changes. */
+  stallMoveRequest?: {
+    /** Preferred zone hint (TYPE_META key: FT|FS|TS|BS). Optional. */
+    preferredZone?: string
+    /** What the vendor is asking for (free text). */
+    details: string
+    /** Allocated stall code at request time, if any. */
+    currentStall?: string
+    status: 'pending' | 'approved' | 'rejected'
+    createdAt: string
+    adminNote?: string
+  }
+  /** Vendor withdrew / was removed by an operator (no longer trading). The DB
+   *  status column has a CHECK constraint (no 'withdrawn' value) and DDL is
+   *  blocked (Law 8), so a withdrawn vendor is stored as status='rejected' PLUS
+   *  this marker — which distinguishes a genuine application rejection from a
+   *  vendor who pulled out, and makes the action reversible (un-set + re-approve).
+   *  Writer: DELETE /api/admin/vendors/[id]. */
+  withdrawn?: {
+    at: string                 // ISO timestamp
+    by: string | null          // operator email
+    reason?: string            // optional note (e.g. "no longer trading")
+    freed_stalls?: string[]    // stall codes released back to the floor
+  }
+  /** ISO timestamp the logo-upload campaign last messaged this vendor. Set by
+   *  /api/admin/vendors/logo-campaign so re-runs do not double-message. */
+  logo_prompt_sent_at?: string
+  /** WhatsApp numbers that verified ownership of this application via email-OTP
+   *  step-up (ADR-0005). ADDITIVE: we never overwrite vendor_applications.phone,
+   *  so a vendor can self-serve from a second device without corrupting their
+   *  on-file contact number. resolveIdentity ALSO matches these via a queryable
+   *  ⟦WAV<last9>⟧ marker written into admin_notes alongside this record. */
+  verified_wa?: Array<{
+    phone: string        // E.164 of the verified WhatsApp number
+    bound_at: string     // ISO timestamp of OTP confirmation
+  }>
+  /** Pending email-OTP step-up for a WhatsApp number that did NOT uniquely
+   *  resolve to this vendor. The candidate number is NOT trusted until the code
+   *  emailed to the application address is confirmed. Cleared on success/expiry.
+   *  Distinct from phone_change_pending (that is a portal-authenticated flow). */
+  wa_verify_pending?: {
+    wa_phone: string     // E.164 candidate WhatsApp number being bound
+    code_hash: string    // sha256(code + ':' + applicationId), constant-time compare
+    requested_at: string // ISO timestamp (expiry + rate-limit)
+    attempts: number     // failed code checks; >=5 invalidates and forces re-request
   }
 }
 
@@ -150,6 +222,21 @@ export function parsePortalState(adminNotes?: string | null): PortalState {
   } catch {
     return { v: 1 }
   }
+}
+
+/**
+ * Read-only fetch of a vendor's portal state. Scoped by applicationId (the
+ * caller is responsible for binding it to a resolved identity). Returns the
+ * default empty state if the row or marker is missing.
+ */
+export async function getPortalState(applicationId: string): Promise<PortalState> {
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('vendor_applications')
+    .select('admin_notes')
+    .eq('id', applicationId)
+    .single()
+  return parsePortalState((data?.admin_notes as string) || '')
 }
 
 function encode(state: PortalState): string {
@@ -185,7 +272,12 @@ export async function updatePortalState(
   const notes = (data?.admin_notes as string) || ''
   const next = mutate(parsePortalState(notes))
   const newNotes = updatePortalStateImpl(notes, next)
-  await admin.from('vendor_applications').update({ admin_notes: newNotes }).eq('id', applicationId)
+  // Idempotency: skip the write when the mutation produced no change. Kills the
+  // write-flood / public-flicker a repeated WhatsApp action ("publish my stall"
+  // x20) would otherwise cause (ADR-004 skeptic HIGH #7).
+  if (newNotes !== notes) {
+    await admin.from('vendor_applications').update({ admin_notes: newNotes }).eq('id', applicationId)
+  }
   return next
 }
 
@@ -199,28 +291,30 @@ export async function syncPortalState(
 ): Promise<PortalState> {
   const { data: app, error } = await supabase
     .from('vendor_applications')
-    .select('payment_status, portal_stage, admin_notes, payment_amount, payment_due_date, paid_at, contract_signed_at')
+    .select('admin_notes, paid_at, contract_signed_at')
     .eq('id', applicationId)
     .single()
 
   if (error || !app) throw new Error(`syncPortalState: no row ${applicationId}`)
 
+  // The payment columns (payment_status, payment_amount, payment_due_date,
+  // portal_stage) do not exist on vendor_applications. The ⟦PORTAL⟧ marker is
+  // the source of truth for payment status/amount/due/stage. The only real
+  // column worth merging IN here is paid_at: if the row shows the vendor has
+  // paid but the marker has not caught up, reflect that into the marker.
   const state = parsePortalState(app.admin_notes || '')
 
-  if (app.payment_status) {
+  if (app.paid_at) {
     state.payment = {
       ...state.payment,
-      status: app.payment_status as NonNullable<PortalState['payment']>['status'],
-      amount: app.payment_amount || state.payment?.amount,
-      due: app.payment_due_date || state.payment?.due,
-      paid_at: app.paid_at || state.payment?.paid_at,
+      status: state.payment?.status === 'paid' ? 'paid' : (state.payment?.status || 'paid'),
+      paid_at: state.payment?.paid_at || app.paid_at,
     }
-  }
-
-  if (app.portal_stage) {
-    state.stage = app.portal_stage as PortalState['stage']
-  } else if (app.payment_status === 'paid') {
-    state.stage = 'paid'
+    // Advance to 'paid' unless the marker is already at a later stage
+    // (keep 'show_ready' if already there, matching the prior behaviour).
+    if (state.stage !== 'show_ready' && state.stage !== 'docs') {
+      state.stage = 'paid'
+    }
   }
 
   const updated = updatePortalStateImpl(app.admin_notes || '', state)

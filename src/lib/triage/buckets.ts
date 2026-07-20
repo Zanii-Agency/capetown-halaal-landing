@@ -1,4 +1,5 @@
 import type { VendorApplication } from '@/lib/supabase/types'
+import { parsePortalState } from '@/lib/portal-state'
 import { scoreCompleteness } from './completeness'
 
 /**
@@ -53,15 +54,23 @@ export function isDuplicateCandidate(row: VendorApplication): boolean {
 }
 
 export function hasContractSigned(row: VendorApplication): boolean {
-  // Reads contract_signed marker out of admin_notes (kept consistent with
-  // the rest of the doctrine: no phantom columns, marker-as-text).
-  const notes = row.admin_notes ?? ''
-  return /⟦CONTRACT:signed⟧|⟦CONTRACT:SIGNED⟧/.test(notes)
+  // Contract-signed truth: the column the /exhibitor/contract/sign route stamps.
+  // NOTHING ever writes a literal ⟦CONTRACT:signed⟧ marker, so the old
+  // admin_notes regex always matched zero rows. Mirrors the whatsapp-broadcast
+  // isContractSignedRow() fix.
+  return !!row.contract_signed_at
 }
 
 export function hasPaid(row: VendorApplication): boolean {
-  const notes = row.admin_notes ?? ''
-  return /⟦PAID⟧|⟦PAID:full⟧|⟦PAID:partial⟧/.test(notes)
+  // Single source of "paid" truth, mirroring whatsapp-broadcast isPaidRow() and
+  // lib/exhibitor-paygate.ts isPaid(): a vendor counts as paid when the
+  // first-class column says so (Yoco webhook / admin mark-paid via confirm.ts,
+  // which also stamps paid_at on a fee waiver) OR the legacy ⟦PORTAL:..⟧
+  // base64 portal-state marker does. NO code ever writes a literal ⟦PAID⟧
+  // marker, so the old notes regex always matched zero rows.
+  if (row.payment_status === 'paid') return true
+  if (row.paid_at) return true
+  return parsePortalState(row.admin_notes).payment?.status === 'paid'
 }
 
 export function hasDocs(row: VendorApplication): boolean {

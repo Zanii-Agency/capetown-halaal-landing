@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { paymentsEnabled, paymentReference } from '@/lib/payments'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
-import { computePaymentDue, daysUntil, fmtDate } from '@/lib/exhibitor-paygate'
+import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
-import { AlertCircle, CheckCircle2, Clock } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
   PageShell, PageHeader, Card
 } from '@/components/chrome/PageChrome'
@@ -14,6 +15,8 @@ import MiniTaskStrip from '@/components/exhibitor/MiniTaskStrip'
 export const dynamic = 'force-dynamic'
 
 export default async function PaymentsPage() {
+  // Sequence gate: a vendor must sign the contract before they can pay.
+  await requireContractSigned()
   const ctx = await getExhibitorContext()
   const app = ctx?.application
   const state = parsePortalState(app?.admin_notes as string)
@@ -25,6 +28,37 @@ export default async function PaymentsPage() {
   const attemptedAt = state.payment?.attempted_at as string | undefined
   const failedAttempts = (state.payment?.failed_attempts as number | undefined) || 0
 
+  // EFT payment receipts / refund proofs an organiser uploaded for this vendor.
+  // Each proof's file lives in the private vendor-docs bucket; we mint a short
+  // lived signed URL server-side (Law 2). This page is already scoped to the
+  // logged-in vendor's own application, so only their own proofs are listed.
+  // A proof whose signed URL cannot be minted is skipped, never crashes the page.
+  const proofs = state.payment?.proofs || []
+  const proofViews = proofs.length > 0
+    ? (await Promise.all(
+        proofs.map(async (p) => {
+          if (!p.path || typeof p.path !== 'string' || p.path.trim().length === 0) return null
+          try {
+            const admin = createAdminClient()
+            // Long-lived link (1 year). The proof is only reachable from this
+            // authenticated vendor portal (the portal is the security boundary),
+            // and this page re-mints the URL on every visit, so the link does
+            // not practically expire on the vendor.
+            const { data } = await admin.storage.from('vendor-docs').createSignedUrl(p.path, 60 * 60 * 24 * 365)
+            if (!data?.signedUrl) return null
+            return {
+              kind: p.kind,
+              note: p.note,
+              uploaded_at: p.uploaded_at,
+              url: data.signedUrl,
+            }
+          } catch {
+            return null
+          }
+        })
+      )).filter((p): p is NonNullable<typeof p> => p !== null)
+    : []
+
   // Compute the itemised breakdown from the application data so the vendor sees
   // exactly what they're paying for. An organiser-set state.payment.amount
   // overrides only the total (e.g. for special-case quotes).
@@ -34,9 +68,15 @@ export default async function PaymentsPage() {
         special_requirements: app.special_requirements,
       })
     : null
-  const amount = state.payment?.amount && state.payment.amount > 0
-    ? state.payment.amount
-    : pricing?.total ?? null
+  // Balance model: state.payment.amount = cumulative amount PAID; owed = the live
+  // computed total; outstanding = what is still due. A top-up is when the operator
+  // added charges after the vendor paid, leaving an outstanding balance.
+  const owed = pricing?.total ?? null
+  const paidSoFar = Number(state.payment?.amount) || 0
+  const outstanding = owed !== null ? Math.max(0, owed - paidSoFar) : null
+  const fullyPaid = status === 'paid' && (outstanding === null || outstanding <= 0)
+  const topUpDue = paidSoFar > 0 && (outstanding || 0) > 0
+  const amount = owed
 
   // Countdown banner. Until the vendor pays, the rest of the portal is locked
   // (requirePaid on every other route redirects them here). The banner makes
@@ -61,11 +101,26 @@ export default async function PaymentsPage() {
       <MiniTaskStrip activeKey="payment" />
       <PageHeader
         kicker="Payments"
-        title={status === 'paid' ? 'You are paid in full' : 'Pay your stall fee'}
-        subtitle={status === 'paid'
+        title={fullyPaid ? 'You are paid in full' : topUpDue ? 'Additional payment due' : 'Pay your stall fee'}
+        subtitle={fullyPaid
           ? 'Thank you. Your booth is confirmed. The full festival portal is unlocked for you below.'
+          : topUpDue
+          ? 'Extra charges were added to your stall. Please settle the balance below to stay confirmed.'
           : 'Your portal unlocks the moment your stall fee clears. Pay by card via Yoco, EFT details on request via support.'}
       />
+
+      {/* Wrong size? Let the vendor change stall size before paying so the fee
+          matches the booth they want. Reachable pre-payment (stall-request page
+          gates on approval, not payment). */}
+      {!fullyPaid && (
+        <div className="rounded-2xl border border-[#cd2653]/20 bg-[#cd2653]/5 p-4 mb-6 text-sm text-[#1B1A17]">
+          Need a bigger or smaller booth? Change your stall size or request a different position{' '}
+          <Link href="/exhibitor/portal/stand/change" className="font-semibold text-[#cd2653] underline underline-offset-2">
+            before you pay
+          </Link>
+          , so your fee matches the stall you want.
+        </div>
+      )}
 
       {/* Countdown banner */}
       {showCountdown && (
@@ -86,13 +141,25 @@ export default async function PaymentsPage() {
         </div>
       )}
 
-      {status === 'paid' && (
+      {fullyPaid && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 mb-6 flex items-start gap-4 text-emerald-800">
           <CheckCircle2 className="w-6 h-6 shrink-0 mt-0.5" />
           <div>
             <p className="font-bold">Payment confirmed</p>
             <p className="text-sm mt-1 opacity-90">
               Your booth is locked in. Use the menu above to view your stand, upload documents, register staff and watch announcements.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {topUpDue && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 mb-6 flex items-start gap-4 text-amber-800">
+          <AlertCircle className="w-6 h-6 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Additional payment due: {formatRand(outstanding || 0)}</p>
+            <p className="text-sm mt-1 opacity-90">
+              You have paid {formatRand(paidSoFar)} so far. Extra charges were added to your stall, so a balance of {formatRand(outstanding || 0)} is now due. Settle it below to keep your booth confirmed.
             </p>
           </div>
         </div>
@@ -145,6 +212,20 @@ export default async function PaymentsPage() {
                 {amount !== null ? formatRand(amount) : 'TBC'}
               </span>
             </div>
+            {paidSoFar > 0 && (
+              <div className="mt-2 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-[#1B1A17]/70">Paid so far</span>
+                  <span className="text-emerald-700 font-medium">{formatRand(paidSoFar)}</span>
+                </div>
+                {(outstanding || 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-[#1B1A17]/70">Outstanding</span>
+                    <span className="text-[#cd2653] font-semibold">{formatRand(outstanding || 0)}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
         )}
 
@@ -152,11 +233,50 @@ export default async function PaymentsPage() {
           enabled={paymentsEnabled()}
           status={status}
           amount={amount}
+          outstanding={outstanding}
           reference={reference}
           dueDate={due}
           attemptedAt={attemptedAt || null}
           failedAttempts={failedAttempts}
         />
+
+        {proofViews.length > 0 && (
+          <Card>
+            <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-4">
+              Payment &amp; refund proofs
+            </p>
+            <ul className="space-y-3">
+              {proofViews.map((p, i) => (
+                <li
+                  key={i}
+                  className="flex items-start justify-between gap-4 rounded-xl border border-[#B8924A]/15 bg-white p-4"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[#1B1A17]">
+                      {p.kind === 'refund' ? 'Refund proof' : 'Payment receipt'}
+                    </p>
+                    {p.note && (
+                      <p className="text-sm text-[#1B1A17]/70 mt-0.5 break-words">{p.note}</p>
+                    )}
+                    {p.uploaded_at && (
+                      <p className="text-xs text-[#1B1A17]/50 mt-1">
+                        Uploaded {fmtDate(p.uploaded_at)}
+                      </p>
+                    )}
+                  </div>
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-[#cd2653]/30 px-3 py-1.5 text-xs font-semibold text-[#cd2653] hover:bg-[#cd2653]/5"
+                  >
+                    <Download className="w-3.5 h-3.5" /> View
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
       </div>
     </PageShell>
   )

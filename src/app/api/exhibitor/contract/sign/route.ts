@@ -67,8 +67,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Could not store contract' }, { status: 500 })
   }
 
-  // Stamp the audit columns
-  const { error: dbErr } = await admin
+  // Atomic transition authority. This guarded UPDATE is the SINGLE point that
+  // decides whether THIS call is the one that moved the row unsigned -> signed.
+  // It only touches a row where contract_signed_at IS NULL, and .select()
+  // returns the rows it actually wrote. Under a double-submit or concurrent
+  // sign, exactly one call matches the unsigned row and gets a returned row
+  // back; every other concurrent call matches 0 rows and gets an empty array.
+  // We gate the post-sign side-effects (audit event, owner notify) on this
+  // result so a duplicate sign can never re-notify. The early contract_signed_at
+  // read above is only a fast-path bail, it is not load-bearing for this gate.
+  // The PDF render + upload above is idempotent: it upserts to a deterministic
+  // path keyed by app.id, so a losing call merely overwrites identical content.
+  const { data: transitioned, error: dbErr } = await admin
     .from('vendor_applications')
     .update({
       contract_signed_at: signedAtIso,
@@ -78,21 +88,57 @@ export async function POST(req: NextRequest) {
       contract_version: CONTRACT_VERSION,
     })
     .eq('id', app.id)
+    .is('contract_signed_at', null)
+    .select('id')
   if (dbErr) {
     console.error('[contract-sign] db update failed:', dbErr.message)
     return NextResponse.json({ error: 'Could not record signature' }, { status: 500 })
   }
 
-  // Best-effort audit event
+  // This call won the unsigned -> signed transition iff the guarded UPDATE
+  // affected exactly the unsigned row (returned >= 1 row). A concurrent /
+  // double-submitted sign matches 0 rows here, so it skips every side-effect
+  // below and returns the already-signed state gracefully. Only the winning
+  // call fires the audit event + owner notification.
+  const wonTransition = Array.isArray(transitioned) && transitioned.length > 0
+  if (!wonTransition) {
+    return NextResponse.json({ ok: true, alreadySigned: true, path })
+  }
+
+  // Best-effort audit event (winning call only). Canonical site_events shape:
+  // { session_id, event_type, path, metadata }. contract_signed is in the
+  // activity-feed union, so it surfaces in the admin feed + vendor Activity tab.
   try {
     await admin.from('site_events').insert({
-      type: 'contract_signed',
-      severity: 'info',
-      detail: `Vendor ${app.business_name} (${app.id}) signed Vendor Contract 2026 (${body.signatureMode} mode).`,
-      meta: { applicationId: app.id, mode: body.signatureMode, ip, version: CONTRACT_VERSION },
+      session_id: `contract-${app.id}`,
+      event_type: 'contract_signed',
+      path: '/exhibitor/portal/contract',
+      metadata: {
+        vendor_application_id: app.id,
+        business_name: app.business_name,
+        mode: body.signatureMode,
+        print_name: body.printName,
+        ip,
+        version: CONTRACT_VERSION,
+        signed_at: signedAtIso,
+        storage_path: path,
+      },
     })
-  } catch {
-    // best-effort
+  } catch (e) {
+    console.warn('[contract-sign] site_events insert failed:', (e as Error).message)
+  }
+
+  // Best-effort owner notification (winning call only). Failure here never
+  // blocks the vendor's sign.
+  try {
+    const { notifyOwners } = await import('@/lib/bot/notify')
+    await notifyOwners({
+      event: 'system_alert',
+      body: `Contract signed: ${String(app.business_name || 'Vendor')}.`,
+      audience: 'all',
+    })
+  } catch (e) {
+    console.error('[contract-sign] notifyOwners failed:', (e as Error).message)
   }
 
   return NextResponse.json({ ok: true, path })

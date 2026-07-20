@@ -52,21 +52,10 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
   const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
-  const [hasUnreadAnnouncements, setHasUnreadAnnouncements] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const cleanName = businessName.replace(/^DEMO\s*·?\s*/i, '')
 
   useClickOutside(menuRef, () => setMenuOpen(false))
-
-  useEffect(() => {
-    const lastViewed = localStorage.getItem('announcements-last-viewed')
-    if (lastViewed) {
-      fetch(`/api/exhibitor/announcements/since?since=${lastViewed}`)
-        .then(r => r.json())
-        .then(data => setHasUnreadAnnouncements(data.length > 0))
-        .catch(() => {})
-    }
-  }, [])
 
   async function signOut() {
     setSigningOut(true)
@@ -76,7 +65,7 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
 
   function isActive(href: string) {
     if (href === '/exhibitor/portal') return pathname === href
-    return pathname.startsWith(href)
+    return pathname === href || pathname.startsWith(href + '/')
   }
 
   return (
@@ -100,7 +89,7 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
             {NAV_GROUPS.map((g) => {
               const active = isActive(g.href)
               const Icon = g.icon
-              const showDot = (inboxUnread || hasUnreadAnnouncements) && (g.href === '/exhibitor/portal/support' || g.href === '/exhibitor/portal')
+              const showDot = inboxUnread && (g.href === '/exhibitor/portal/support' || g.href === '/exhibitor/portal')
 
               return (
                 <a key={g.href} href={g.href}

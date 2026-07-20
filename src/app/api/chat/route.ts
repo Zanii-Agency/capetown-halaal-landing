@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { askFestivalBrain } from '@/lib/festival-brain'
 import { getExhibitorContext } from '@/lib/exhibitor'
+import type { ResolvedIdentity } from '@/lib/bot/identity'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import {
@@ -10,8 +11,23 @@ import {
   logGuardEvent,
   clientIp,
 } from '@/lib/security/abuse-guard'
+import {
+  MARQUEE_CAPACITY,
+  TOTAL_DEFINED_CAPACITY,
+  VENUE_ZONES,
+} from '@/lib/venue-zones'
 
 const ENDPOINT = 'chat'
+
+// Source of truth: lib/venue-zones.ts. Derived here so the admin prompt can
+// never drift from the allocation map. 243 marquee (on-map) + 20 bedouin + 45
+// trucks (30 food/drink + 10 dessert + 5 snack) = 308 defined vendor spots.
+const ZONE_BREAKDOWN = VENUE_ZONES.map((z) => `${z.label} ${z.capacity}`).join(', ')
+const TRUCK_TOTAL = VENUE_ZONES.filter((z) => z.key.endsWith('_truck')).reduce(
+  (s, z) => s + z.capacity,
+  0,
+)
+const OUTSIDE_TOTAL = TOTAL_DEFINED_CAPACITY - MARQUEE_CAPACITY
 // 10 messages / IP / 10min for the public branch. Anyone past that is either
 // a scraper or an LLM-burn DoS. Admin branch separately gates on session.
 const MAX_PER_WINDOW = 10
@@ -26,19 +42,19 @@ You have access to these admin tools and pages:
 - Ticket Sales (/admin/tickets): WooCommerce order data, daily revenue, ticket type breakdown
 - Applications (/admin/applications): vendor booth applications, approve/reject/request info
 - Analytics (/admin/analytics): page views, visitors, geo data, device breakdown, referrers, vendor funnel
-- Follow Up (/admin/follow-up): failed payments, abandoned checkouts, captured emails from drop-offs
+- Contacts (/admin/contacts): incomplete and started applications, failed payments, abandoned checkouts, captured emails from drop-offs
 
-KEY METRICS YOU KNOW:
-- 264 total booth spaces across 4 categories (FT, FS, TS, BS)
-- Booth prices: R3,700 to R12,000 (marquee), R4,800 to R8,500 (food trucks)
+KEY METRICS YOU KNOW (source of truth: lib/venue-zones.ts):
+- ${TOTAL_DEFINED_CAPACITY} defined vendor spots across 5 zones: ${ZONE_BREAKDOWN}.
+- The Marquee (${MARQUEE_CAPACITY} stalls) is the ONLY zone that gets a floor-plan stall allocation. The other ${OUTSIDE_TOTAL} spots are outside zones (${OUTSIDE_TOTAL - TRUCK_TOTAL} bedouin + ${TRUCK_TOTAL} trucks): payment-tracked and acknowledged only, no map slot, allocated on setup day.
 - Festival dates: 11, 12, 13 December 2026
 - Ticket prices: R30 per day, R60 weekend pass
-- Expected: 25,000+ visitors, 350+ vendors
+- Marquee stall fees are in the exhibitor portal and on the application form. Do not quote stall or truck prices from memory. If asked for a specific fee, point the team to the Applications page or the apply form rather than stating a number.
 
 ADMIN GUIDANCE:
 - When asked about revenue, refer them to Dashboard or Ticket Sales page
 - When asked about vendor categories, refer to the Vendor Categories section on Dashboard
-- When asked about drop-offs, refer to Follow Up page and the vendor funnel in Analytics
+- When asked about drop-offs, refer to the Contacts page and the vendor funnel in Analytics
 - When asked about approvals, guide them to Applications page
 - Suggest actionable next steps based on the data
 - Be concise, data-driven, and helpful
@@ -136,17 +152,52 @@ export async function POST(req: NextRequest) {
         }))
       const assistantHasSpoken = messages.some((m: { role: string }) => m.role === 'assistant')
       const appRow = (exhibitor.application || {}) as Record<string, unknown>
-      const brief = [
-        appRow.business_name ? `Vendor business: ${appRow.business_name}` : null,
-        appRow.contact_name ? `Contact: ${appRow.contact_name}` : null,
-        appRow.status ? `Application status: ${appRow.status}` : null,
-      ].filter(Boolean).join('. ')
+
+      // The portal caller is an AUTHENTICATED vendor (their session = their
+      // application). Build the SAME rich identity briefing the WhatsApp bot uses
+      // so the in-portal assistant answers tailored to THIS vendor: their real
+      // status, contract, payment, allocated stall, and a deterministic NEXT STEP.
+      // We also append the exact amount owed/paid/outstanding so it can tell them
+      // precisely what to pay. No phone is needed: identity is the session.
+      const { parsePortalState } = await import('@/lib/portal-state')
+      const { parseAllocation, tierLabel } = await import('@/lib/stalls')
+      const { identityBriefing } = await import('@/lib/bot/identity')
+      const { computeVendorPricing, formatRand } = await import('@/lib/payments/pricing')
+
+      const portal = parsePortalState((appRow.admin_notes as string) || null)
+      const alloc = parseAllocation((appRow.admin_notes as string) || null)
+      const vName = (appRow.contact_name as string) || (appRow.business_name as string) || null
+      const identity: ResolvedIdentity = {
+        role: 'vendor',
+        name: vName,
+        firstName: (vName || '').trim().split(/\s+/)[0] || null,
+        e164: '',
+        vendor: {
+          id: (appRow.id as string) || '',
+          business_name: (appRow.business_name as string) || '',
+          contact_name: (appRow.contact_name as string) || null,
+          email: (appRow.email as string) || null,
+          status: (appRow.status as string) || 'pending',
+          stall: alloc.stall,
+          payment_status: portal.payment?.status || 'none',
+          tier_label: appRow.preferred_booth_tier ? tierLabel(appRow.preferred_booth_tier as string) : null,
+          contract_signed_at: (appRow.contract_signed_at as string) || null,
+        },
+      }
+      const owed = computeVendorPricing({
+        preferred_booth_tier: appRow.preferred_booth_tier as string,
+        special_requirements: appRow.special_requirements,
+      }).total
+      const paid = Number(portal.payment?.amount) || 0
+      const outstanding = Math.max(0, owed - paid)
+      const moneyLine = `Stall fee: total ${formatRand(owed)}, paid ${formatRand(paid)}, outstanding ${formatRand(outstanding)}. If they ask what to pay, the amount due now is ${formatRand(outstanding)}, payable by card in the portal.`
+      const brief = `${identityBriefing(identity)}\n\n${moneyLine}`
 
       const result = await askFestivalBrain(last?.content ?? '', {
         history,
         forceFirstContact: !assistantHasSpoken,
         surface: 'vendor',
-        extraSystem: brief || undefined,
+        extraSystem: brief,
       })
       return NextResponse.json({ message: result.message, needsHuman: result.needsHuman })
     } else {
@@ -201,6 +252,7 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
+      temperature: 0,
       system: ADMIN_PROMPT,
       messages: messages.slice(-10).map((m: { role: string; content: string }) => ({
         role: m.role as 'user' | 'assistant',

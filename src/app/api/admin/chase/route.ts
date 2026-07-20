@@ -27,8 +27,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
 import { renderTemplate, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
@@ -72,24 +72,6 @@ function scrub(s: string | undefined | null): string {
   return String(s).replace(/[–—]/g, ',')
 }
 
-async function assertAdmin(): Promise<
-  | { ok: true; userId: string; userEmail: string | null }
-  | { ok: false; status: number; error: string }
-> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { ok: false, status: 401, error: 'unauthorized' }
-  const db = createAdminClient()
-  const { data: adminUser } = await db.from('admin_users').select('id, role, email').eq('id', user.id).maybeSingle()
-  if (!adminUser) return { ok: false, status: 403, error: 'forbidden' }
-  const role = ((adminUser as { role?: string }).role || 'operator').toLowerCase()
-  if (!['owner', 'operator'].includes(role)) {
-    return { ok: false, status: 403, error: 'insufficient_role' }
-  }
-  const userEmail = ((adminUser as { email?: string | null }).email) ?? user.email ?? null
-  return { ok: true, userId: user.id, userEmail }
-}
-
 // Per-admin chase rate limit. In-memory Map: process-local, fine for the
 // single Vercel instance most cron+admin traffic hits. Resets on cold start.
 const chaseRateBuckets = new Map<string, { count: number; resetAt: number }>()
@@ -131,12 +113,13 @@ const ALLOWED_WA_TEMPLATES = new Set<string>([
 const CHASE_MAX_RECIPIENTS = 200
 
 export async function POST(req: NextRequest) {
-  const auth = await assertAdmin()
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
+  const { user } = gate
 
   // H2: per-admin rate limit. Keyed by userId so a single leaked admin session
   // cannot blast unlimited chase calls in a loop.
-  const rate = checkChaseRate(`chase:${auth.userId}`)
+  const rate = checkChaseRate(`chase:${user.id}`)
   if (!rate.ok) {
     return NextResponse.json(
       { error: 'rate_limited', retry_after_seconds: rate.retryAfter },

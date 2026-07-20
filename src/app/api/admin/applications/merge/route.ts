@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 import { capJsonbSize } from '@/lib/audit/cap'
 import { z } from 'zod'
 
@@ -36,23 +36,12 @@ const MERGEABLE_FIELDS = [
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const gate = await requireOperator()
+    if (!gate.ok) return gate.response
+    const { adminUser, role } = gate
 
     const admin = createAdminClient()
-    const { data: adminUser } = await admin
-      .from('admin_users')
-      .select('id, role, email')
-      .eq('id', user.id)
-      .single()
-    if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-
-    const role = (adminUser.role || 'operator') as string
-    if (!['owner', 'operator'].includes(role)) {
-      return NextResponse.json({ error: 'insufficient_role' }, { status: 403 })
-    }
-    const actorEmail = (adminUser.email as string | null) || user.email || null
+    const actorEmail = adminUser.email
 
     const body = await request.json()
     const parsed = bodySchema.parse(body)

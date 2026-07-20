@@ -43,8 +43,27 @@ const RULES: IntentRule[] = [
       /\b(buy|purchase|get|book|reserve) (a |my |the )?ticket/i,
       /\bticket (price|cost|link|url|where)\b/i,
       /\bhow much.*(ticket|entry|gate)\b/i,
-      /\b(weekend pass|day pass|r\s?30|r\s?60)\b/i,
-      /\bkids? (under )?5\b/i,
+      /\b(weekend pass|day pass|rider ticket)\b/i,
+      /\b(kids?|child(ren)?)\b.{0,25}\b(ticket|free|enter|pay)\b/i,
+      // Ticket-buyer FAQ shapes: refund, fees, payment, gift, types, exchange,
+      // transfer, delivery, entry, accessibility, collection, scan. These let the
+      // intent reach >=0.55 so the FAQ short-circuit serves the canonical answer.
+      /\brefund\b/i,
+      /\b(event|festival)\b.{0,25}\bcancel/i,
+      /\b(booking|extra|hidden|service)\s*fees?\b/i,
+      /\b(payment|pay)\b.{0,15}\b(method|option|card|cash|accept)\b/i,
+      /\b(visa|mastercard)\b/i,
+      /\bgift\b.{0,20}\bticket/i,
+      /\bticket.{0,20}\bgift\b/i,
+      /\bticket.{0,15}\b(type|kind|option)/i,
+      /\b(type|kind|option)s?\b.{0,15}\bticket/i,
+      /\b(exchange|transfer)\b.{0,15}\bticket/i,
+      /\bticket.{0,15}\b(exchange|transfer)/i,
+      /\b(e[\s-]?ticket|pdf)\b/i,
+      /\b(receive|collect|scan)\b.{0,15}\bticket/i,
+      /\bticket.{0,15}\b(scan|collect|pick ?up)/i,
+      /\b(wheelchair|accessible|accessibility|mobility|disabled|disability)\b/i,
+      /\bwhat\b.{0,20}\bbring\b/i,
     ],
   },
   // vendor_application
@@ -194,7 +213,13 @@ export function classifyIntent(message: string): IntentResult {
 export function intentFaqKeys(intent: Intent): import('./faq').FaqKey[] {
   switch (intent) {
     case 'ticket_buyer':
-      return ['ticket_price', 'dates', 'venue', 'kids_free_age']
+      return [
+        'ticket_price', 'ticket_types', 'buy_tickets', 'payment_methods',
+        'gate_tickets', 'gift_tickets', 'refund_policy', 'ticket_exchange',
+        'ticket_transfer', 'ticket_delivery', 'entry_requirements',
+        'accessibility', 'ticket_collection', 'ticket_scan_issue',
+        'kids_free_age', 'dates', 'venue',
+      ]
     case 'vendor_application':
       return ['vendor_apply', 'stall_sizes', 'halaal_cert', 'electricity']
     case 'vendor_status':
@@ -202,7 +227,7 @@ export function intentFaqKeys(intent: Intent): import('./faq').FaqKey[] {
     case 'vendor_docs':
       return ['halaal_cert', 'contact']
     case 'vendor_payment':
-      return ['stall_sizes', 'contact']
+      return ['vendor_payment_method', 'stall_sizes', 'contact']
     case 'sponsorship':
       return ['contact', 'dates', 'venue']
     case 'general_inquiry':

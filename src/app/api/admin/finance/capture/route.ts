@@ -8,11 +8,12 @@
 // (no DDL — the payment columns don't exist; Law 8).
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState } from '@/lib/portal-state'
+import { confirmPayment } from '@/lib/payments/confirm'
 import { zoneByKey } from '@/lib/venue-zones'
 import { notifyOwners } from '@/lib/bot/notify'
+import { requireOperator } from '@/lib/admin-rbac'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -27,21 +28,11 @@ const bodySchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
+  const { user, adminUser } = gate
 
   const admin = createAdminClient()
-  const { data: adminUser } = await admin
-    .from('admin_users')
-    .select('id, role, email')
-    .eq('id', user.id)
-    .single()
-  if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  const role = (adminUser.role || 'operator') as string
-  if (!['owner', 'operator'].includes(role)) {
-    return NextResponse.json({ error: 'insufficient_role' }, { status: 403 })
-  }
 
   let parsed: z.infer<typeof bodySchema>
   try {
@@ -62,18 +53,35 @@ export async function POST(req: NextRequest) {
     .single()
   if (!appRow) return NextResponse.json({ error: 'application not found' }, { status: 404 })
 
+  // Route the money through the SAME confirmPayment authority as Yoco + admin
+  // mark-paid: it ACCUMULATES into the cumulative paid (first capture or top-up),
+  // sets paid_at atomically, and de-dups by providerRef so a double-click does
+  // not double-capture (when a reference is supplied). silent: we send our own
+  // zone-specific owner notify below. (Was: a direct marker overwrite that reset
+  // cumulative paid and re-notified on every POST.)
   const paidAt = new Date().toISOString()
+  const providerRef = parsed.reference || `capture-${parsed.applicationId}-${Date.now()}`
+  const result = await confirmPayment({
+    applicationId: parsed.applicationId,
+    method: 'eft',
+    amount: parsed.amount,
+    providerRef,
+    silent: true,
+  })
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error || 'capture failed' }, { status: 500 })
+  }
+
+  // Layer the zone + capture metadata onto the marker (confirmPayment is
+  // zone-agnostic). This merge does NOT touch the cumulative amount/status.
   await updatePortalState(parsed.applicationId, (s) => ({
     ...s,
     payment: {
       ...(s.payment || {}),
-      status: 'paid',
-      amount: parsed.amount,
       method: 'manual',
       zone: parsed.zone,
       reference: parsed.reference || (s.payment?.reference ?? undefined),
       capture_note: parsed.note,
-      paid_at: s.payment?.paid_at || paidAt,
     },
   }))
 

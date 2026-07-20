@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email/resend'
 import { ApplicationDelayNotice } from '@/lib/email/templates/ApplicationDelayNotice'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
+import { assertRole } from '@/lib/admin-rbac'
 
 export const maxDuration = 300
 
@@ -37,6 +38,14 @@ async function authorize(request: NextRequest): Promise<AuthResult> {
 
   if (!adminUser) {
     return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  }
+
+  // Role gate (admin path only — the cron path returned above and is unaffected).
+  // Broadcasting delay notices sends live email; viewer must not trigger it.
+  try {
+    await assertRole(user.id, ['owner', 'operator'])
+  } catch {
+    return { ok: false, response: NextResponse.json({ error: 'insufficient_role' }, { status: 403 }) }
   }
 
   return { ok: true, caller: 'admin' }

@@ -4,11 +4,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 import { askDgx, dgxConfigured, DgxNotConfigured } from '@/lib/llm/dgx'
 import { toE164 } from '@/lib/whatsapp'
 import { wrapUntrusted, UNTRUSTED_CONTENT_RULE } from '@/lib/ai/prompt-safety'
+import { parsePortalState } from '@/lib/portal-state'
 
 // If DGX is unset, fall back to Anthropic Haiku (already installed + used by
 // /api/admin/inbox/summarize). Never block the bot-inbox UI on DGX availability.
@@ -60,12 +61,12 @@ Suggestions should be warm but practical. Address the vendor by name when known.
 ${UNTRUSTED_CONTENT_RULE}`
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  // RBAC: owner/operator only. This route burns LLM budget and reads full
+  // vendor PII (WhatsApp transcripts + vendor record), so a viewer-role admin
+  // must not run it. requireOperator preserves 401-before-403 semantics.
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
   const db = createAdminClient()
-  const { data: adminUser } = await db.from('admin_users').select('id').eq('id', user.id).maybeSingle()
-  if (!adminUser) return NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
   const phone = String(body.phone || '').trim()
@@ -98,11 +99,12 @@ export async function POST(req: NextRequest) {
   // Resolve vendor info for context
   const { data: vendor } = await db
     .from('vendor_applications')
-    .select('business_name, contact_name, status, admin_notes, preferred_booth_tier, payment_due_date')
+    .select('business_name, contact_name, status, admin_notes, preferred_booth_tier')
     .eq('phone', e164)
     .maybeSingle()
+  const paymentDue = vendor ? parsePortalState(vendor.admin_notes).payment?.due : null
   const vendorBriefing = vendor
-    ? `Vendor name: ${vendor.contact_name || 'unknown'}. Business: ${vendor.business_name || 'unknown'}. Application status: ${vendor.status}. Booth: ${vendor.preferred_booth_tier || 'TBD'}. Payment due: ${vendor.payment_due_date || 'TBD'}.`
+    ? `Vendor name: ${vendor.contact_name || 'unknown'}. Business: ${vendor.business_name || 'unknown'}. Application status: ${vendor.status}. Booth: ${vendor.preferred_booth_tier || 'TBD'}. Payment due: ${paymentDue || 'TBD'}.`
     : `This phone (${e164}) is not a registered vendor.`
 
   const systemFull = `${SYSTEM}\n\n=== VENDOR INFO ===\n${vendorBriefing}\n\n=== INSTRUCTIONS ===\nUse the vendor's first name if known. Refer to specifics where it helps. The conversation messages follow next.`

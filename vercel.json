@@ -1,4 +1,26 @@
 {
+  "functions": {
+    "src/app/api/exhibitor/portal/marketing/**/route.ts": {
+      "memory": 3009,
+      "maxDuration": 60
+    },
+    "src/app/api/exhibitor/staff/route.ts": {
+      "memory": 3009,
+      "maxDuration": 60
+    },
+    "src/app/api/exhibitor/staff/resend/route.ts": {
+      "memory": 3009,
+      "maxDuration": 60
+    },
+    "src/app/api/exhibitor/portal/invoice/**/route.ts": {
+      "memory": 3009,
+      "maxDuration": 60
+    },
+    "src/app/api/cron/badge-repair/route.ts": {
+      "memory": 3009,
+      "maxDuration": 120
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/mail-fetcher",
@@ -21,8 +43,20 @@
       "schedule": "0 8 * * *"
     },
     {
+      "path": "/api/cron/logo-reminders",
+      "schedule": "0 9 * * *"
+    },
+    {
       "path": "/api/cron/ticket-verifier",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/email-concierge",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-yoco",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

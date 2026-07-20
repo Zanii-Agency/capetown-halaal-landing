@@ -4,6 +4,7 @@ import { getRole } from '@/lib/admin-rbac'
 import PortalNav from '@/components/exhibitor/PortalNav'
 import { parsePortalState } from '@/lib/portal-state'
 import { WaOptInBanner } from '@/components/exhibitor/WaOptInBanner'
+import { LogoReminderBanner } from '@/components/exhibitor/LogoReminderBanner'
 import { hasUnreadAdminReply } from '@/components/exhibitor/InboxCard'
 
 export const dynamic = 'force-dynamic'
@@ -29,6 +30,9 @@ export default async function PortalLayout({ children }: { children: React.React
   const businessName = (ctx.application?.business_name as string) || ctx.email
   const state = parsePortalState((ctx.application?.admin_notes as string) || null)
   const showWaBanner = !state.wa?.opted_in_at
+  // Persistent logo nudge: paid but no logo uploaded. Stays on every page until
+  // the vendor uploads one (then state.profile.logo_path flips this false).
+  const needsLogo = state.payment?.status === 'paid' && !state.profile?.logo_path
   const contactName = (ctx.application?.contact_name as string) || ctx.email
   const firstName = (contactName || '').trim().split(/\s+/)[0] || ''
   const prefillPhone = (ctx.application?.phone as string) || ''
@@ -43,8 +47,9 @@ export default async function PortalLayout({ children }: { children: React.React
       <div className="flex-shrink-0">
         <PortalNav businessName={businessName} inboxUnread={inboxUnread} />
         {showWaBanner && <WaOptInBanner prefillPhone={prefillPhone} firstName={firstName} />}
+        {needsLogo && <LogoReminderBanner firstName={firstName} />}
       </div>
-      <main className="flex-1 overflow-y-auto min-h-0">{children}</main>
+      <main className="flex-1 overflow-y-auto min-h-0 pb-8">{children}</main>
     </div>
   )
 }

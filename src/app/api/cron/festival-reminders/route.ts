@@ -121,10 +121,12 @@ function htmlize(text: string): string {
 }
 
 export async function GET(req: NextRequest) {
-  if ((process.env.CRON_SECRET || '').trim()) {
-    if (!verifyCronAuth(req.headers.get('authorization'))) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-    }
+  // Fail-closed cron gate: verifyCronAuth returns false when CRON_SECRET is
+  // unset, so this route is NEVER publicly triggerable. It sends a real mass
+  // email + WhatsApp blast to every approved vendor and ticket buyer, so the
+  // gate must not depend on a config var being present to be enforced.
+  if (!verifyCronAuth(req.headers.get('authorization'))) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
   const dryRun = req.nextUrl.searchParams.get('dry') === '1'

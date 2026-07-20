@@ -22,7 +22,7 @@ export default async function AnnouncementsPage() {
 
   return (
     <PageShell>
-      <Card className="max-w-xl mx-auto">
+      <Card className={`max-w-xl mx-auto${items.length === 0 ? ' mb-8' : ''}`}>
         <PageHeader
           kicker="Announcements"
           title="Festival feed"

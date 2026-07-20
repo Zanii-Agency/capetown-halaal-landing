@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
-import { sendTicket, toE164 } from '@/lib/whatsapp'
-import { WP_ORIGIN } from '@/lib/woocommerce'
+import { parseAllocation } from '@/lib/stalls'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
+// Renders the badge PDF (puppeteer/chromium) then delivers it — needs headroom.
+export const maxDuration = 60
 
 /**
- * Vendor-triggered "Resend WA" for a previously generated staff badge.
+ * Vendor-triggered "Resend badge" for a previously generated staff badge.
  *
- * Layer 3 (Law 3, FooEvents-no-fork): we don't regenerate the ticket — we
- * re-send the FooEvents PDF the vendor already received. The canonical PDF
- * lives on the WP host behind the order; the vendor's WhatsApp receives a
- * fresh `ticket_delivery` template pointing at the admin order URL.
+ * We render the badge OURSELVES (QR = wc_order_id, scannable at the gate) and
+ * deliver it over WhatsApp + email — replacing the old path that sent a
+ * `ticket_delivery` template pointing at an admin-only WP order URL the vendor
+ * could not open. FooEvents' PDF is not on the critical path (KT #206655).
  */
 export async function POST(req: NextRequest) {
   const ctx = await getExhibitorContext()
@@ -30,27 +30,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Badge not yet generated' }, { status: 409 })
   }
 
-  const vendorWa = String(ctx.application.phone || '')
-  const e164 = toE164(vendorWa)
-  if (!e164) return NextResponse.json({ error: 'Vendor WhatsApp number missing' }, { status: 409 })
-
-  const businessName = String(ctx.application.business_name || 'Vendor')
-  const orderNumber = member.wc_order_number || String(member.wc_order_id)
-  // Public WC ticket PDF link — falls back to the admin order URL so the link
-  // is always live. The verifier admin agent will hydrate a proper public URL
-  // once we wire the FooEvents public-PDF route.
-  const pdfUrl = member.ticket_pdf_url || `${WP_ORIGIN}/wp-admin/post.php?post=${member.wc_order_id}&action=edit`
-
-  const firstName = (ctx.application.contact_name as string || businessName).split(/\s+/)[0]
-  const res = await sendTicket({
-    to: e164,
-    firstName,
-    orderNumber,
-    ticketSummary: `Staff badge for ${member.name}`,
-    pdfUrl,
-    filename: `YAH-StaffBadge-${orderNumber}.pdf`,
+  const { deliverBadge } = await import('@/lib/badges/deliver-badge')
+  const r = await deliverBadge({
+    name: member.name,
+    role: member.role || 'staff',
+    businessName: String(ctx.application.business_name || 'Vendor'),
+    stall: parseAllocation(ctx.application.admin_notes as string).stall,
+    phone: member.phone,
+    vehicleReg: member.vehicle_reg,
+    wcOrderId: member.wc_order_id,
+    vendorPhone: String(ctx.application.phone || ''),
+    vendorEmail: String(ctx.application.email || ''),
   })
 
-  if (res.skipped) return NextResponse.json({ ok: false, skipped: res.skipped }, { status: 200 })
-  return NextResponse.json({ ok: true, messageId: res.messageId })
+  if (!r.pdf) return NextResponse.json({ error: 'Could not render badge' }, { status: 502 })
+  return NextResponse.json({ ok: true, email: r.email, whatsapp: r.whatsapp })
 }

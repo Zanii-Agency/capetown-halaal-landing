@@ -59,6 +59,7 @@ export async function GET() {
     reference,
     providerRef,
     paidAt,
+    method: state.payment?.method,
     preferredBoothTier: (app.preferred_booth_tier as string) || '',
     specialRequirements: app.special_requirements,
   })

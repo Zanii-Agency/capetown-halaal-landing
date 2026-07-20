@@ -187,18 +187,26 @@ export async function touchInbound(waPhone: string, profileName?: string): Promi
 // Compliance: WhatsApp requires we honor STOP as a word in the message, not just
 // as the entire trimmed body. "STOP.", "stop please", "I want to stop" all opt out.
 // Word-boundary regex so accidental substrings ("stopwatch") don't trigger.
-const STOP_RE = /\b(stop|unsubscribe|optout|opt[\s\-]?out|cancel|end|quit)\b/i
+// stop/unsubscribe/optout/opt-out are unambiguous opt-out intents: match anywhere.
+const STOP_RE = /\b(stop|unsubscribe|optout|opt[\s\-]?out)\b/i
+// cancel/end/quit are ambiguous mid-sentence ("can I cancel my stall?",
+// "when does the festival end?"), so they only opt out as the WHOLE trimmed body.
+const STOP_COMMAND_RE = /^(cancel|end|quit)$/i
 const START_RE = /\b(start|unstop|subscribe|optin|opt[\s\-]?in|yes)\b/i
+
+function isStopText(t: string): boolean {
+  return STOP_RE.test(t) || STOP_COMMAND_RE.test(t)
+}
 
 export function isStopKeyword(text: string): boolean {
   const t = (text || '').trim()
   if (!t) return false
-  return STOP_RE.test(t)
+  return isStopText(t)
 }
 export function isStartKeyword(text: string): boolean {
   const t = (text || '').trim()
   if (!t) return false
   // Guard: don't let an inbound that contains BOTH "start" and "stop" be treated as start.
-  if (STOP_RE.test(t)) return false
+  if (isStopText(t)) return false
   return START_RE.test(t)
 }

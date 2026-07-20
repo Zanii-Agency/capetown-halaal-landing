@@ -8,9 +8,11 @@
 //        - Approval happened at least 7 days ago, AND
 //        - Either no previous reminder fired, OR the last reminder fired
 //          at least 7 days ago, AND
-//        - The vendor's payment_due_date hasn't passed by more than 14 days
-//          (a soft grace period; after that the spot is released and we stop
-//          spamming them).
+//        - Today is on or before FINAL_SETTLEMENT (31 Aug 2026). A vendor who
+//          cannot meet their own due date may settle in full up to that date and
+//          keeps their space until then, so reminders run to it. (This replaced a
+//          due-date + 14 day cutoff, which went silent for the weeks right before
+//          the date vendors were actually being held to.)
 //   3. Send an email (VendorPaymentReminder) AND a WhatsApp template
 //      (vendor_payment_reminder) for each due vendor. Record the send
 //      timestamp + week number in portal_state.payment_reminders.
@@ -32,6 +34,15 @@ export const dynamic = 'force-dynamic'
 
 const SITE = 'https://cthalaal.co.za'
 
+// Final settlement date for the 2026 cycle: 31 Aug 2026, 23:59 SAST (UTC+2).
+// A vendor who cannot meet their own payment due date may settle in full up to
+// this date and keeps their reserved space until then. That concession is offered
+// ON REQUEST only and is never volunteered (see the PART PAYMENTS block in
+// lib/festival-brain/system-prompt.ts), but it is the real date vendors are held
+// to, so reminders must run to it rather than stopping shortly after each
+// vendor's own due date. Per-vendor due dates are unchanged.
+const FINAL_SETTLEMENT = new Date('2026-08-31T21:59:59.999Z')
+
 function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
 }
@@ -50,6 +61,19 @@ export async function GET(req: NextRequest) {
   const dryRun = req.nextUrl.searchParams.get('dry') === '1'
   const admin = createAdminClient()
   const today = new Date()
+
+  // Past the final settlement date there is nothing left to chase for this
+  // cycle, so the run stops here rather than reminding indefinitely.
+  if (today > FINAL_SETTLEMENT) {
+    return NextResponse.json({
+      ok: true,
+      dryRun,
+      scanned: 0,
+      remindersSent: 0,
+      results: [],
+      stopped: 'past final settlement date (31 Aug 2026)',
+    })
+  }
 
   const { data: apps, error } = await admin
     .from('vendor_applications')
@@ -72,8 +96,10 @@ export async function GET(req: NextRequest) {
     // Compute due date: approved_at + 30 days (organiser-set on approval).
     const dueDate = new Date(reviewedAt)
     dueDate.setDate(dueDate.getDate() + 30)
+    // Overdue vendors keep getting reminded up to FINAL_SETTLEMENT (guarded
+    // above). daysRemaining goes negative past the due date and the email
+    // renders that as "N days overdue", which stays accurate.
     const daysRemaining = daysBetween(today, dueDate)
-    if (daysRemaining < -14) continue // grace period exhausted, stop spamming
 
     // Already-fired reminders live under state.payment_reminders.history[].
     const history = ((state as unknown) as { payment_reminders?: { history?: { at: string; week: number }[] } }).payment_reminders?.history || []
@@ -116,14 +142,16 @@ export async function GET(req: NextRequest) {
       })
       out.emailSent = emailRes.ok
 
-      // WhatsApp template: Meta-approved body, params: businessName, amount, dueDate
+      // WhatsApp template: Meta-approved body, params: firstName, amount, dueDate
       const phone = (app.phone as string) || ''
       if (phone) {
         try {
+          // Template body opens "Hi {{1}}," so param 1 is the person's first
+          // name, not the business name (matches the email's greeting).
           const waRes = await sendTemplate(
             toE164(phone),
             'vendor_payment_reminder',
-            [businessName, formatRand(amount), dueDateStr],
+            [firstName, formatRand(amount), dueDateStr],
             { category: 'utility' }
           )
           out.waSent = !waRes.skipped

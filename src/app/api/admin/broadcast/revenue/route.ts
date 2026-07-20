@@ -3,17 +3,25 @@
 //
 // Returns "Money In" KPIs for the broadcast console header:
 //   - tickets_total, tickets_30d   (WooCommerce, completed orders, after=2026)
-//   - vendors_total, vendors_30d   (vendor_applications.payment_amount where
-//                                   payment_status='paid' for 2026 cycle)
+//   - vendors_total, vendors_30d   (derived vendor stall fees for paid vendors
+//                                   in the 2026 cycle)
 //   - total_in, total_30d          (sum of both)
 //
 // Auth: mirrors /api/admin/sales (Law 2). 401 unauth, 403 non-admin.
 // WC: getOrders() carries `after=` via lib/woocommerce.ts (Law 6).
+//
+// Payment state has NO columns in this Supabase (DDL blocked, Law 8). It lives
+// in the ⟦PORTAL:..⟧ marker on admin_notes (parsePortalState), with the real
+// paid_at column as a fallback paid signal and computeVendorPricing(row).total
+// as the amount fallback. Selecting payment_status / payment_amount used to
+// error the whole query, silently zeroing vendors_total — fixed here.
 // =============================================================================
 
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { parsePortalState } from '@/lib/portal-state'
+import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getOrders } from '@/lib/woocommerce'
 
 export const dynamic = 'force-dynamic'
@@ -21,9 +29,10 @@ export const dynamic = 'force-dynamic'
 const CYCLE_START = '2026-01-01T00:00:00Z'
 
 interface VendorAppRow {
-  payment_status: string | null
-  payment_amount: number | string | null
+  admin_notes: string | null
   paid_at: string | null
+  preferred_booth_tier: string | null
+  special_requirements: unknown
   updated_at: string | null
   created_at: string | null
 }
@@ -62,14 +71,18 @@ export async function GET() {
     // Vendor revenue from vendor_applications (mirrors /api/admin/sales).
     const { data: appsRaw } = await admin
       .from('vendor_applications')
-      .select('payment_status, payment_amount, paid_at, updated_at, created_at')
+      .select('admin_notes, paid_at, preferred_booth_tier, special_requirements, updated_at, created_at')
     const apps: VendorAppRow[] = appsRaw || []
 
     let vendors_total = 0
     let vendors_30d = 0
     for (const a of apps) {
-      if (a.payment_status !== 'paid') continue
-      const amt = Number(a.payment_amount || 0)
+      // Derive paid + amount from REAL sources: marker status or paid_at column,
+      // marker amount or the computed stall+electrical+hire total.
+      const p = parsePortalState(a.admin_notes || '').payment || {}
+      const paid = !!a.paid_at || p.status === 'paid'
+      if (!paid) continue
+      const amt = Number(p.amount ?? computeVendorPricing(a).total)
       if (!amt) continue
       // Restrict to the 2026 cycle so legacy paid rows do not double-count.
       const refTs = Date.parse(a.paid_at || a.updated_at || a.created_at || '')

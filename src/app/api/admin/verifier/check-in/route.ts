@@ -28,9 +28,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState } from '@/lib/portal-state'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -78,22 +78,11 @@ interface WCOrderDetail {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+    const gate = await requireOperator()
+    if (!gate.ok) return gate.response
+    const { user } = gate
 
     const admin = createAdminClient()
-    const { data: adminUser } = await admin
-      .from('admin_users')
-      .select('id, role')
-      .eq('id', user.id)
-      .single()
-    if (!adminUser) return NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 })
-
-    const role = (adminUser.role as string) || 'viewer'
-    if (!['owner', 'operator'].includes(role)) {
-      return NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 })
-    }
 
     const body = await request.json().catch(() => null) as { order_id?: number; ticket_id?: string } | null
     if (!body || !body.order_id) {

@@ -49,5 +49,21 @@ export async function POST(req: NextRequest) {
     })
   } catch { /* table may not exist */ }
 
+  // Best-effort operator ping so the request does not vanish into the portal
+  // state marker. Failure here never blocks the vendor's request.
+  try {
+    const bizName = (app.business_name as string) || 'A vendor'
+    const fromLabel = currentTier ? TIER_META[currentTier]?.label || currentTier : 'none'
+    const toLabel = TIER_META[requestedTier]?.label || requestedTier
+    const { notifyOwners } = await import('@/lib/bot/notify')
+    await notifyOwners({
+      event: 'system_alert',
+      body: `Stall change requested by ${bizName}: ${fromLabel} -> ${toLabel}.${changeRequest.reason ? ` Reason: ${changeRequest.reason}` : ''}\n\nReview at /admin/stall-changes`,
+      audience: 'all',
+    })
+  } catch (e) {
+    console.error('[exhibitor/stand/change] notifyOwners failed:', (e as Error).message)
+  }
+
   return NextResponse.json({ changeRequest })
 }

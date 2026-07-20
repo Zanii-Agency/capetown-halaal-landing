@@ -95,10 +95,14 @@ const BRAND_GUIDELINES = [
   { rule: 'Keep the event dates and venue accurate', detail: 'Youngsfield Military Base, Ottery, 11-13 Dec 2026.' },
 ]
 
+// Each banner points at a real render endpoint and advertises that render's
+// TRUE dimensions. We only ship the four renders that exist (fb-post 1200x630,
+// ig-feed 1080x1080, ig-story 1080x1920, link-card 1200x630), so every label,
+// filename, and the bytes delivered all agree. No banner advertises a size we
+// cannot actually produce.
 const SOCIAL_BANNERS = [
-  { label: 'Facebook Cover', dims: '1640 x 624', file: 'social-fb-cover.png' },
-  { label: 'LinkedIn Banner', dims: '1584 x 396', file: 'social-linkedin-banner.png' },
-  { label: 'Instagram Square', dims: '1080 x 1080', file: 'social-ig-square.png' },
+  { label: 'Facebook / LinkedIn Banner', dims: '1200 x 630', href: '/api/exhibitor/portal/marketing/fb-post/png', file: 'social-fb-linkedin-banner.png' },
+  { label: 'Instagram Square', dims: '1080 x 1080', href: '/api/exhibitor/portal/marketing/ig-feed/png', file: 'social-ig-square.png' },
 ]
 
 export default async function MarketingPage() {
@@ -135,12 +139,21 @@ export default async function MarketingPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {ASSET_CARDS.map((a) => (
             <Card key={a.key} className="flex flex-col">
-              <div className={`w-full ${a.ratio} bg-[#F8F5EE] rounded-xl overflow-hidden border border-[#E5E5E5]/60 mb-4`}>
+              {/* Fixed-height thumbnail so the grid lines up regardless of the
+                  asset's true aspect ratio (the real ratio is preserved only
+                  for the actual download). A placeholder sits behind the image:
+                  if the live render 500s the <img> paints nothing and this
+                  neutral box with the asset title stays visible. */}
+              <div className="relative w-full h-40 bg-[#F8F5EE] rounded-xl overflow-hidden border border-[#E5E5E5]/60 mb-4">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-3 text-center pointer-events-none">
+                  <ImageIcon className="w-5 h-5 text-[#1B1A17]/25" />
+                  <span className="text-[11px] font-semibold text-[#1B1A17]/40 leading-tight">{a.label}</span>
+                </div>
                 <img
-                  src={a.href}
+                  src={`${a.href}?preview=1`}
                   alt={`${a.label} preview`}
                   loading="lazy"
-                  className="w-full h-full object-cover"
+                  className="relative w-full h-full object-cover"
                 />
               </div>
               <div className="mb-1 flex items-center justify-between">
@@ -187,13 +200,13 @@ export default async function MarketingPage() {
         <p className="text-sm text-[#1B1A17]/60 mb-6 max-w-2xl">
           Ready sized banners for your profile and cover images. These are pre-rendered with the festival branding.
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {SOCIAL_BANNERS.map((b) => (
             <Card key={b.label} className="flex flex-col items-center gap-3 py-6">
               <span className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">{b.dims}</span>
               <h3 className="font-semibold text-[#1B1A17]">{b.label}</h3>
               <a
-                href={`/api/exhibitor/portal/marketing/fb-post/png`}
+                href={b.href}
                 download={b.file}
                 className="inline-flex items-center gap-2 text-xs font-medium text-[#cd2653] hover:underline"
               >

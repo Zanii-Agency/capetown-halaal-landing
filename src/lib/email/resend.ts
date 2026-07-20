@@ -48,6 +48,38 @@ export type SendResult = {
   ok: boolean
   provider?: 'resend'
   error?: string
+  /** true when Resend accepted the send but its suppression list silently
+   *  dropped the recipient (last_event=suppressed/bounced/complained/failed). */
+  suppressed?: boolean
+}
+
+// Resend accepts a send ({data:{id}}) and THEN drops suppressed recipients —
+// the accept is not a delivery (KT #206657: 3 demo emails "ok:true", all
+// suppressed, none delivered). These last_event values mean the recipient
+// will never see the mail.
+const DEAD_EVENTS = new Set(['suppressed', 'bounced', 'complained', 'failed'])
+
+/**
+ * Poll the sent email's status until it leaves the queue (suppression shows
+ * up within ~1-2s). Returns the dead event name, or null if the mail is on a
+ * live path (sent/delivered/opened/... or still queued after our budget —
+ * fail-open so a slow Resend API never turns real sends into false alarms).
+ */
+async function detectDeadDelivery(id: string): Promise<string | null> {
+  const resend = getResend()
+  if (!resend) return null
+  for (const waitMs of [1500, 2000]) {
+    await new Promise((r) => setTimeout(r, waitMs))
+    try {
+      const res = await resend.emails.get(id)
+      const lastEvent = (res?.data as { last_event?: string } | null)?.last_event || ''
+      if (DEAD_EVENTS.has(lastEvent)) return lastEvent
+      if (lastEvent && lastEvent !== 'queued') return null // sent/delivered etc.
+    } catch {
+      return null // status API blip: fail open, the send itself succeeded
+    }
+  }
+  return null
 }
 
 /**
@@ -64,6 +96,8 @@ export async function sendEmail({
   text,
   attachments,
   replyTo,
+  extraHeaders,
+  confirmDelivery,
 }: {
   to: string
   subject: string
@@ -73,6 +107,14 @@ export async function sendEmail({
   attachments?: Array<{ filename: string; content: string | Buffer; contentType?: string }>
   /** Optional per-send Reply-To override. Defaults to support@youngatheart.co.za. */
   replyTo?: string
+  /** Optional extra headers (e.g. In-Reply-To / References) so a reply threads
+   *  into the recipient's existing conversation instead of starting a new one. */
+  extraHeaders?: Record<string, string>
+  /** Verify the mail actually left Resend (costs ~1.5-3.5s). Use on critical
+   *  single sends (password reset, badge/contract delivery) so a suppressed
+   *  recipient surfaces as ok:false instead of a silent drop. Leave off for
+   *  batch/cron sends where the latency multiplies. */
+  confirmDelivery?: boolean
 }): Promise<SendResult> {
   let html: string | undefined
   if (react) {
@@ -92,7 +134,7 @@ export async function sendEmail({
       to,
       replyTo: replyTo || 'support@youngatheart.co.za',
       subject,
-      headers: mailHeaders,
+      headers: { ...mailHeaders, ...(extraHeaders || {}) },
       ...(attachments && attachments.length
         ? { attachments: attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })) }
         : {}),
@@ -115,6 +157,15 @@ export async function sendEmail({
     // Mirror into the Support Inbox as a threaded message (best-effort, never
     // blocks the send). Makes the Sent tab a real two-way surface.
     await mirrorOutboundToSupportInbox({ to, subject, html, text, providerMessageId })
+
+    if (confirmDelivery && providerMessageId) {
+      const dead = await detectDeadDelivery(providerMessageId)
+      if (dead) {
+        const error = `resend accepted but ${dead} the recipient (never delivered): ${to} is on Resend's suppression/bounce list`
+        console.error(`Email DEAD for ${to} ("${subject}"): ${error}`)
+        return { ok: false, provider: 'resend', error, suppressed: true }
+      }
+    }
 
     return { ok: true, provider: 'resend' }
   } catch (e) {

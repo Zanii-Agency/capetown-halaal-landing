@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash, randomInt } from 'node:crypto'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { updatePortalState } from '@/lib/portal-state'
+import { updatePortalState, parsePortalState } from '@/lib/portal-state'
 import { recordConsent } from '@/lib/wa-consent'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { tierLabel } from '@/lib/stalls'
@@ -65,6 +65,18 @@ export async function POST(req: NextRequest) {
 
   // ---------------- PATH A: phone-change verification gate ----------------
   if (isPhoneChange) {
+    // RE-MINT THROTTLE (audit MED-3 / cost-drain). Each mint fires a WhatsApp
+    // template to an attacker-typed `new_phone`, so an unthrottled re-request is
+    // both a send-cost drain AND a way to spam a third party's number with codes.
+    // Refuse a fresh code within 60s of the last one (reuse the existing
+    // requested_at — no new field, no DDL).
+    const prevPending = parsePortalState((app.admin_notes as string) || '').phone_change_pending
+    if (prevPending?.requested_at && Date.now() - Date.parse(prevPending.requested_at) < 60_000) {
+      return NextResponse.json(
+        { ok: false, error: 'A code was just sent to that number. Please wait a minute before requesting another.' },
+        { status: 429 },
+      )
+    }
     // Mint a 6-digit code, hash it (we never persist the plaintext), and
     // park the candidate phone in portal_state.phone_change_pending. The
     // verify endpoint validates against this hash before promoting the phone.

@@ -48,7 +48,11 @@ async function writeMarker(waPhone: string, marker: string, note: string): Promi
     direction: 'out',
     wa_phone: waPhone,
     body: `${marker} ${note}`,
-    status: 'logged',
+    // 'logged' is NOT in the wa_messages status_check constraint (only
+    // sent/read/queued/delivered/failed) — inserting it threw, so EVERY handover
+    // write silently failed and Take Over never actually paused the bot. Use
+    // 'sent', a permitted value. The row is a system marker (isMarker hides it).
+    status: 'sent',
     provider_message_id: null,
   })
 }

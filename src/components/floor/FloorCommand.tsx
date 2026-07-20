@@ -30,7 +30,10 @@ export interface FloorApp {
   id: string
   business_name: string
   tier_label?: string
+  /** First allocated code (backward-compat). */
   stall?: string | null
+  /** Full list of the vendor's allocated codes (multi-booth). */
+  stalls?: string[]
 }
 
 export interface FloorCommandProps {
@@ -38,7 +41,11 @@ export interface FloorCommandProps {
   booths: FloorBooth[]
   grid: { cols: number; rows: number }
   applications?: FloorApp[]
+  /** Single owned booth code (backward-compat, single-booth vendors). */
   mineCode?: string | null
+  /** Full list of the vendor's owned booth codes (multi-booth). Every code in
+   *  this set is flagged as "yours" on the map. Takes precedence over mineCode. */
+  mineCodes?: string[]
   /** Hide the Admin/Vendor toggle pill. The page already knows its role. */
   hideModeSwitch?: boolean
   onAllocate?: (boothCode: string, vendorName: string, status: 'allocated' | 'reserved') => Promise<void> | void
@@ -113,12 +120,23 @@ export default function FloorCommand({
   grid,
   applications = [],
   mineCode = null,
+  mineCodes,
   hideModeSwitch = false,
   onAllocate,
   onRelease,
   onToggleBlock,
   onStallClick,
 }: FloorCommandProps) {
+  // Owned booth codes (multi-booth aware). `mineCodes` (array) wins; fall back to
+  // the legacy single `mineCode`. EVERY code in this set is flagged as "yours".
+  const mineSet = useMemo(() => {
+    const list = (mineCodes && mineCodes.length ? mineCodes : (mineCode ? [mineCode] : []))
+    return new Set(list)
+  }, [mineCodes, mineCode])
+  // Primary owned code: the anchor used for initial selection. First in the list.
+  const primaryMine = (mineCodes && mineCodes.length ? mineCodes[0] : mineCode) || null
+  const hasMine = mineSet.size > 0
+
   const [mode, setMode] = useState<'admin' | 'vendor'>(initialMode)
   const [selected, setSelected] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -126,13 +144,25 @@ export default function FloorCommand({
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const toastTimer = useRef<NodeJS.Timeout | null>(null)
+  // Refs to the scroll container + each booth <g> so a search can scroll the
+  // first matching booth into view.
+  const mapScrollRef = useRef<HTMLDivElement | null>(null)
+  const boothRefs = useRef<Record<string, SVGGElement | null>>({})
 
   useEffect(() => {
     setMode(initialMode)
-    if (initialMode === 'vendor' && mineCode) setSelected(mineCode)
-  }, [initialMode, mineCode])
+    if (initialMode === 'vendor' && primaryMine) setSelected(primaryMine)
+  }, [initialMode, primaryMine])
 
   const selBooth = useMemo(() => booths.find((b) => b.code === selected) || null, [booths, selected])
+
+  // The application that owns the selected booth (matched by vendor name), so the
+  // drawer can show how many booths they hold in total (multi-booth context).
+  const selVendorApp = useMemo(() => {
+    if (!selBooth?.vendor) return null
+    const v = selBooth.vendor.toLowerCase()
+    return applications.find((a) => a.business_name.toLowerCase() === v) || null
+  }, [selBooth, applications])
 
   // Crop viewBox to actual booth+facility extent (live stalls.json is 216x167
   // but only ~50% is used). Padding 1 grid cell so outermost stalls don't hug.
@@ -177,11 +207,15 @@ export default function FloorCommand({
     return { total, ...c, committed }
   }, [booths])
 
+  const hasActiveSearch = search.trim().length > 0
+
+  // Match booths by code OR by allocated vendor business name (both lowercased).
   const searchHits = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return new Set<string>()
     const hits = new Set<string>()
     booths.forEach((b) => {
+      if (b.type === 'facility') return
       if (b.code.toLowerCase().includes(q)) hits.add(b.code)
       if (b.vendor?.toLowerCase().includes(q)) hits.add(b.code)
     })
@@ -196,6 +230,17 @@ export default function FloorCommand({
       if (m) setSelected(m.code)
     }
   }, [search, mode, booths])
+
+  // Scroll the first matching booth into view so a search on a large floor is
+  // actionable, not just a colour change buried off-screen. Runs on every
+  // search change (admin + vendor); harmless when there are no hits.
+  useEffect(() => {
+    if (!hasActiveSearch || searchHits.size === 0) return
+    const firstHit = booths.find((b) => searchHits.has(b.code))
+    if (!firstHit) return
+    const el = boothRefs.current[firstHit.code]
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+  }, [hasActiveSearch, searchHits, booths])
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg)
@@ -215,15 +260,21 @@ export default function FloorCommand({
     setVendorInput('')
   }, [])
 
+  // Booth count for a vendor (multi-booth aware), used in the drawer + datalist.
+  const boothCountOf = useCallback((a: FloorApp) =>
+    a.stalls && a.stalls.length ? a.stalls.length : a.stall ? 1 : 0
+  , [])
+
   const matchApplication = useCallback((name: string) => {
     const q = name.trim().toLowerCase()
     if (!q) return null
     const matches = (a: { business_name: string }) =>
       a.business_name.toLowerCase() === q || a.business_name.toLowerCase().includes(q)
-    // Multi-stall: a vendor may have several applications (one per stall). Prefer
-    // an UNPLACED one so a second allocation goes to their free application
-    // instead of moving a stall they already have.
-    return applications.find((a) => matches(a) && !a.stall)
+    // Multi-booth model: ONE application per vendor holding a LIST of codes.
+    // Allocating to a vendor who already has booths ADDS to their list (the API
+    // appends), so we just match by name — placed or not. Exact match wins over
+    // a substring match.
+    return applications.find((a) => a.business_name.toLowerCase() === q)
       || applications.find(matches)
       || null
   }, [applications])
@@ -395,6 +446,7 @@ export default function FloorCommand({
       {/* MAIN */}
       <main style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div
+          ref={mapScrollRef}
           data-testid="floor-map"
           style={{
             flex: 1, overflow: 'auto', padding: 24,
@@ -410,9 +462,12 @@ export default function FloorCommand({
             {booths.map((b) => {
               const isFacility = b.type === 'facility'
               const isSel = selected === b.code
-              const isMine = !!mineCode && b.code === mineCode
+              const isMine = mineSet.has(b.code)
               const isHit = searchHits.has(b.code)
-              const isDimmed = mode === 'vendor' && !!mineCode && !isMine && !isHit
+              // Dim non-matches while a search is active (any mode), so the few
+              // matches stand out. Facilities never dim — they're context.
+              const searchDim = hasActiveSearch && searchHits.size > 0 && !isHit && !isFacility
+              const isDimmed = searchDim || (mode === 'vendor' && hasMine && !isMine && !isHit)
               const fill = isMine ? C.brand : fillFor(b.status)
               const stroke = isMine ? C.brand2 : isSel || isHit ? C.brand : strokeFor(b.status)
               const tcolor = isMine ? '#fff' : textFill(b.status)
@@ -426,6 +481,7 @@ export default function FloorCommand({
               return (
                 <g
                   key={b.code}
+                  ref={(el) => { boothRefs.current[b.code] = el }}
                   style={{
                     cursor: isFacility ? 'default' : 'pointer',
                     transition: 'filter .12s, opacity .25s',
@@ -522,6 +578,18 @@ export default function FloorCommand({
               <KV label="Type" value={prettyType(selBooth.type)} />
               <KV label="Zone" value={selBooth.zone || '·'} />
               <KV label="Vendor" value={selBooth.vendor || '·'} />
+              {selVendorApp && (selVendorApp.stalls?.length || 0) > 1 && (
+                <KV
+                  label="Booths"
+                  value={
+                    <span>
+                      <b style={{ color: C.brand }}>{selVendorApp.stalls!.length}</b>
+                      {' · '}
+                      <span style={{ color: C.muted }}>{selVendorApp.stalls!.join(', ')}</span>
+                    </span>
+                  }
+                />
+              )}
               <KV
                 label="Footprint"
                 value={selBooth.type === 'FS' ? '3 × 3 m' : selBooth.type === 'TS' ? '2 × 2 m' : selBooth.type === 'FT' ? 'Truck bay' : '3 × 3 m'}
@@ -544,11 +612,37 @@ export default function FloorCommand({
                       }}
                     />
                     <datalist id="floor-approved-list">
-                      {applications.filter((a) => !a.stall).map((a) => (
-                        <option key={a.id} value={a.business_name} label={a.tier_label || ''} />
-                      ))}
+                      {/* All approved vendors, placed or not. A placed vendor's
+                          option is annotated with their current booth count so
+                          picking them clearly ADDS a booth (multi-booth). */}
+                      {applications.map((a) => {
+                        const n = boothCountOf(a)
+                        const tier = a.tier_label || ''
+                        const placed = n > 0 ? `${n} booth${n > 1 ? 's' : ''}` : ''
+                        const label = [tier, placed].filter(Boolean).join(' · ')
+                        return <option key={a.id} value={a.business_name} label={label} />
+                      })}
                     </datalist>
-                    <BtnP onClick={() => doAllocate('allocated')} disabled={saving}>Allocate booth</BtnP>
+                    {(() => {
+                      // If the typed vendor already holds booths, this allocation
+                      // ADDS a booth to them (multi-booth) rather than being their
+                      // first. Surface that so it never reads as a mistake.
+                      const typed = matchApplication(vendorInput)
+                      const n = typed ? boothCountOf(typed) : 0
+                      if (!typed || n === 0) return null
+                      return (
+                        <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
+                          {typed.business_name} already holds <b style={{ color: C.brand }}>{n} booth{n > 1 ? 's' : ''}</b>
+                          {typed.stalls && typed.stalls.length ? ` (${typed.stalls.join(', ')})` : ''}. This adds {selBooth.code}.
+                        </div>
+                      )
+                    })()}
+                    <BtnP onClick={() => doAllocate('allocated')} disabled={saving}>
+                      {(() => {
+                        const typed = matchApplication(vendorInput)
+                        return typed && boothCountOf(typed) > 0 ? 'Add this booth' : 'Allocate booth'
+                      })()}
+                    </BtnP>
                     <BtnG onClick={() => doAllocate('reserved')} disabled={saving}>Hold as reserved</BtnG>
                     {selBooth.status === 'blocked'
                       ? <BtnG onClick={doToggleBlock} disabled={saving}>Unblock</BtnG>
@@ -580,7 +674,7 @@ export default function FloorCommand({
               </>
             )}
 
-            {mode === 'vendor' && selBooth.code === mineCode && (
+            {mode === 'vendor' && mineSet.has(selBooth.code) && (
               <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
                 This is your booth. If anything looks off, message the organisers from the support page.
               </div>

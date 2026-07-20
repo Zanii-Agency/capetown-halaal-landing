@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
+import { parseVendorExtras } from '@/lib/vendor-extras'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { VendorsList, type VendorRow } from '@/components/admin/vendors/VendorsList'
 
@@ -25,7 +26,7 @@ export default async function VendorsListPage() {
   const { data: apps } = await admin
     .from('vendor_applications')
     .select(
-      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, admin_notes, contract_signed_at, contract_pdf_path, docs_complete_at, created_at'
+      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, contract_signed_at, contract_pdf_path, docs_complete_at, created_at'
     )
     .eq('status', 'approved')
     .order('business_name', { ascending: true })
@@ -38,6 +39,9 @@ export default async function VendorsListPage() {
     const paymentAmount = portal.payment?.amount || null
     const docsCount = (portal.docs || []).length
     const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)
+    const extras = parseVendorExtras(a.special_requirements as string | null)
+    // Prefer the raw stall-type label the vendor chose; fall back to the tier slug label.
+    const stallType = extras.stallType || tierLabel(a.preferred_booth_tier as string)
 
     const blockers: string[] = []
     if (paymentStatus !== 'paid' && paymentStatus !== 'waived') blockers.push('Fee unpaid')
@@ -53,6 +57,10 @@ export default async function VendorsListPage() {
       phone: (a.phone as string) || null,
       categories: (a.product_categories as string[]) || [],
       tier_label: tierLabel(a.preferred_booth_tier as string),
+      stall_type: stallType,
+      appliances: extras.appliances,
+      appliance_details: extras.applianceDetails,
+      uses_gas: extras.usesGas,
       stall: stall,
       stall_status: stall ? stallStatus : null,
       payment_status: paymentStatus,
@@ -81,9 +89,7 @@ export default async function VendorsListPage() {
     )
   }
 
-  return (
-    <AdminPage title="Approved vendors" caption="VENDORS">
-      <VendorsList rows={rows} />
-    </AdminPage>
-  )
+  // VendorsList carries its own page header + padding, so it renders directly
+  // (wrapping it in AdminPage would double the "Approved vendors / VENDORS" header).
+  return <VendorsList rows={rows} />
 }

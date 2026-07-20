@@ -12,11 +12,14 @@ export const runtime = 'nodejs'
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  const fields = await resolveVendorMarketingFields()
+export async function GET(req: Request) {
+  const fields = await resolveVendorMarketingFields('fb-post')
   if (!fields) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  // ?preview=1 serves the SAME render inline + briefly cacheable, for the
+  // portal <img> thumbnail. Without it we serve the attachment download.
+  const preview = new URL(req.url).searchParams.get('preview') === '1'
   try {
     const png = await renderMarketingPng('fb-post', fields)
     const filename = `CTH-FB-Post-${vendorFilenameSlug(fields.business_name)}.png`
@@ -24,8 +27,12 @@ export async function GET() {
       status: 200,
       headers: {
         'Content-Type': 'image/png',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Cache-Control': 'private, no-store, max-age=0, must-revalidate',
+        ...(preview
+          ? { 'Cache-Control': 'private, max-age=300' }
+          : {
+              'Content-Disposition': `attachment; filename="${filename}"`,
+              'Cache-Control': 'private, no-store, max-age=0, must-revalidate',
+            }),
       },
     })
   } catch (e) {

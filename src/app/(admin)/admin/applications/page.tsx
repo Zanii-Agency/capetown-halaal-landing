@@ -29,6 +29,7 @@ import {
   SECTOR_CYCLE,
   type WorkbenchApplication,
 } from '@/components/admin/applications/types'
+import { TOTAL_DEFINED_CAPACITY } from '@/lib/venue-zones'
 
 const QUEUE_LIMIT = 200
 
@@ -41,6 +42,7 @@ export default function ApplicationsWorkbenchPage() {
   const [rows, setRows] = useState<WorkbenchApplication[]>([])
   const [loading, setLoading] = useState(true)
   const [pendingTotal, setPendingTotal] = useState<number>(0)
+  const [approvedTotal, setApprovedTotal] = useState<number>(0)
   const [search, setSearch] = useState('')
 
   // ---- filter state ----
@@ -103,6 +105,7 @@ export default function ApplicationsWorkbenchPage() {
       const list = (data.applications ?? []) as WorkbenchApplication[]
       setRows(list)
       setPendingTotal(data.pending_total ?? 0)
+      setApprovedTotal(data.approved_total ?? 0)
       // Keep focus where it was if still present; otherwise pick the first row.
       setFocusedId((prev) => (prev && list.some((r) => r.id === prev) ? prev : list[0]?.id ?? null))
     } finally {
@@ -440,14 +443,17 @@ export default function ApplicationsWorkbenchPage() {
       {/* Top bar */}
       <header className="flex items-center gap-3 px-5 py-2.5 border-b border-neutral-200 bg-white">
         <div className="flex items-baseline gap-2">
-          <span className="text-lg font-semibold tabular-nums text-neutral-900">
-            {visibleRows.length}
+          {/* Capacity view: the festival has TOTAL_DEFINED_CAPACITY (308) spaces
+              total (243 marquee + 20 bedouin + 30 food/drink + 10 dessert + 5
+              snack). The number that matters is how many are filled vs free. */}
+          <span className="text-lg font-semibold tabular-nums text-emerald-700">
+            {Math.max(0, TOTAL_DEFINED_CAPACITY - approvedTotal)}
           </span>
           <span className="text-sm text-neutral-500">
-            {visibleRows.length === rows.length ? 'to go' : `of ${rows.length}`}
+            of {TOTAL_DEFINED_CAPACITY} spaces left
           </span>
           <span className="text-xs text-neutral-400 ml-1 tabular-nums">
-            ({pendingTotal} pending total)
+            ({approvedTotal} approved · {pendingTotal} pending)
           </span>
           <select value={sortBy} onChange={e => setSortBy(e.target.value)}
             className="text-xs border border-neutral-200 rounded-lg px-2 py-1 bg-white ml-2">

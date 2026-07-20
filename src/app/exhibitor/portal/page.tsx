@@ -15,6 +15,7 @@ import { requirePaid } from '@/lib/exhibitor-paygate'
 import { getRequiredDocs } from '@/lib/exhibitor/required-docs'
 import TaskChecklist from '@/components/exhibitor/TaskChecklist'
 import WelcomeModal from '@/components/exhibitor/WelcomeModal'
+import LogoUploadModal from '@/components/exhibitor/LogoUploadModal'
 
 export const dynamic = 'force-dynamic'
 
@@ -127,6 +128,11 @@ export default async function Overview() {
           on this Supabase instance (grep confirmed), so the server hint is
           always false and the client flag is the source of truth. */}
       <WelcomeModal firstName={firstName} alreadyDismissedServer={false} />
+
+      {/* Logo-upload nudge: only for vendors who have PAID but have no logo yet,
+          so they go live with branding in the public sector listings. Server
+          decides eligibility here; the client component owns show-once-per-session. */}
+      {isPaid && !state.profile?.logo_path && <LogoUploadModal firstName={firstName} />}
 
       <PageHeader
         kicker="Exhibitor portal"

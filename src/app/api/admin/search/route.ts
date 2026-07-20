@@ -136,7 +136,11 @@ export async function GET(req: NextRequest) {
           `contact_name.ilike.${pattern}`,
           `email.ilike.${pattern}`,
           `phone.ilike.${pattern}`,
+          // Multi-booth: a code can be first after the prefix OR mid-list after a
+          // comma (⟦STALL:FS1,FS2⟧). Match both so any booth in a vendor's list
+          // is findable by code.
           `admin_notes.ilike.%⟦STALL:${safe}%`,
+          `admin_notes.ilike.%,${safe}%`,
         ]
         // If query is UUID-shaped, add id match
         if (UUID_FRAGMENT_RE.test(safe)) {
@@ -246,7 +250,7 @@ export async function GET(req: NextRequest) {
         thread_key: r.thread_key as string,
         channel: r.channel as 'wa' | 'mail',
         last_inbound_at: (r.last_inbound_at as string | null) ?? null,
-        link: `/admin/inbox/thread/${r.channel}/${r.id}`,
+        link: `/admin/customer-inbox`,
       }))
     })()
 

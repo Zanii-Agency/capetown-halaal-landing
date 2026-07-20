@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { render } from '@react-email/components'
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
 import { Campaign, type CampaignProps } from '@/lib/email/templates/Campaign'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const maxDuration = 300
 
@@ -16,14 +16,13 @@ type Audience = 'vendors' | 'vendors_pending' | 'vendors_approved' | 'buyers' | 
 
 /* ----- auth: Bearer CRON_SECRET (terminal) OR admin session (portal) ----- */
 async function authorize(request: NextRequest): Promise<{ ok: true } | { ok: false; res: NextResponse }> {
+  // Cron branch (CRON_SECRET bearer) left untouched: machine-to-machine sends.
   if (verifyCronAuth(request.headers.get('authorization'))) return { ok: true }
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { ok: false, res: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
-  const admin = createAdminClient()
-  const { data: adminUser } = await admin.from('admin_users').select('id').eq('id', user.id).single()
-  if (!adminUser) return { ok: false, res: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  // Admin branch: this SENDS bulk email, so it must be role-gated (owner/operator),
+  // not membership-only. Centralised through requireOperator.
+  const gate = await requireOperator()
+  if (!gate.ok) return { ok: false, res: gate.response }
   return { ok: true }
 }
 
@@ -188,7 +187,10 @@ export async function POST(request: NextRequest) {
       // Stamp the durable marker only after a confirmed send, so dedup never claims an unsent vendor.
       if (admin && r.id) {
         const newNotes = (r.notes || '').trim() ? `${r.notes}\n${markLine}` : markLine
-        await admin.from('vendor_applications').update({ admin_notes: newNotes }).eq('id', r.id)
+        const { error: stampError } = await admin.from('vendor_applications').update({ admin_notes: newNotes }).eq('id', r.id)
+        if (stampError) {
+          console.error('[campaign/send] dedup marker stamp failed for', r.id, stampError.message)
+        }
       }
     } catch (e) {
       failed++

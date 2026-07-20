@@ -37,7 +37,7 @@ export default function ResourcesPage() {
           </p>
           <div className="space-y-4 text-sm">
             <div className="p-4 bg-[#cd2653]/5 border border-[#cd2653]/20 rounded-lg">
-              <p className="font-medium text-[#1B1A17] mb-2">Thursday 10 December — Setup Day</p>
+              <p className="font-medium text-[#1B1A17] mb-2">Thursday 10 December: Setup Day</p>
               <ul className="space-y-1.5 text-[#1B1A17]/70">
                 <li className="flex items-start gap-2">
                   <span className="text-[#cd2653] font-bold">•</span>
@@ -49,7 +49,7 @@ export default function ResourcesPage() {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-[#cd2653] font-bold">•</span>
-                  <span><strong>No offloading on Friday</strong> — everything must be completed on Thursday</span>
+                  <span><strong>No offloading on Friday.</strong> Everything must be completed on Thursday</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-[#cd2653] font-bold">•</span>
@@ -80,19 +80,24 @@ export default function ResourcesPage() {
         {/* downloads */}
         <section>
           <h2 className="font-serif text-xl mb-4">Downloads</h2>
+          <p className="text-sm text-[#1B1A17]/55 mb-4">
+            These resource packs are being finalised and will be shared here closer to setup. We will email every confirmed vendor the moment they are ready.
+          </p>
           <div className="grid gap-3">
             {[
-              { label: 'Vendor Manual', file: 'vendor-manual.pdf' },
-              { label: 'Load-in Schedule', file: 'load-in-schedule.pdf' },
-              { label: 'Setup Checklist', file: 'setup-checklist.pdf' },
-              { label: 'Site Map', file: 'site-map.pdf' },
+              { label: 'Vendor Manual' },
+              { label: 'Load-in Schedule' },
+              { label: 'Setup Checklist' },
+              { label: 'Site Map' },
             ].map(item => (
-              <a key={item.file} href={`/api/exhibitor/resources/${item.file}`}
-                className="flex items-center gap-3 p-4 rounded-xl border border-[#E5DCC4] bg-white hover:border-[#cd2653] transition-colors">
-                <FileText className="w-5 h-5 text-neutral-400" />
-                <span className="text-sm font-medium">{item.label}</span>
-                <Download className="w-4 h-4 ml-auto text-neutral-300" />
-              </a>
+              <div key={item.label}
+                className="flex items-center gap-3 p-4 rounded-xl border border-[#E5DCC4] bg-[#FAF7F0]">
+                <FileText className="w-5 h-5 text-neutral-300" />
+                <span className="text-sm font-medium text-[#1B1A17]/50">{item.label}</span>
+                <span className="ml-auto text-xs font-medium text-[#1B1A17]/40 bg-white border border-[#E5DCC4] rounded-full px-2.5 py-1">
+                  Available closer to the festival
+                </span>
+              </div>
             ))}
           </div>
         </section>
@@ -104,7 +109,7 @@ export default function ResourcesPage() {
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between">
                 <dt className="text-neutral-500">Operations</dt>
-                <dd className="font-medium">Taona — +27 76 000 0000</dd>
+                <dd className="font-medium">+27 65 943 5012</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-neutral-500">Support</dt>
@@ -112,7 +117,7 @@ export default function ResourcesPage() {
               </div>
               <div className="flex justify-between">
                 <dt className="text-neutral-500">Emergency (show-day)</dt>
-                <dd className="font-medium">+27 76 000 0000</dd>
+                <dd className="font-medium">+27 65 943 5012</dd>
               </div>
             </dl>
           </Card>

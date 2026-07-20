@@ -20,6 +20,8 @@ interface AppRow {
   tier_label: string
   app_status: string
   stall: string | null
+  stalls?: string[]
+  booth_count?: number
   stall_status: string | null
   payment_status?: string
   payment_amount?: number
@@ -87,7 +89,11 @@ export default function VendorOpsPage() {
   const selStall = useMemo(() => data?.stalls.find((s) => s.code === sel) || null, [data, sel])
   const occupant = useMemo(() => {
     if (!sel || !data) return null
-    return data.applications.find((a) => a.stall === sel) || (selStall?.occupant as AppRow | null) || null
+    // Multi-booth: the selected code may be any code in a vendor's list, not just
+    // their first. Match against the full list (fall back to first code + map occupant).
+    return data.applications.find((a) =>
+      (a.stalls && a.stalls.length ? a.stalls.includes(sel) : a.stall === sel),
+    ) || (selStall?.occupant as AppRow | null) || null
   }, [sel, data, selStall])
 
   function pick(code: string) { setSel(code); setChosenApp(null); setSearch('') }
@@ -215,7 +221,8 @@ export default function VendorOpsPage() {
           })),
         ]
         const apps: FloorApp[] = data.applications.map((a) => ({
-          id: a.id, business_name: a.business_name, tier_label: a.tier_label, stall: a.stall,
+          id: a.id, business_name: a.business_name, tier_label: a.tier_label,
+          stall: a.stall, stalls: a.stalls ?? (a.stall ? [a.stall] : []),
         }))
         return (
           <FloorCommand hideModeSwitch={true}
@@ -224,11 +231,10 @@ export default function VendorOpsPage() {
             grid={data.grid}
             applications={apps}
             onAllocate={async (boothCode, vendorName) => {
-              // Multi-stall: prefer an UNPLACED application for this vendor so a
-              // second allocation lands on their free application id rather than
-              // moving a stall they already hold.
-              const matched = apps.find((a) => a.business_name === vendorName && !a.stall)
-                || apps.find((a) => a.business_name === vendorName)
+              // Multi-booth: ONE application per vendor holding a LIST of codes.
+              // The API appends, so allocating to a placed vendor adds a booth.
+              // Match by name (placed or not).
+              const matched = apps.find((a) => a.business_name === vendorName)
               if (!matched) throw new Error(`Vendor ${vendorName} not in approved list`)
               await post({ stall_code: boothCode, application_id: matched.id, status: 'allocated' })
             }}
@@ -275,7 +281,7 @@ export default function VendorOpsPage() {
                       <tr key={r.id} className="border-b border-[#E5E5E5]/30">
                         <td className="p-3 font-semibold text-[#1B1A17]">{r.business_name}</td>
                         <td className="p-3 text-[#1B1A17]/60">{r.tier_label}</td>
-                        <td className="p-3 text-[#1B1A17]">{r.stall || '·'}</td>
+                        <td className="p-3 text-[#1B1A17]">{(r.stalls && r.stalls.length ? r.stalls.join(', ') : r.stall) || '·'}</td>
                         <td className="p-3 text-[#1B1A17]">{amountOf(r) ? `R${amountOf(r).toLocaleString()}` : '·'}</td>
                         <td className="p-3"><span className={`text-[11px] font-semibold border px-2 py-0.5 rounded ${pillFor(r.payment_status)}`}>{r.payment_status || 'none'}</span></td>
                         <td className="p-3 text-xs text-[#1B1A17]/60 font-mono">{r.payment_ref || '·'}</td>

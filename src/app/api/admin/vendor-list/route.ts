@@ -65,7 +65,7 @@ async function loadRows(): Promise<VendorRow[]> {
   const admin = createAdminClient()
   const { data: apps } = await admin
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, product_categories, payment_status, status, admin_notes')
+    .select('id, business_name, contact_name, email, phone, product_categories, paid_at, status, admin_notes')
     .eq('status', 'approved')
 
   const rows: VendorRow[] = []
@@ -77,8 +77,8 @@ async function loadRows(): Promise<VendorRow[]> {
     const typeCode = stallMeta?.type ?? (stall ? stall.replace(/[0-9]+$/, '').toUpperCase() : '')
     const typeLabel = TYPE_LABELS[typeCode] || typeCode || ''
     const categories = Array.isArray(a.product_categories) ? (a.product_categories as string[]) : []
-    const paidNow = portalState.payment?.status === 'paid' || a.payment_status === 'paid'
-    const pending = portalState.payment?.status === 'pending' || a.payment_status === 'pending'
+    const paidNow = portalState.payment?.status === 'paid' || !!a.paid_at
+    const pending = portalState.payment?.status === 'pending'
     rows.push({
       stall: stall || '',
       type: typeCode,

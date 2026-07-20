@@ -11,7 +11,7 @@
 import stallsFile from '../../public/stalls.json'
 
 export type StallType = 'FT' | 'FS' | 'TS' | 'BS'
-export type StallStatus = 'available' | 'held' | 'allocated'
+export type StallStatus = 'available' | 'held' | 'allocated' | 'reserved' | 'blocked'
 
 export interface StallGeo {
   code: string
@@ -69,23 +69,78 @@ export function tierLabel(slug: string | null | undefined): string {
 }
 
 // ---- allocation marker on admin_notes ----
-const ALLOC_RE = /\s*⟦STALL:([A-Za-z]+\d+)(?::(held|allocated))?⟧\s*/
+//
+// MARKER = LIST. A vendor's booths are a comma-separated code list inside ONE
+// marker: ⟦STALL:FS1,FS2⟧ (or status-tagged: ⟦STALL:FS1,FS2:reserved⟧). A legacy
+// single-code marker ⟦STALL:FS1⟧ parses as the list [FS1] (backward compatible).
+// The status applies to every code in the marker, exactly as it did to the single
+// code before — there is one status per vendor's stall set, not per code.
+const ALLOC_RE = /\s*⟦STALL:([A-Za-z]+\d+(?:,[A-Za-z]+\d+)*)(?::(held|allocated|reserved|blocked))?⟧\s*/
 
-export interface ParsedNotes { stall: string | null; status: StallStatus; human: string }
+export interface ParsedNotes {
+  /** First code in the vendor's list (backward-compat with single-stall callers). */
+  stall: string | null
+  /** Full list of the vendor's allocated codes (empty when unallocated). */
+  stalls: string[]
+  status: StallStatus
+  human: string
+}
+
+// Split + normalise a marker's code list (drops blanks, de-dupes, preserves order).
+function splitCodes(raw: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const c of raw.split(',')) {
+    const code = c.trim()
+    if (code && !seen.has(code)) { seen.add(code); out.push(code) }
+  }
+  return out
+}
 
 export function parseAllocation(adminNotes: string | null | undefined): ParsedNotes {
   const notes = adminNotes || ''
   const m = notes.match(ALLOC_RE)
-  if (!m) return { stall: null, status: 'available', human: notes.trim() }
+  if (!m) return { stall: null, stalls: [], status: 'available', human: notes.trim() }
   const human = notes.replace(ALLOC_RE, ' ').trim()
-  return { stall: m[1], status: (m[2] as StallStatus) || 'allocated', human }
+  const stalls = splitCodes(m[1])
+  return { stall: stalls[0] || null, stalls, status: (m[2] as StallStatus) || 'allocated', human }
 }
 
-// Rebuild admin_notes preserving human prose, with (or without) the marker.
+// Build the marker string for a code list (empty list => no marker).
+function allocMarker(stalls: string[], status: StallStatus): string {
+  if (stalls.length === 0) return ''
+  const codes = stalls.join(',')
+  // allocated is the default (bare marker); every other state is tagged.
+  return status === 'allocated' ? `⟦STALL:${codes}⟧` : `⟦STALL:${codes}:${status}⟧`
+}
+
+/**
+ * Rebuild admin_notes preserving human prose, ADDING a code to the vendor's
+ * existing list (multi-booth). Passing stall=null clears the whole marker.
+ * When the vendor already holds booths, the new code is appended (no replace) and
+ * the marker's status becomes `status` (the action taken on this allocation),
+ * matching the single-status-per-vendor model. An already-present code is a no-op
+ * on the list but still applies the new status.
+ */
 export function withAllocation(adminNotes: string | null | undefined, stall: string | null, status: StallStatus = 'allocated'): string {
-  const { human } = parseAllocation(adminNotes)
+  const { human, stalls } = parseAllocation(adminNotes)
   if (!stall) return human
-  const marker = status === 'held' ? `⟦STALL:${stall}:held⟧` : `⟦STALL:${stall}⟧`
+  const next = stalls.includes(stall) ? stalls : [...stalls, stall]
+  const marker = allocMarker(next, status)
+  return human ? `${human}\n\n${marker}` : marker
+}
+
+/**
+ * Release ONE booth from a vendor's list. Preserves the remaining codes and the
+ * marker's status. When the removed code was their last booth, the marker is
+ * dropped entirely (human prose only). Removing a code the vendor doesn't hold is
+ * a no-op (notes unchanged apart from marker re-normalisation).
+ */
+export function removeStallCode(adminNotes: string | null | undefined, code: string): string {
+  const { human, stalls, status } = parseAllocation(adminNotes)
+  const next = stalls.filter((c) => c !== code)
+  const marker = allocMarker(next, status)
+  if (!marker) return human
   return human ? `${human}\n\n${marker}` : marker
 }
 

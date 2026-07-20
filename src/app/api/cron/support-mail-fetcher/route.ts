@@ -20,6 +20,7 @@ import { ImapFlow, type FetchMessageObject } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
+import { captureAttachments } from '@/lib/email/attachments'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -76,13 +77,13 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
   let written = 0
   let skipped = 0
 
-  if (process.env.CRON_SECRET) {
-    if (!verifyCronAuth(req.headers.get('authorization'))) {
-      return NextResponse.json(
-        { ok: false, fetched: 0, written: 0, skipped: 0, errors: ['unauthorized'], host: '', durationMs: 0 },
-        { status: 401 }
-      )
-    }
+  // Fail-closed cron gate (verifyCronAuth returns false when CRON_SECRET is
+  // unset), so this IMAP-reading route is never publicly triggerable.
+  if (!verifyCronAuth(req.headers.get('authorization'))) {
+    return NextResponse.json(
+      { ok: false, fetched: 0, written: 0, skipped: 0, errors: ['unauthorized'], host: '', durationMs: 0 },
+      { status: 401 }
+    )
   }
 
   const host = process.env.IMAP_HOST || 'imap.secureserver.net'
@@ -186,6 +187,10 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
             const tail = splitIdx >= 0 ? raw.slice(splitIdx + 2).trim() : raw.trim()
             body = tail.slice(0, 4000)
           }
+          // Real attachments (not embedded signature images) — uploaded to
+          // Storage, appended to body as a marker so the unified inbox can
+          // render them the same way it already does for WhatsApp media.
+          body += await captureAttachments(supabase, messageId || `${uid}`, parsed.attachments)
         } catch (e) {
           errors.push(`mailparser ${messageId}: ${(e as Error).message}`)
           // Same header-strip path on parser failure so we never persist

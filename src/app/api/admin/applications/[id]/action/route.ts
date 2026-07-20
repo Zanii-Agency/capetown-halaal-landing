@@ -22,6 +22,7 @@ import {
   type DecisionNotifyResult,
 } from '@/lib/applications/decision-notify'
 import { notifyOwners, type PortalEvent } from '@/lib/bot/notify'
+import { assertRole } from '@/lib/admin-rbac'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -70,8 +71,12 @@ export async function POST(
       .single()
     if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
-    const role = (adminUser.role || 'operator') as string
-    if (!['owner', 'operator'].includes(role)) {
+    // Role gate. Approve/reject/info/snooze are lifecycle mutations with
+    // vendor-facing side-effects (email + WhatsApp + account provisioning) —
+    // viewer must not be able to do this. Only owner/operator.
+    try {
+      await assertRole(user.id, ['owner', 'operator'])
+    } catch {
       return NextResponse.json({ error: 'insufficient_role' }, { status: 403 })
     }
     const actorEmail = (adminUser.email as string | null) || user.email || null

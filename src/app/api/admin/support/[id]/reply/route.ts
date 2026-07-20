@@ -3,25 +3,18 @@
 // next time they open /exhibitor/portal/support.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, type SupportMessage } from '@/lib/portal-state'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
 
   const db = createAdminClient()
-  const { data: adminUser } = await db
-    .from('admin_users')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
-  if (!adminUser) return NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 })
 
   const { id: applicationId } = await params
   const body = await req.json().catch(() => ({}))

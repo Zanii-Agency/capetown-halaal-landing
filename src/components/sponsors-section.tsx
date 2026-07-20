@@ -99,19 +99,50 @@ function EnquiryModal({
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  // Honeypot: bots fill hidden fields, humans never see them. Field name must
+  // match HONEYPOT_FIELD in src/lib/security/abuse-guard.ts.
+  const [honeypot, setHoneypot] = useState('')
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmitting(true)
 
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    try {
+      const res = await fetch('/api/sponsor-enquiry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          company: formData.company,
+          phone: formData.phone,
+          message: formData.message,
+          tier: sponsorTier,
+          company_website_url: honeypot,
+        }),
+      })
 
-    toast.success('Enquiry submitted successfully!', {
-      description: `We'll contact you about the ${sponsorTier} package within 24 hours.`
-    })
-
-    setIsSubmitting(false)
-    onClose()
-    setFormData({ name: '', email: '', company: '', phone: '', message: '' })
+      if (res.ok) {
+        toast.success('Enquiry submitted successfully!', {
+          description: `We'll contact you about the ${sponsorTier} package within 24 hours.`
+        })
+        onClose()
+        setFormData({ name: '', email: '', company: '', phone: '', message: '' })
+        setHoneypot('')
+      } else {
+        // Surface a real error and KEEP the form data so the user can retry.
+        const data = await res.json().catch(() => ({} as { error?: string }))
+        toast.error('Could not submit your enquiry', {
+          description: data?.error || 'Please try again, or email support@youngatheart.co.za directly.'
+        })
+      }
+    } catch {
+      toast.error('Could not submit your enquiry', {
+        description: 'Check your connection and try again, or email support@youngatheart.co.za directly.'
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -150,6 +181,17 @@ function EnquiryModal({
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Honeypot — hidden from humans, bots fill it. Never remove. */}
+              <input
+                type="text"
+                name="company_website_url"
+                tabIndex={-1}
+                autoComplete="off"
+                value={honeypot}
+                onChange={(e) => setHoneypot(e.target.value)}
+                className="absolute -left-[9999px] h-0 w-0 opacity-0"
+                aria-hidden="true"
+              />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-neutral-300 mb-1">Name</label>
@@ -317,6 +359,9 @@ function SponsorCard({ tier, index, onEnquire }: { tier: SponsorTier; index: num
                 src={tier.partnerLogo}
                 alt={tier.name}
                 fill
+                // Container is h-12 w-32 (128px). See smile-fm-banner: `fill`
+                // without `sizes` falls back to 100vw / the 1920px variant.
+                sizes="128px"
                 className="object-contain"
               />
             </div>

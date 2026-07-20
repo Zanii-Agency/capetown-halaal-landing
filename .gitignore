@@ -59,3 +59,4 @@ scripts/.verification-blast.DONE
 # transient sprint artifacts
 .claude/worktrees/
 public/stalls.excel-extracted.json.bak
+.gstack/

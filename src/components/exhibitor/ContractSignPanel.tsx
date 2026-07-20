@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 interface Props {
   alreadySigned: boolean
@@ -135,6 +136,40 @@ export function ContractSignPanel({ alreadySigned, signedAt, signaturePath, full
     }
   }
 
+  // Download the signed contract copy. The route redirects (302) to a
+  // short-lived Supabase signed URL on success; on failure it returns a JSON
+  // error. A bare <a href> would navigate the browser to that JSON error page,
+  // so we fetch first, check res.ok, and only then blob-download with an
+  // explicit filename (the signed URL carries no useful Content-Disposition).
+  async function downloadSignedCopy() {
+    try {
+      const res = await fetch('/api/exhibitor/contract/download')
+      if (!res.ok) {
+        let message = 'Could not download your signed contract.'
+        try {
+          const data = await res.json()
+          if (data?.error) message = data.error
+        } catch {
+          /* non-JSON error body; keep the generic message */
+        }
+        toast.error(message)
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const slug = (fullName || 'contract').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'contract'
+      a.href = url
+      a.download = `CTH-Contract-${slug}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error('Could not download your signed contract. Please try again.')
+    }
+  }
+
   if (alreadySigned) {
     return (
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6">
@@ -146,9 +181,13 @@ export function ContractSignPanel({ alreadySigned, signedAt, signaturePath, full
               Signed on {signedAt ? new Date(signedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : ''}.
             </p>
             {signaturePath && (
-              <a href={`/api/exhibitor/contract/download`} className="inline-block mt-3 text-sm underline text-[#cd2653]">
+              <button
+                type="button"
+                onClick={downloadSignedCopy}
+                className="inline-block mt-3 text-sm underline text-[#cd2653]"
+              >
                 Download your signed copy
-              </a>
+              </button>
             )}
           </div>
         </div>

@@ -59,11 +59,19 @@ export default async function AnalyticsPage() {
   const now = new Date()
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
+  // Ticket Sales card = all-time / year-to-date revenue, not just the festival
+  // cycle. Law 6 requires every orders.list to carry `after=`, so we scope to
+  // the START OF THE CURRENT YEAR (YTD) rather than removing the filter.
+  // Format matches getOrders' WC `after` param (local-naive ISO, no Z).
+  const ytdAfter = `${now.getUTCFullYear()}-01-01T00:00:00`
+
   // 1) Vendor applications: count all-time + 30d + status breakdown.
   // 2) WhatsApp messages: in + out counts, all-time + 30d.
   // 3) Support threads: open / snoozed / resolved + 30d new.
-  // 4) Ticket sales: getOrders() applies the festival-cycle after filter
-  //    (Law 6) internally; status=completed for revenue + count.
+  // 4) Ticket sales: getOrders() carries the `after=` filter (Law 6); we pass
+  //    an explicit YTD `after` (start of current year) so the card reads
+  //    all-time year-to-date revenue, not just the festival cycle.
+  //    status=completed for revenue + count.
   // 5) Recent activity: last 20 rows from vendor_application_events joined to
   //    vendor_applications.business_name for display context.
   const [
@@ -91,7 +99,7 @@ export default async function AnalyticsPage() {
     db.from('support_inbox_threads').select('id', { count: 'exact', head: true }).eq('status', 'snoozed'),
     db.from('support_inbox_threads').select('id', { count: 'exact', head: true }).eq('status', 'resolved'),
     db.from('support_inbox_threads').select('id', { count: 'exact', head: true }).gte('created_at', thirtyDaysAgo),
-    getOrders({ status: 'completed' }).catch((e) => {
+    getOrders({ status: 'completed', after: ytdAfter }).catch((e) => {
       console.warn('[analytics] WC fetch failed:', e instanceof Error ? e.message : e)
       return [] as Awaited<ReturnType<typeof getOrders>>
     }),
@@ -181,12 +189,12 @@ export default async function AnalyticsPage() {
             }
           />
           <StatCard
-            label="Ticket sales"
+            label="Ticket sales (YTD)"
             value={fmtZAR(ticketRevenue)}
             trend={`${ticketCount} tix`}
             hint={
               <span>
-                {orderCount} completed orders, festival cycle
+                {orderCount} completed orders, year to date (since {now.getUTCFullYear()}-01-01)
               </span>
             }
           />

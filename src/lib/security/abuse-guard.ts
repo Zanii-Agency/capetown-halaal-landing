@@ -148,7 +148,15 @@ export async function logGuardEvent(
 }
 
 export function clientIp(headers: Headers): string | undefined {
-  const xff = headers.get('x-forwarded-for')
-  if (xff) return xff.split(',')[0]?.trim()
-  return headers.get('x-real-ip')?.trim() || headers.get('cf-connecting-ip')?.trim() || undefined
+  // Trust EDGE-set headers first (Cloudflare / Vercel). `x-forwarded-for` is
+  // client-forgeable end-to-end: an attacker sends `X-Forwarded-For: <random>`
+  // per request to mint a fresh throttle key and bypass login brute-force /
+  // reset-bomb limits. So XFF is the LAST resort, used only when no trusted edge
+  // header is present (e.g. local dev). (Audit MED-1)
+  const trusted =
+    headers.get('cf-connecting-ip')?.trim() ||
+    headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() ||
+    headers.get('x-real-ip')?.trim()
+  if (trusted) return trusted
+  return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined
 }

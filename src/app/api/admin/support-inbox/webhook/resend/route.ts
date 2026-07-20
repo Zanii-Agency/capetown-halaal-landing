@@ -73,6 +73,21 @@ function isInternalRecipient(email: string | null): boolean {
   return /@(youngatheart\.co\.za|sinan\.agency)$/i.test(email)
 }
 
+// The Resend account is SHARED across zanii.agency and other Zanii projects, and
+// Resend webhooks fire at the ACCOUNT level, not per-key. Without this guard every
+// email any project sends through the account lands in the CTH festival inbox.
+// Only mirror mail whose SENDER is a CTH sending domain. Override via env
+// CTH_SENDER_DOMAINS (comma-separated) if CTH ever adds a from-domain.
+const CTH_SENDER_DOMAINS = (process.env.CTH_SENDER_DOMAINS || 'youngatheart.co.za,cthalaal.co.za,event.youngatheart.co.za')
+  .split(',')
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean)
+
+function isCthSender(fromAddr: string): boolean {
+  const domain = fromAddr.split('@')[1]?.toLowerCase() || ''
+  return CTH_SENDER_DOMAINS.some((d) => domain === d || domain.endsWith('.' + d))
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.RESEND_WEBHOOK_SECRET || ''
   const devAllow = process.env.DEV_ALLOW_UNSIGNED_RESEND === '1'
@@ -155,6 +170,13 @@ export async function POST(req: NextRequest) {
   const sentAt = data.created_at || event.created_at || new Date().toISOString()
   const fromAddrRaw = data.from || 'support@youngatheart.co.za'
   const fromAddr = (fromAddrRaw.match(/<([^>]+)>/)?.[1] || fromAddrRaw).toLowerCase()
+
+  // Shared-Resend-account isolation: drop mail sent by other Zanii projects
+  // (zanii.agency, books.*, id.*, etc.) so only CTH mail reaches this inbox.
+  if (!isCthSender(fromAddr)) {
+    console.log(`[resend webhook] dropped foreign sender ${fromAddr} (not a CTH domain)`)
+    return NextResponse.json({ ok: true, skipped: 'foreign_sender' })
+  }
 
   const db = createAdminClient()
 

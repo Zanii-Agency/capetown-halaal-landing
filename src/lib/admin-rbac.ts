@@ -3,6 +3,7 @@
 // Reads admin_users.role via service-role client (RLS-bypass on purpose:
 // this is an admin-only surface, not a vendor-facing one).
 
+import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export type AdminRole = 'owner' | 'operator' | 'viewer'
@@ -32,7 +33,10 @@ export async function getRole(userId: string | null | undefined): Promise<AdminR
       .single()
 
     if (error || !data) return null
-    return normalizeRole((data as { role?: string }).role) ?? 'operator'
+    // Fail CLOSED: an admin_users row with a missing or unrecognized role
+    // is the LEAST-privileged role (viewer), never operator. A role-less
+    // row must not silently inherit vendor-mutate rights.
+    return normalizeRole((data as { role?: string }).role) ?? 'viewer'
   } catch (err) {
     console.error('[admin-rbac] getRole failed:', err)
     return null
@@ -76,6 +80,72 @@ export async function requireAdmin(): Promise<string> {
   if (!adminUser) throw new Error('Forbidden')
 
   return user.id
+}
+
+/**
+ * The single mutating-route gate. Every admin route handler that WRITES DB
+ * state or SENDS email/WhatsApp must call this first. Centralised so the role
+ * check can never be forgotten on a per-route basis.
+ *
+ * Runs the full chain in the correct order so 401-before-403 is preserved:
+ *   1. active Supabase session       -> 401 if none
+ *   2. row in admin_users            -> 403 if not a member
+ *   3. role in ['owner','operator']  -> 403 if viewer (or role-less => viewer)
+ *
+ * Returns a DISCRIMINATED RESULT (does not throw): on failure, callers return
+ * the ready-made NextResponse; on success, callers get { user, adminUser, role }.
+ * This mirrors how the inline gates were written (getUser -> 401, membership ->
+ * 403, role -> 403) so every converted route reads the same way:
+ *
+ *   const gate = await requireOperator()
+ *   if (!gate.ok) return gate.response
+ *   const { user, adminUser, role } = gate
+ *
+ * adminUser carries id, role, and email so callers that need the actor's email
+ * (audit rows) or role do not re-query admin_users.
+ */
+export type OperatorGate =
+  | {
+      ok: true
+      user: { id: string; email?: string | null }
+      adminUser: { id: string; role: AdminRole; email: string | null }
+      role: AdminRole
+    }
+  | { ok: false; response: NextResponse }
+
+export async function requireOperator(): Promise<OperatorGate> {
+  const { createClient } = await import('@/lib/supabase/server')
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  // 401 BEFORE 403: an unauthenticated caller is Unauthorized, not Forbidden.
+  if (!user) {
+    return { ok: false, response: NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
+  }
+
+  const admin = createAdminClient()
+  const { data: row } = await admin
+    .from('admin_users')
+    .select('id, role, email')
+    .eq('id', user.id)
+    .maybeSingle()
+  if (!row) {
+    return { ok: false, response: NextResponse.json({ error: 'forbidden' }, { status: 403 }) }
+  }
+
+  // Fail CLOSED on a missing/unknown role: treat as viewer (least privilege),
+  // never inherit operator rights from a role-less row.
+  const role = normalizeRole((row as { role?: string }).role) ?? 'viewer'
+  if (role !== 'owner' && role !== 'operator') {
+    return { ok: false, response: NextResponse.json({ error: 'insufficient_role' }, { status: 403 }) }
+  }
+
+  const email = ((row as { email?: string | null }).email) ?? user.email ?? null
+  return {
+    ok: true,
+    user: { id: user.id, email: user.email },
+    adminUser: { id: user.id, role, email },
+    role,
+  }
 }
 
 /**

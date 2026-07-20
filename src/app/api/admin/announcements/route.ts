@@ -1,21 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { listAnnouncements, addAnnouncement } from '@/lib/announcements'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
+import { requireOperator } from '@/lib/admin-rbac'
 
 async function isAuthorized(request: NextRequest): Promise<boolean> {
+  // Cron branch (CRON_SECRET bearer) left untouched: machine-to-machine posts.
   // Header-only Bearer (constant-time). `?secret=` query branch removed
   // because it leaks into access logs / browser history / referrers.
   if (verifyCronAuth(request.headers.get('authorization'))) return true
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return false
-    const admin = createAdminClient()
-    const { data } = await admin.from('admin_users').select().eq('id', user.id).single()
-    return !!data
-  } catch { return false }
+  // Admin branch: posting an announcement is a write, so role-gate to
+  // owner/operator (was membership-only).
+  const gate = await requireOperator()
+  return gate.ok
 }
 
 export async function GET() {

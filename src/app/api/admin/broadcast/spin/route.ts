@@ -13,8 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 import { stripEmDashes } from '@/lib/festival-brain/system-prompt'
 
 export const maxDuration = 60
@@ -40,17 +39,9 @@ interface SpinBody {
 }
 
 export async function POST(req: NextRequest) {
-  // Admin auth, mirrors /api/admin/polish.
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const admin = createAdminClient()
-  const { data: adminUser } = await admin
-    .from('admin_users')
-    .select('id')
-    .eq('id', user.id)
-    .single()
-  if (!adminUser) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // Role-gated: AI spin burns Anthropic budget and is an operator tool.
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
 
   let body: SpinBody
   try {

@@ -3,16 +3,22 @@
  *
  * Mark a vendor's stall fee paid manually (cash, EFT off-platform, comp).
  * Writes:
- *   - portal-state marker `payment.status = 'paid'` + paid_at + reference
+ *   - portal-state marker `payment.status = 'paid'` + paid_at + reference + method
  *   - vendor_application_events entry { event_type: 'payment_manual', note: ... }
  *
- * Body: { amount?: number, reference?: string, note?: string }
+ * Body: { method: 'eft'|'cash'|'manual_card'|'waived', amount?: number, reference?: string, note?: string }
+ * method is REQUIRED (Taona 2026-07-12: "it should ask how they paid") — this
+ * used to hardcode 'eft' for every manual payment regardless of reality, which
+ * also made the invoice always claim "Paid via Yoco" (see invoice-pdf.ts).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { updatePortalState, syncPortalState } from '@/lib/portal-state'
+import { parsePortalState, syncPortalState } from '@/lib/portal-state'
+import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
+import { requireOperator } from '@/lib/admin-rbac'
+
+const ALLOWED: PaymentMethod[] = ['eft', 'cash', 'manual_card', 'waived']
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -21,39 +27,45 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
+  const { user } = gate
 
   const db = createAdminClient()
-  const { data: adminUser } = await db.from('admin_users').select('id, role').eq('id', user.id).maybeSingle()
-  if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  const role = ((adminUser as { role?: string }).role || 'operator').toLowerCase()
-  if (!['owner', 'operator'].includes(role)) {
-    return NextResponse.json({ error: 'insufficient_role' }, { status: 403 })
-  }
 
   const body = await req.json().catch(() => ({}))
+  const method = String(body.method || '').trim() as PaymentMethod
+  if (!ALLOWED.includes(method)) {
+    return NextResponse.json({ error: `method is required and must be one of: ${ALLOWED.join(', ')}` }, { status: 400 })
+  }
   const amount = typeof body.amount === 'number' ? body.amount : undefined
   const reference = body.reference ? String(body.reference).slice(0, 80) : undefined
-  const note = body.note ? String(body.note).slice(0, 500) : 'Marked paid manually by admin.'
+  const note = body.note ? String(body.note).slice(0, 500) : `Marked paid manually by admin (${method}).`
 
-  const before = await updatePortalState(id, (s) => ({
-    ...s,
-    payment: {
-      ...(s.payment || {}),
-      status: 'paid',
-      paid_at: new Date().toISOString(),
-      amount: amount ?? s.payment?.amount,
-      reference: reference || s.payment?.reference,
-    },
-  }))
+  // Route through the SAME confirmPayment authority as the Yoco webhook and the
+  // vendor-ops mark-paid, so a manual payment ACCUMULATES into the cumulative
+  // paid (first payment OR top-up) instead of overwriting it, sets the paid_at
+  // column atomically, and de-dups by providerRef. A unique ref per manual entry
+  // (or the operator's reference) prevents a double-click from double-counting.
+  // silent: the operator is recording an offline payment, so no auto vendor /
+  // owner sends (matches the prior behaviour of this endpoint).
+  const providerRef = reference || `manual-${id}-${Date.now()}`
+  const result = await confirmPayment({
+    applicationId: id,
+    method,
+    amount,
+    providerRef,
+    silent: true,
+  })
+  if (!result.ok) {
+    return NextResponse.json({ ok: false, error: result.error }, { status: 500 })
+  }
 
   try {
     await db.from('vendor_application_events').insert({
       application_id: id,
       event_type: 'payment_manual',
-      after_value: { paid_at: before.payment?.paid_at, amount, reference, note },
+      after_value: { amount, total_paid: result.amount, method, reference: providerRef, note },
       actor_email: user.email || null,
       actor_role: 'admin',
       note,
@@ -66,5 +78,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error('[mark-paid] syncPortalState failed:', (e as Error).message)
   )
 
-  return NextResponse.json({ ok: true, payment: before.payment })
+  const after = parsePortalState((await db.from('vendor_applications').select('admin_notes').eq('id', id).maybeSingle()).data?.admin_notes as string || null)
+  return NextResponse.json({ ok: true, payment: after.payment })
 }

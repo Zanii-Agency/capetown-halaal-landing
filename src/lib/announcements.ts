@@ -39,8 +39,16 @@ export async function addAnnouncement(input: { title: string; body: string; pinn
   }
   const next = [item, ...current].slice(0, 200)
   const admin = createAdminClient()
-  await admin.storage.from(BUCKET).upload(PATH, Buffer.from(JSON.stringify(next)), {
+  // The upload result carries the real failure. Without checking { error } a
+  // failed write reports success and the announcement silently vanishes. Match
+  // the exhibitor upload paths: capture the error, log it, and surface it so the
+  // caller never tells the operator "saved" on a write that did not land.
+  const { error } = await admin.storage.from(BUCKET).upload(PATH, Buffer.from(JSON.stringify(next)), {
     contentType: 'application/json', upsert: true,
   })
+  if (error) {
+    console.error('[announcements] addAnnouncement upload failed:', error.message)
+    throw new Error(`Failed to store announcement: ${error.message}`)
+  }
   return item
 }

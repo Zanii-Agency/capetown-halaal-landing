@@ -4,7 +4,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState, type DocRecord } from '@/lib/portal-state'
 
 const BUCKET = 'vendor-docs'
-const ALLOWED = ['halaal_cert', 'health_permit', 'fire_safety', 'public_liability', 'electrical_coc', 'contract', 'indemnity', 'other']
+// Canonical doc-type keys. Must match portal.docs[].type and the admin
+// required-set in doc-action/route.ts + admin/vendors/[id]/doc-types.ts.
+// `halaal_cert` (two a's) is the canonical spelling the portal writes.
+// `gas_cert` is offered by DocumentsManager (conditional on gas use) and
+// MUST be accepted here or every gas upload 400s.
+const ALLOWED = ['halaal_cert', 'health_permit', 'gas_cert', 'fire_safety', 'public_liability', 'electrical_coc', 'contract', 'indemnity', 'other']
 const MAX_BYTES = 10 * 1024 * 1024 // 10MB
 
 // GET: list the signed-in vendor's documents with short-lived signed view URLs.
@@ -89,6 +94,19 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {
     console.warn('[documents] site_events insert failed:', (e as Error).message)
+  }
+
+  // Best-effort owner notification. Failure here never blocks the vendor's upload.
+  try {
+    const { notifyOwners } = await import('@/lib/bot/notify')
+    const bizName = String(ctx.application.business_name || 'Vendor')
+    await notifyOwners({
+      event: 'document_uploaded',
+      body: `New document uploaded by ${bizName}: ${docType}.`,
+      audience: 'all',
+    })
+  } catch (e) {
+    console.error('[documents] notifyOwners failed:', (e as Error).message)
   }
 
   return NextResponse.json({ success: true, document: record })

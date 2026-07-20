@@ -33,19 +33,42 @@ export async function getExhibitorContext(): Promise<ExhibitorContext | null> {
       .maybeSingle()
     application = data ?? null
   }
-  // CTH-DOCTRINE Law 2 (vendor-data-privacy).
-  // Email fallback removed for Law 2 safety. Vendors must have application_id
-  // in their user_metadata or a verified auth_user_id link. A case-insensitive
-  // email match was an unbounded join key — Supabase Auth lets users change
-  // their email after sign-up, so an attacker could land on a victim's
-  // application row by spoofing the email address. Fail closed: refuse to
-  // bind the session to any application when the metadata link is missing.
-  if (!application && user.email) {
-    console.warn(
-      '[exhibitor] no application_id on user_metadata for',
-      user.id,
-      '— refusing email fallback (Law 2). Re-link this auth user via admin.',
-    )
+
+  // ATO GUARD (CRITICAL — account-takeover root). `user_metadata.application_id`
+  // is CLIENT-WRITABLE (the portal itself calls supabase.auth.updateUser({data}))
+  // so an authenticated vendor could repoint it at ANY other application UUID and
+  // read/act on the victim's data. The metadata claim must therefore be BACKED by
+  // a server-set, non-client-writable link before we trust it:
+  //   1. auth_user_id (migration v7) — the immutable auth user id, set with the
+  //      admin client at approval. The user cannot change their own user.id, nor
+  //      this column. This is the spoof-proof binding.
+  //   2. email fallback — for rows provisioned before v7 (auth_user_id null), the
+  //      auth user was created with the application's own email, and the session
+  //      email is Supabase-verified (changing it requires confirming the new
+  //      address), so it cannot be set to a victim's value.
+  // Fail CLOSED: if neither matches, the metadata is forged — drop the binding.
+  if (application) {
+    const linkedUserId = (application.auth_user_id as string | null) || null
+    const appEmail = (application.email as string | null)?.toLowerCase() || null
+    const sessionEmail = user.email?.toLowerCase() || null
+    const ownsByUserId = !!linkedUserId && linkedUserId === user.id
+    const ownsByEmail = !linkedUserId && !!appEmail && !!sessionEmail && appEmail === sessionEmail
+    if (!ownsByUserId && !ownsByEmail) {
+      console.error(
+        '[exhibitor] ATO guard: application_id metadata not backed by auth_user_id or email for user',
+        user.id, '— refusing binding (Law 2).',
+      )
+      application = null
+    }
+  }
+  // CTH-DOCTRINE Law 2 (vendor-data-privacy). The binding above is the only path
+  // to an application: a metadata application_id claim that is BACKED by the
+  // immutable server-set auth_user_id (post-v7), or — for legacy pre-v7 rows —
+  // a match between the application's own email and the Supabase-verified session
+  // email (email change requires confirming the new address, so it can't be set
+  // to a victim's value). Anything else fails closed (application stays null).
+  if (!application) {
+    console.warn('[exhibitor] no application bound for user', user.id, '(missing/forged metadata link, or unmatched). Re-link via admin if this is a legit vendor.')
   }
 
   return {

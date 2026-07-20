@@ -5,9 +5,29 @@
 // Pattern source: project_nisria_notifications (lib/notify.ts). Same shape,
 // reused here with our approved Meta templates.
 
-import { sendTemplate, sendText, toE164 } from '@/lib/whatsapp'
+import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { sendEmail } from '@/lib/email/resend'
+
+// EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
+// alerts; production regressed to 86% of owner WhatsApp sends dropped with
+// "healthy ecosystem engagement" (KT #206651 diagnosis). The old carve-out
+// excluded admin-initiated events (approve/reject/info/document) on the theory
+// the admin "already knows" — but the live query proved that false: 7 of 30
+// sampled failures were `application_approved` confirmations the team never saw.
+// So EVERY event now gets an email backstop. Email has no frequency cap.
+const EMAIL_BACKSTOP_EVENTS: ReadonlySet<PortalEvent> = new Set<PortalEvent>([
+  'application_received',
+  'application_approved',
+  'application_rejected',
+  'application_info_requested',
+  'payment_succeeded',
+  'payment_failed',
+  'document_uploaded',
+  'vendor_support_message',
+  'system_alert',
+])
 
 export type PortalEvent =
   | 'application_received'
@@ -36,35 +56,32 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs) {
   const e164 = toE164(admin.phone)
   const firstName = admin.name.split(/\s+/)[0]
 
-  // Inside 24h window → free-form. Otherwise approved template.
-  const { data: last } = await db
-    .from('wa_messages')
-    .select('created_at')
-    .eq('wa_phone', e164)
-    .eq('direction', 'in')
-    .order('created_at', { ascending: false })
-    .limit(1)
-  const lastIn = last?.[0]?.created_at as string | undefined
-  const inWindow = lastIn && Date.now() - new Date(lastIn).getTime() < 24 * 3600 * 1000
+  // ALWAYS use the approved template for owner alerts (KT #206651). Owner alerts
+  // are business-initiated (a system event, not a reply to the admin's own
+  // inbound), so riding the 24h free-text `sendText` branch just because the
+  // admin happened to message the bot recently is what tripped Meta's pacing
+  // throttle and dropped 86% of them. An approved template is not pacing-capped
+  // the same way. The email backstop below covers the rest.
+  const logBody = `${args.event.replace(/_/g, ' ').toUpperCase()} - ${args.body.replace(/\s*\n\s*/g, ' · ')}`
 
-  // If args.body starts with a "+<digits>" or "[+<digits>...", we can extract
-  // the user's phone and append a copy-paste reply command for the owner.
-  // Samreen just edits the message after "to <phone>" and sends.
-  const phoneMatch = args.body.match(/(?:^|\[)(\+\d{8,16})/)
-  const replyHint = phoneMatch
-    ? `\n\nReply with:\nto ${phoneMatch[1]} <your message>`
-    : '\n\nOpen /admin/bot-inbox or reply here.'
-  const text = `🛎️ ${args.event.replace(/_/g, ' ')}\n\n${args.body}${replyHint}`
+  // Multiplicity guard: the same owner alert often fires several times (the
+  // transcript shows identical "Logged for you" / "Got it" pings x4-x7), which
+  // both spams the admin AND burns into Meta's frequency cap. Skip an identical
+  // alert to the same admin within a 5-minute window (idempotent on body).
+  const { data: recentDup } = await db
+    .from('wa_messages')
+    .select('id, created_at')
+    .eq('wa_phone', e164)
+    .eq('direction', 'out')
+    .eq('body', logBody)
+    .gte('created_at', new Date(Date.now() - 5 * 60 * 1000).toISOString())
+    .limit(1)
+  if (recentDup && recentDup.length > 0) {
+    return // duplicate owner alert within 5 min, already delivered
+  }
+
   try {
-    let res
-    const logBody = inWindow
-      ? text
-      : `${args.event.replace(/_/g, ' ').toUpperCase()} - ${args.body.replace(/\s*\n\s*/g, ' · ')}`
-    if (inWindow) {
-      res = await sendText(e164, text)
-    } else {
-      res = await sendTemplate(e164, 'festival_announcement', [firstName, logBody], { category: 'marketing' })
-    }
+    const res = await sendTemplate(e164, 'festival_announcement', [firstName, logBody], { category: 'marketing' })
     await db.from('wa_messages').insert({
       direction: 'out',
       wa_phone: e164,
@@ -75,6 +92,23 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs) {
     })
   } catch (e) {
     console.error('[notify] deliver failed', admin.name, (e as Error).message)
+  }
+
+  // Email backstop: WhatsApp owner alerts get frequency-capped by Meta and drop
+  // silently (the failure is async, set later by a status webhook), so the WA
+  // send above can never be trusted as delivered. For actionable events we ALSO
+  // email the admin so the ping always lands. Best-effort, never throws.
+  if (EMAIL_BACKSTOP_EVENTS.has(args.event) && admin.email) {
+    try {
+      const label = args.event.replace(/_/g, ' ')
+      await sendEmail({
+        to: admin.email,
+        subject: `[YAH] ${label}: ${args.body.split('\n')[0].slice(0, 80)}`,
+        text: `${args.body}\n\nOpen the admin inbox to action this: https://cthalaal.co.za/admin/bot-inbox`,
+      })
+    } catch (e) {
+      console.error('[notify] email backstop failed', admin.name, (e as Error).message)
+    }
   }
 }
 

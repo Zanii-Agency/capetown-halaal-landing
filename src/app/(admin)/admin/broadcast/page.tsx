@@ -13,8 +13,10 @@
 //   7. Preview pane — live render for the FIRST audience member, with a
 //      "preview as: <vendor> ▾" picker to switch sample. Plus a "Spin"
 //      button that calls Claude for three rewrites that preserve merge tags.
-//   8. Live count (fetched from GET ?counts=1 as filters change).
-//   9. Send button → confirmation modal showing exact mail_count + wa_count.
+//   8. Live count (fetched from GET ?counts=1 as filters change). Channel-honest:
+//      mail/wa show that channel's eligible count; "both" shows mail+wa total
+//      (a both-send is two real sends, not one). Skipped/over-cap surfaced here.
+//   9. Send button → confirmation modal showing the exact per-channel split.
 //
 // Design language: white canvas, neutral grays, festival red accents
 // (#cd2653 borrowed from the admin sidebar), tight typography. No glassmorphism.
@@ -72,6 +74,11 @@ interface CountsResponse {
   wa_count: number
   optout_count: number
 }
+
+// Mirror of BROADCAST_MAX_RECIPIENTS in the dispatch route. A send above this
+// is refused server-side (413). We surface it in the UI so the operator learns
+// before clicking Send, not after.
+const AUDIENCE_CAP = 500
 
 const ZAR = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR', maximumFractionDigits: 0 })
 
@@ -240,11 +247,35 @@ export default function BroadcastPage() {
     return () => { cancelled = true }
   }, [mode, templateKey, customMessage, freeText, previewVendorId, filters])
 
+  // Channel-honest recipient numbers.
+  //   mailWillSend / waWillSend = messages that actually go out per channel.
+  //   expectedCount = the headline number. For a single channel it is that
+  //     channel's eligible count. For "both" it is the TOTAL messages that fire
+  //     (mail + wa), because a "both" send is two real sends, not one. Showing
+  //     max() here understated a both-blast by hundreds of messages.
+  const mailWillSend = channel === 'wa' ? 0 : (counts?.mail_count ?? 0)
+  const waWillSend = channel === 'mail' ? 0 : (counts?.wa_count ?? 0)
   const expectedCount = useMemo(() => {
     if (!counts) return 0
     if (channel === 'mail') return counts.mail_count
     if (channel === 'wa') return counts.wa_count
-    return Math.max(counts.mail_count, counts.wa_count)
+    return counts.mail_count + counts.wa_count
+  }, [channel, counts])
+
+  // The dispatch route caps a single send at AUDIENCE_CAP *audience rows*
+  // (not messages). buildAudience runs before the channel split, so the cap
+  // is on audience_total. Surface it so the operator tightens filters first.
+  const audienceTotal = counts?.audience_total ?? 0
+  const overCap = audienceTotal > AUDIENCE_CAP
+
+  // How many in the filtered audience are unreachable on the chosen channel,
+  // so the operator understands why the channel number is lower than the
+  // audience total (no email on file, opted out, or no usable phone).
+  const unreachableOnChannel = useMemo(() => {
+    if (!counts) return 0
+    if (channel === 'mail') return Math.max(0, counts.audience_total - counts.mail_count)
+    if (channel === 'wa') return Math.max(0, counts.audience_total - counts.wa_count)
+    return 0
   }, [channel, counts])
 
   const spin = async () => {
@@ -301,8 +332,20 @@ export default function BroadcastPage() {
           free_text_subject: mode === 'free_text' ? freeTextSubject : undefined,
         }),
       })
-      const json = await res.json() as DispatchResponse | { error?: string }
-      if (!res.ok) throw new Error((json as { error?: string }).error || `HTTP ${res.status}`)
+      const json = await res.json() as DispatchResponse | { error?: string; max?: number; got?: number; retry_after_seconds?: number }
+      if (!res.ok) {
+        const err = json as { error?: string; max?: number; got?: number; retry_after_seconds?: number }
+        // Map the dispatch route's machine errors to operator-readable text.
+        let msg = err.error || `HTTP ${res.status}`
+        if (err.error === 'audience_too_large') {
+          msg = `Audience of ${err.got} is above the ${err.max} per-send limit. Tighten the filters or split the send.`
+        } else if (err.error === 'rate_limited') {
+          msg = `Too many broadcasts in a short window. Try again in ${err.retry_after_seconds ?? 60}s.`
+        } else if (err.error === 'insufficient_role') {
+          msg = 'Your account cannot send broadcasts. Ask an owner or operator to run this.'
+        }
+        throw new Error(msg)
+      }
       setResult(json as DispatchResponse)
       setConfirmOpen(false)
     } catch (e) {
@@ -314,6 +357,7 @@ export default function BroadcastPage() {
 
   const sendDisabled =
     expectedCount === 0 ||
+    overCap ||
     sending ||
     (mode === 'template' && !templateKey) ||
     (mode === 'free_text' && freeText.trim().length === 0)
@@ -469,31 +513,68 @@ export default function BroadcastPage() {
       </section>
 
       {/* Count + Send */}
-      <section className="rounded-lg border border-neutral-200 bg-white p-5 flex items-center justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-wide font-semibold text-neutral-500">
-            Audience
-          </p>
-          {countsLoading && <p className="text-sm text-neutral-500 mt-1">Counting...</p>}
-          {countsError && <p className="text-sm text-red-600 mt-1">{countsError}</p>}
-          {counts && !countsLoading && !countsError && (
-            <p className="text-sm text-neutral-700 mt-1">
-              <span className="text-2xl font-semibold text-neutral-900 mr-2">{expectedCount}</span>
-              recipients
-              <span className="text-neutral-400">
-                {' · '}{counts.mail_count} email
-                {' · '}{counts.wa_count} WhatsApp
-                {counts.optout_count > 0 && ` · ${counts.optout_count} opted out`}
-              </span>
+      <section className="rounded-lg border border-neutral-200 bg-white p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-wide font-semibold text-neutral-500">
+              {channel === 'mail' ? 'Will email' : channel === 'wa' ? 'Will WhatsApp' : 'Will send'}
             </p>
-          )}
+            {countsLoading && <p className="text-sm text-neutral-500 mt-1">Counting...</p>}
+            {countsError && <p className="text-sm text-red-600 mt-1">{countsError}</p>}
+            {counts && !countsLoading && !countsError && (
+              <>
+                <p className="text-sm text-neutral-700 mt-1">
+                  <span className="text-2xl font-semibold text-neutral-900 mr-2">{expectedCount}</span>
+                  {channel === 'both'
+                    ? `message${expectedCount === 1 ? '' : 's'}`
+                    : `recipient${expectedCount === 1 ? '' : 's'}`}
+                </p>
+                {/* Per-channel breakdown — honest about who gets it where. */}
+                <p className="text-xs text-neutral-500 mt-1.5">
+                  {channel !== 'wa' && <span>{mailWillSend} email</span>}
+                  {channel === 'both' && <span className="text-neutral-300"> · </span>}
+                  {channel !== 'mail' && <span>{waWillSend} WhatsApp</span>}
+                  {' · '}
+                  <span>{audienceTotal} vendor{audienceTotal === 1 ? '' : 's'} matched</span>
+                </p>
+                {/* Why the channel number is below the audience total. */}
+                {unreachableOnChannel > 0 && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    {unreachableOnChannel} of {audienceTotal} have no usable{' '}
+                    {channel === 'mail' ? 'email' : 'WhatsApp number'}
+                    {channel === 'mail' && counts.optout_count > 0 ? ' or have opted out' : ''} and will be skipped.
+                  </p>
+                )}
+                {channel === 'wa' && counts.optout_count > 0 && (
+                  <p className="text-xs text-neutral-400 mt-1">{counts.optout_count} email opt-outs (does not affect WhatsApp).</p>
+                )}
+              </>
+            )}
+          </div>
+          <button type="button"
+            disabled={sendDisabled}
+            onClick={() => setConfirmOpen(true)}
+            className="shrink-0 rounded-md bg-[#cd2653] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#b22149] transition-colors">
+            Send broadcast
+          </button>
         </div>
-        <button type="button"
-          disabled={sendDisabled}
-          onClick={() => setConfirmOpen(true)}
-          className="rounded-md bg-[#cd2653] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#b22149] transition-colors">
-          Send broadcast
-        </button>
+
+        {/* Over-cap guard — explain the server-side 500 refusal up front. */}
+        {overCap && !countsLoading && !countsError && (
+          <p className="mt-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            {audienceTotal} vendors match these filters, above the {AUDIENCE_CAP} per-send limit.
+            Tighten the filters (status, sector, tier) or split the send before this can go out.
+          </p>
+        )}
+
+        {/* Empty-state — a filter combo that matches nobody. */}
+        {counts && !countsLoading && !countsError && expectedCount === 0 && !overCap && (
+          <p className="mt-3 rounded-md bg-neutral-50 border border-neutral-200 px-3 py-2 text-xs text-neutral-600">
+            {audienceTotal === 0
+              ? 'No vendors match these filters. Loosen a filter to build an audience.'
+              : `${audienceTotal} vendors match, but none have a usable ${channel === 'wa' ? 'WhatsApp number' : 'email'}. Switch channel or adjust filters.`}
+          </p>
+        )}
       </section>
 
       {result && (
@@ -562,15 +643,25 @@ export default function BroadcastPage() {
               )} via
               {' '}<strong className="text-neutral-900">
                 {channel === 'mail' ? 'Email' : channel === 'wa' ? 'WhatsApp' : 'Email and WhatsApp'}
-              </strong>{' '}
-              to
-              {' '}<strong className="text-neutral-900">{expectedCount}</strong> recipient{expectedCount === 1 ? '' : 's'}.
+              </strong>.
             </p>
-            {counts && channel === 'both' && (
-              <p className="mt-1 text-xs text-neutral-500">
-                Up to {counts.mail_count} emails and {counts.wa_count} WhatsApp messages will go out, dedupe applied.
-              </p>
-            )}
+            {/* Exact, channel-honest breakdown of what fires. */}
+            <div className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm text-neutral-700 space-y-1">
+              {channel !== 'wa' && (
+                <p><strong className="text-neutral-900">{mailWillSend}</strong> email{mailWillSend === 1 ? '' : 's'}</p>
+              )}
+              {channel !== 'mail' && (
+                <p><strong className="text-neutral-900">{waWillSend}</strong> WhatsApp message{waWillSend === 1 ? '' : 's'}</p>
+              )}
+              {channel === 'both' && (
+                <p className="text-xs text-neutral-500 pt-0.5 border-t border-neutral-200 mt-1.5">
+                  {mailWillSend + waWillSend} messages total, deduped per channel.
+                </p>
+              )}
+            </div>
+            <p className="mt-3 text-xs text-neutral-500">
+              This cannot be undone. Sends go through the throttled, idempotent dispatch path.
+            </p>
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setConfirmOpen(false)}
                 className="px-4 py-2 text-sm font-medium text-neutral-700 rounded-md hover:bg-neutral-100">
@@ -578,7 +669,7 @@ export default function BroadcastPage() {
               </button>
               <button type="button" onClick={send} disabled={sending}
                 className="px-4 py-2 text-sm font-semibold text-white bg-[#cd2653] rounded-md hover:bg-[#b22149] disabled:opacity-50">
-                {sending ? 'Sending...' : 'Send now'}
+                {sending ? 'Sending...' : `Send ${expectedCount} now`}
               </button>
             </div>
           </div>

@@ -32,7 +32,7 @@ const ADMIN_PAGES = [
   { label: 'Applications', to: '/admin/applications' },
   { label: 'Allocation', to: '/admin/allocation' },
   { label: 'Vendors', to: '/admin/vendors' },
-  { label: 'Inbox', to: '/admin/inbox' },
+  { label: 'Inbox', to: '/admin/customer-inbox' },
   { label: 'Support Inbox', to: '/admin/support-inbox' },
   { label: 'Broadcast', to: '/admin/broadcast' },
   { label: 'Tickets', to: '/admin/tickets' },

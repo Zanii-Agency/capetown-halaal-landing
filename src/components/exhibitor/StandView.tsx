@@ -19,7 +19,8 @@ interface MapData {
   stalls: MapStallRaw[]
   grid: { cols: number; rows: number }
   zones: { label: string; col: number; row: number; w: number; h: number }[]
-  mine: string | null
+  /** The vendor's allocated booth codes (multi-booth). Empty array = unallocated. */
+  mine: string[]
   placed: boolean
   you: { code: string; zone: string } | null
   counts: { allocated: number; total: number }
@@ -61,7 +62,7 @@ export default function StandView() {
     )
   }
 
-  if (!data.mine) {
+  if (!data.mine || data.mine.length === 0) {
     return (
       <div className="rounded-2xl border border-[#E5DCC4] bg-white p-8 text-center">
         <div className="max-w-sm mx-auto">
@@ -114,7 +115,7 @@ export default function StandView() {
         mode="vendor"
         booths={booths}
         grid={data.grid}
-        mineCode={data.mine}
+        mineCodes={data.mine}
       />
 
       <a

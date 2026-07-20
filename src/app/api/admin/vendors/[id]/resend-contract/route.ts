@@ -8,11 +8,11 @@
  */
 
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendZaniiMail } from '@/lib/mail/zanii-sender'
 import { renderTemplate } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -21,17 +21,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
+  const { user } = gate
 
   const db = createAdminClient()
-  const { data: adminUser } = await db.from('admin_users').select('id, role').eq('id', user.id).maybeSingle()
-  if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  const role = ((adminUser as { role?: string }).role || 'operator').toLowerCase()
-  if (!['owner', 'operator'].includes(role)) {
-    return NextResponse.json({ error: 'insufficient_role' }, { status: 403 })
-  }
 
   const { data: app } = await db
     .from('vendor_applications')

@@ -18,7 +18,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { classifyIntent, intentFaqKeys, Intent, IntentResult } from './festival-brain/intents'
-import { matchFaq, buildGroundingContext, FaqEntry } from './festival-brain/faq'
+import { matchFaq, buildGroundingContext, FaqEntry, FAQ, FaqKey } from './festival-brain/faq'
 import {
   buildSystemPrompt,
   stripEmDashes,
@@ -69,6 +69,16 @@ export interface BrainResult {
 const HOLDING_MESSAGE =
   "Let me get Samreen on this, she will reply within a few hours."
 
+// Vendor-operational FAQ keys that must NOT serve on the PUBLIC surface, at
+// EITHER layer: not as a canonical short-circuit answer, and not as LLM
+// grounding. These carry stall prices / operational portal detail that belongs
+// only inside the exhibitor portal (Taona's scope rule + PUBLIC_VENDOR_SCOPE).
+// 'vendor_apply' is deliberately NOT here: telling people HOW to apply is
+// allowed publicly. (KT #323 — a public-vs-vendor wall must hold at the
+// grounding layer too, not just the short-circuit; loosening Step 2 exposed
+// that the grounding still leaked stall_sizes prices through the LLM.)
+const VENDOR_ONLY_FAQ = new Set<string>(['halaal_cert', 'stall_sizes', 'electricity'])
+
 const client = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null
 
 /**
@@ -87,10 +97,18 @@ function isIdentityQuestion(message: string): boolean {
 
 /**
  * Look up wa_messages to decide if this is a first-contact conversation
- * (zero outbound from us in the last 24h to this wa_id).
+ * (zero outbound from us in the last 24h to this phone number).
  *
- * Defensive: if the table is missing or the env is not wired, default to true
- * so we err on the side of identifying ourselves.
+ * NOTE: the inbound sender's E.164 phone is stored on wa_messages as `wa_phone`
+ * (see supabase-migration-whatsapp-bot-consolidated.sql). There is NO `wa_id`
+ * column. Querying the wrong column makes Supabase return an error, the catch
+ * fires, and we default to first-contact=true on EVERY turn — which appends the
+ * Zanii sign-off to every reply, not just the first. (Root cause of KT bot
+ * sign-off spam.)
+ *
+ * Defensive: if the env is not wired we default to true (err toward identifying
+ * ourselves). A genuine query error is now logged, not silently treated as
+ * first-contact.
  */
 async function isFirstContactByWaId(waId: string): Promise<boolean> {
   try {
@@ -102,16 +120,20 @@ async function isFirstContactByWaId(waId: string): Promise<boolean> {
     const { count, error } = await sb
       .from('wa_messages')
       .select('id', { count: 'exact', head: true })
-      .eq('wa_id', waId)
+      .eq('wa_phone', waId)
       .eq('direction', 'out')
       .gte('created_at', since)
 
     if (error) {
-      // Table missing or RLS denied: be safe, sign off
+      // Surface the real error rather than silently defaulting to a wrong
+      // "first contact = true". Still fail safe (sign off) so we identify
+      // ourselves if the lookup is genuinely unavailable.
+      console.error('[festival-brain] isFirstContactByWaId query error', error)
       return true
     }
     return (count ?? 0) === 0
-  } catch {
+  } catch (err) {
+    console.error('[festival-brain] isFirstContactByWaId threw', err)
     return true
   }
 }
@@ -119,6 +141,19 @@ async function isFirstContactByWaId(waId: string): Promise<boolean> {
 /**
  * Record an escalation. The portal surfaces these in the "Needs You" queue.
  * Defensive: never throw to the caller.
+ *
+ * SCHEMA WARNING (needs live check): no migration in this repo defines the
+ * `brain_escalations` table, so its real column names cannot be confirmed from
+ * source. The other table in this file (wa_messages) stores the sender phone as
+ * `wa_phone`, NOT `wa_id` — so the `wa_id` field written below is very likely
+ * the wrong column name. If `brain_escalations` does not have a `wa_id` column,
+ * this insert silently fails and escalations never reach the "Needs You" queue.
+ * ACTION: verify the live `brain_escalations` schema (e.g.
+ *   select column_name from information_schema.columns
+ *   where table_name = 'brain_escalations';)
+ * and rename `wa_id` here to match (likely `wa_phone` or `phone`). Until then,
+ * insert errors are LOGGED below instead of being swallowed, so a column
+ * mismatch is visible in the bot logs rather than failing silently.
  */
 async function escalateToHuman(opts: {
   waId?: string
@@ -129,7 +164,9 @@ async function escalateToHuman(opts: {
   try {
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return
     const sb = createAdminClient()
-    await sb.from('brain_escalations').insert({
+    // TODO(live-schema): confirm column name for the sender phone on
+    // brain_escalations and fix the key below if it is not `wa_id`.
+    const { error } = await sb.from('brain_escalations').insert({
       wa_id: opts.waId ?? null,
       message: opts.message,
       intent: opts.intent.intent,
@@ -137,8 +174,14 @@ async function escalateToHuman(opts: {
       reason: opts.reason,
       created_at: new Date().toISOString(),
     })
-  } catch {
-    // brain_escalations table may not exist yet in this env. Silent.
+    if (error) {
+      // Do not silently lose escalations. A column mismatch (e.g. wa_id vs
+      // wa_phone) or a missing table surfaces here instead of vanishing.
+      console.error('[festival-brain] escalateToHuman insert error', error)
+    }
+  } catch (err) {
+    // brain_escalations table may not exist yet in this env. Log, never throw.
+    console.error('[festival-brain] escalateToHuman threw', err)
   }
 }
 
@@ -220,9 +263,18 @@ export async function askFestivalBrain(
   // the exhibitor portal. Drop the hit so we fall through to the LLM step, which
   // carries the PUBLIC_VENDOR_SCOPE deflection. ('vendor_apply' stays: telling
   // people HOW to apply is allowed on the public site.)
-  const VENDOR_ONLY_FAQ = new Set<string>(['halaal_cert', 'stall_sizes', 'electricity'])
   if (faqHit && context.surface !== 'vendor' && VENDOR_ONLY_FAQ.has(faqHit.key)) {
     faqHit = null
+  }
+  // Intent-scoped FAQ gate (KT #206651 P1.2). matchFaq and the intent classifier
+  // score independently and only usually agree; when they disagree the FAQ fires
+  // off-topic — the production transcripts show a payment-timing question answered
+  // with festival dates, and an instalment question answered with payment methods.
+  // Require the winning FAQ key to belong to the classified intent before it may
+  // short-circuit; otherwise fall through to the grounded LLM.
+  if (faqHit) {
+    const allowed = new Set(intentFaqKeys(intent.intent))
+    if (allowed.size > 0 && !allowed.has(faqHit.key)) faqHit = null
   }
   const isFirstContact =
     context.forceFirstContact ?? (context.waId ? await isFirstContactByWaId(context.waId) : true)
@@ -246,13 +298,23 @@ export async function askFestivalBrain(
     }
   }
 
-  // Step 2: low confidence => escalate.
-  if (intent.confidence < 0.6) {
+  // Step 2: only escalate pre-LLM when there is genuinely NO usable input.
+  //
+  // The old gate escalated every `intent.confidence < 0.6` message to a human
+  // before the LLM ever ran. Given the classifier math (a single-pattern hit
+  // scores 0.55, and ANY unmatched question defaults to general_inquiry @ 0.30),
+  // that bounced the overwhelming majority of real questions to Samreen instead
+  // of answering them. Now that the LLM is grounded with HARD FACTS + a hard
+  // wall that defers to support@ for anything it does not know, low confidence
+  // is a signal for WHICH grounding to attach, not a reason to refuse to answer.
+  // Explicit human_request (Step 0b) and spam (Step 0c) still escalate above.
+  // (KT #322)
+  if (!message.trim()) {
     await escalateToHuman({
       waId: context.waId,
       message,
       intent,
-      reason: `confidence ${intent.confidence.toFixed(2)} below 0.6`,
+      reason: 'empty inbound message, nothing to answer',
     })
     return {
       message: postProcess(HOLDING_MESSAGE),
@@ -285,7 +347,19 @@ export async function askFestivalBrain(
     }
   }
 
-  const grounding = buildGroundingContext(intentFaqKeys(intent.intent))
+  // FULL-CONTEXT GROUNDING: inject the ENTIRE FAQ every turn, not just the
+  // classified intent's keys. The whole FAQ is ~3k tokens (fits the window 60x
+  // over), so there is no reason to retrieve a subset — a keyword/intent miss was
+  // the #1 cause of the bot deferring a question it actually had the answer to.
+  // The model sees every fact and can always answer what is covered. Still obeys
+  // the public/vendor wall: on the public surface, vendor-operational keys (stall
+  // prices, electricity, halaal-cert detail) are stripped so they never leak past
+  // PUBLIC_VENDOR_SCOPE. (Supersedes the intent-scoped grounding, KT #323.)
+  let groundingKeys = Object.keys(FAQ) as FaqKey[]
+  if (context.surface !== 'vendor') {
+    groundingKeys = groundingKeys.filter((k) => !VENDOR_ONLY_FAQ.has(k))
+  }
+  const grounding = buildGroundingContext(groundingKeys)
   let system = buildSystemPrompt(intent.intent, grounding, context.surface)
   if (context.extraSystem && context.extraSystem.trim()) {
     system = `${system}\n\n=== ABOUT THE SENDER ===\n${context.extraSystem.trim()}`
@@ -302,6 +376,7 @@ export async function askFestivalBrain(
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 280,
+      temperature: 0,
       system,
       messages: llmMessages,
     })

@@ -5,27 +5,20 @@
 // be marked paid — otherwise we have nothing to confirm.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { sendVendorPaymentEmail } from '@/lib/payments/confirm'
 import { computeVendorPricing } from '@/lib/payments/pricing'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
 
   const db = createAdminClient()
-  const { data: adminUser } = await db
-    .from('admin_users')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
-  if (!adminUser) return NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
   const applicationId = String(body.applicationId || '').trim()

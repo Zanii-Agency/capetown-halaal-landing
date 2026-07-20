@@ -34,21 +34,31 @@ export async function GET() {
 
   const byCode = new Map<string, { ownerId: string; business_name: string; status: 'held' | 'allocated'; publishStall: boolean }>()
   for (const a of (apps || []) as Row[]) {
-    const { stall, status } = parseAllocation(a.admin_notes)
-    if (!stall) continue
+    const { stalls, status } = parseAllocation(a.admin_notes)
+    if (stalls.length === 0) continue
     const state = parsePortalState(a.admin_notes)
     // publish_stall is an optional opt-in flag on profile. Optional-chained
     // so missing flag = false (fail-closed per Law 2).
     const publishStall = Boolean((state.profile as (typeof state.profile & { publish_stall?: boolean }) | undefined)?.publish_stall)
-    byCode.set(stall, {
-      ownerId: a.id,
-      business_name: a.business_name,
-      status: status === 'held' ? 'held' : 'allocated',
-      publishStall,
-    })
+    // Multi-booth: every code the vendor holds maps back to them.
+    for (const stall of stalls) {
+      byCode.set(stall, {
+        ownerId: a.id,
+        business_name: a.business_name,
+        status: status === 'held' ? 'held' : 'allocated',
+        publishStall,
+      })
+    }
   }
 
-  const mine = parseAllocation(myAdminNotes).stall
+  // Multi-booth: `mine` is the FULL list of the signed-in vendor's codes, so
+  // a vendor holding several stalls sees every one of them highlighted on the
+  // "you are here" map. `minePrimary` keeps the first code for the single
+  // "you are here" anchor (zone label, placement check).
+  const myAlloc = parseAllocation(myAdminNotes)
+  const mine = myAlloc.stalls
+  const minePrimary = myAlloc.stall
+  const mineSet = new Set(mine)
 
   const stalls = STALL_LIST.map((s) => {
     const occ = byCode.get(s.code)
@@ -68,17 +78,20 @@ export async function GET() {
     return {
       code: s.code, type: s.type, num: s.num, col: s.col, row: s.row, w: s.w, h: s.h,
       status: (occ ? occ.status : 'available') as 'available' | 'held' | 'allocated',
+      // Multi-booth: flag EVERY one of the signed-in vendor's codes as theirs,
+      // not just the first. The UI highlights all `mine` stalls.
+      mine: mineSet.has(s.code),
       occupant,
     }
   })
 
-  const myStall = mine ? STALL_LIST.find((s) => s.code === mine) : null
+  const myStall = minePrimary ? STALL_LIST.find((s) => s.code === minePrimary) : null
   return NextResponse.json({
     stalls,
     grid: STALL_GRID,
     zones: STALL_ZONES,
     mine,
-    placed: !!myStall,
+    placed: mine.length > 0,
     you: myStall ? { code: myStall.code, zone: TYPE_META[myStall.type as StallType].label } : null,
     counts: { allocated: byCode.size, total: STALL_LIST.length },
   })

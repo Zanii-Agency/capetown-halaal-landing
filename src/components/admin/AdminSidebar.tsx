@@ -2,9 +2,9 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, UserX, ShieldCheck, Shield, Eye, Menu, X, Inbox, Megaphone, Users, Mail, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Tent, ArrowLeftRight, Bell } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -29,6 +29,8 @@ const navGroups: NavGroup[] = [
     items: [
       { name: 'Applications', href: '/admin/applications', icon: FileText },
       { name: 'Allocation', href: '/admin/allocation', icon: Map },
+      { name: 'Outside Vendors', href: '/admin/outside', icon: Tent },
+      { name: 'Stall Changes', href: '/admin/stall-changes', icon: ArrowLeftRight },
       { name: 'Vendors', href: '/admin/vendors', icon: Users },
       { name: 'People', href: '/admin/people', icon: IdCard },
       { name: 'Documents', href: '/admin/documents', icon: Files },
@@ -39,10 +41,8 @@ const navGroups: NavGroup[] = [
     label: 'COMMUNICATIONS',
     items: [
       { name: 'Inbox', href: '/admin/customer-inbox', icon: MessageCircle },
-      { name: 'Bot Inbox', href: '/admin/bot-inbox', icon: Inbox },
-      { name: 'Support Inbox', href: '/admin/support-inbox', icon: Mail },
+      { name: 'Needs You', href: '/admin/customer-inbox?view=needs', icon: Bell },
       { name: 'Broadcast', href: '/admin/broadcast', icon: Megaphone },
-      { name: 'Follow Up', href: '/admin/follow-up', icon: UserX },
       { name: 'Contacts', href: '/admin/contacts', icon: BookOpen },
     ],
   },
@@ -78,11 +78,13 @@ const ROLE_BADGE_STYLE: Record<AdminRole, { label: string; cls: string; Icon: ty
 
 export function AdminSidebar({ role, email }: AdminSidebarProps) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
   const badge = ROLE_BADGE_STYLE[role]
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
   const [supportUnread, setSupportUnread] = useState(0)
+  const [needsResponse, setNeedsResponse] = useState(0)
   const [pendingApps, setPendingApps] = useState<number | null>(null)
   // Collapsed state for desktop (lg+) sidebar. Persisted to localStorage so the
   // operator's preference survives reloads. Mobile drawer is unaffected.
@@ -108,24 +110,25 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
     setMobileOpen(false)
   }, [pathname])
 
-  // Poll support inbox unread count for the sidebar badge. Cheap query (open
-  // threads only), fires every 60s when the tab is visible. Best-effort —
-  // sidebar still works if the call fails.
+  // Poll the unified inbox unread count for the sidebar badge. Fires every 60s
+  // when the tab is visible. Best-effort, sidebar still works if it fails.
   useEffect(() => {
     let cancelled = false
     const tick = async () => {
       if (document.hidden) return
       try {
-        const res = await fetch('/api/admin/support-inbox/threads?status=open')
+        const res = await fetch('/api/admin/inbox/unified?channel=all')
         if (!res.ok) return
         const j = await res.json()
         if (cancelled) return
-        const total = (j.threads || []).reduce((s: number, t: { unread_count?: number }) => s + (t.unread_count || 0), 0)
-        setSupportUnread(total)
+        setSupportUnread(j.counts?.unread || 0)
+        setNeedsResponse(j.counts?.needs_response || 0)
       } catch { /* swallow */ }
     }
     tick()
-    const id = setInterval(tick, 60000)
+    // 30s (was 60s) so the Needs You / unread badges track the inbox page more
+    // closely — a 60s badge visibly lagged the live queue count.
+    const id = setInterval(tick, 30000)
     return () => { cancelled = true; clearInterval(id) }
   }, [])
 
@@ -242,8 +245,18 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
               </p>
             )}
             {group.items.map((item) => {
-              const isActive = isItemActive(item.href)
-              const badgeNum = item.href === '/admin/support-inbox' ? supportUnread
+              // Inbox and Needs You share the /admin/customer-inbox path and are
+              // told apart by the ?view=needs query (usePathname drops the query,
+              // so disambiguate with searchParams).
+              const onInbox = pathname.startsWith('/admin/customer-inbox')
+              const isNeedsView = searchParams.get('view') === 'needs'
+              const isActive = item.href.includes('view=needs')
+                ? (onInbox && isNeedsView)
+                : item.href === '/admin/customer-inbox'
+                  ? (onInbox && !isNeedsView)
+                  : isItemActive(item.href)
+              const badgeNum = item.href.includes('view=needs') ? needsResponse
+                : item.href === '/admin/customer-inbox' ? supportUnread
                 : item.href === '/admin/applications' ? pendingApps
                 : null
               return (
@@ -302,8 +315,10 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
       </nav>
 
       {/* Sidebar collapse toggle — dedicated row between nav and account
-          section. Always in the same position regardless of state. */}
-      <div className={cn('border-t border-neutral-200', collapsed ? 'px-2 py-2' : 'px-3 py-2')}>
+          section. Always in the same position regardless of state. Desktop
+          only: on mobile the sidebar is a full-width drawer, so collapsing
+          (which just narrows the md+ rail) is meaningless clutter. */}
+      <div className={cn('hidden md:block border-t border-neutral-200', collapsed ? 'px-2 py-2' : 'px-3 py-2')}>
         <button
           type="button"
           onClick={() => setCollapsed((c) => !c)}

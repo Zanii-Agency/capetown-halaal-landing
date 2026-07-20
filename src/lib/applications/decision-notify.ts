@@ -24,6 +24,9 @@ import { ApplicationRejected } from '@/lib/email/templates/ApplicationRejected'
 import { ApplicationInfoRequested } from '@/lib/email/templates/ApplicationInfoRequested'
 import { provisionExhibitorAccount } from '@/lib/exhibitor-auth'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
+import { findWaTemplate, renderWaTemplatePreview } from '@/lib/templates/wa-meta'
+import { parseAllocation } from '@/lib/stalls'
+import { updatePortalState } from '@/lib/portal-state'
 import type { createAdminClient } from '@/lib/supabase/admin'
 
 type AdminClient = ReturnType<typeof createAdminClient>
@@ -85,16 +88,29 @@ export async function notifyApplicationDecision({
     let res: { ok: boolean; error?: string } | undefined
 
     if (status === 'approved') {
-      // Reserve the booth + set payment_due_date = today + 30 days. Each vendor
-      // is approved on their own day, so each gets their own 30-day window.
+      // Reserve the booth + set the payment due date = today + 30 days. Each
+      // vendor is approved on their own day, so each gets their own 30-day
+      // window. There is NO payment_status / payment_due_date column on this
+      // Supabase project (DDL is blocked, CTH-DOCTRINE Law 8): payment state
+      // lives only in the base64 ⟦PORTAL⟧ marker on admin_notes. Write the
+      // due date + pending status there so the exhibitor portal (which reads
+      // state.payment?.due) actually shows it. Never downgrade a vendor who
+      // has already paid back to pending.
       const dueDate = new Date()
       dueDate.setDate(dueDate.getDate() + 30)
       const dueDateIso = dueDate.toISOString().slice(0, 10) // YYYY-MM-DD
-      const { error: payErr } = await admin
-        .from('vendor_applications')
-        .update({ payment_status: 'deferred', payment_due_date: dueDateIso })
-        .eq('id', id)
-      if (payErr) console.error('Payment defaults skipped (migration v5 pending?):', payErr.message)
+      try {
+        await updatePortalState(id, (s) => ({
+          ...s,
+          payment: {
+            ...(s.payment || {}),
+            status: s.payment?.status === 'paid' ? 'paid' : 'pending',
+            due: dueDateIso,
+          },
+        }))
+      } catch (e) {
+        console.error('[approve] payment due-date marker write failed:', (e as Error).message)
+      }
 
       // Create (or reset) the vendor's real portal account + temp password.
       let tempPassword = ''
@@ -143,8 +159,16 @@ export async function notifyApplicationDecision({
         const phone = (app.phone || app.whatsapp_number) as string | null
         if (phone) {
           const firstName = String(app.contact_name || '').trim().split(/\s+/)[0] || 'there'
-          const stallMatch = String(app.admin_notes || '').match(/⟦STALL:([^⟧]+)⟧/)
-          const stallCode = stallMatch ? stallMatch[1].trim() : 'to be confirmed shortly'
+          // Multi-booth: join the vendor's code list (strips any status suffix).
+          // {{2}} is embedded mid-sentence as "Your stall: {{2}}". When stalls
+          // are allocated we pass the code(s); when none are yet allocated we pass
+          // a full clause so the sentence reads cleanly ("Your stall: to be
+          // allocated and shared closer to the festival.") instead of a dangling
+          // "Your stall: to be confirmed shortly" fragment.
+          const allocatedCodes = parseAllocation(app.admin_notes as string).stalls
+          const stallCode = allocatedCodes.length
+            ? allocatedCodes.join(', ')
+            : 'to be allocated and shared closer to the festival'
           const e164 = toE164(phone)
           const wa = await sendTemplate(
             e164,
@@ -155,13 +179,19 @@ export async function notifyApplicationDecision({
           waSent = !wa.skipped
           waSkipped = wa.skipped
           // Paper-trail log so the auto-send is visible alongside broadcasts.
+          // Render from the canonical Meta-approved body (wa-meta.ts) so the
+          // inbox shows the real message text, not a hand-rolled fragment.
+          const spec = findWaTemplate('vendor_application_approved')
+          const loggedBody = spec
+            ? renderWaTemplatePreview(spec, { first_name: firstName, stall_code: stallCode })
+            : `Great news ${firstName}! Your stall application for Young at Heart Festival 2026 is approved. Your stall: ${stallCode}. We will share setup details and a payment link shortly.`
           try {
             await admin.from('wa_messages').insert({
               direction: 'out',
               wa_phone: e164.replace(/^\+/, ''),
               template_name: 'vendor_application_approved',
               category: 'utility',
-              body: `Great news ${firstName}! Your stall application... Your stall: ${stallCode}`,
+              body: loggedBody,
               status: wa.skipped ? 'failed' : 'sent',
               error: wa.skipped || null,
               provider_message_id: wa.messageId || null,
@@ -173,6 +203,21 @@ export async function notifyApplicationDecision({
         }
       } catch (e) {
         console.error('[approve] WA template send failed:', (e as Error).message)
+      }
+
+      // Follow-up: the "here is how to use it" message — tells the newly-approved
+      // vendor the TWO ways to manage their stall (WhatsApp + portal) with simple
+      // examples (template: vendor_welcome_options). Best-effort + gated: until
+      // Meta approves the template this skips and NEVER affects the approval flow.
+      try {
+        const phoneW = (app.phone || app.whatsapp_number) as string | null
+        if (phoneW) {
+          const fnW = String(app.contact_name || '').trim().split(/\s+/)[0] || 'there'
+          const wo = await sendTemplate(toE164(phoneW), 'vendor_welcome_options', [fnW], { category: 'utility' })
+          if (wo.skipped) console.warn('[approve] welcome_options skipped (template pending Meta approval?):', wo.skipped)
+        }
+      } catch (e) {
+        console.warn('[approve] welcome_options send failed (non-fatal):', (e as Error).message)
       }
 
       // Stamp the idempotency marker ONLY when the email actually went out, so a

@@ -10,6 +10,7 @@ import { ApplicationIncomplete } from '@/lib/email/templates/ApplicationIncomple
 import { ApplicationDelayNotice } from '@/lib/email/templates/ApplicationDelayNotice'
 import { PasswordReset } from '@/lib/email/templates/PasswordReset'
 import { Campaign } from '@/lib/email/templates/Campaign'
+import { VendorPaymentReminder } from '@/lib/email/templates/VendorPaymentReminder'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 
 export const maxDuration = 60
@@ -69,6 +70,19 @@ const SAMPLES = {
       cta: { label: 'Get Your Tickets →', href: 'https://tickets.youngatheart.co.za' },
       showEvent: true,
       signoff: 'See you there,',
+    }),
+  }),
+  payment_reminder: () => ({
+    subject: '[Preview] Reminder, your YAH Festival stall fee, Spice & Soul Kitchen',
+    react: VendorPaymentReminder({
+      contactName: 'Aisha Khan',
+      businessName: 'Spice & Soul Kitchen',
+      amount: 6500,
+      dueDate: '22 July 2026',
+      daysRemaining: 14,
+      invoiceUrl: 'https://cthalaal.co.za/exhibitor/portal/invoice',
+      payUrl: 'https://cthalaal.co.za/exhibitor/portal/payments',
+      weekNumber: 2,
     }),
   }),
 } as const

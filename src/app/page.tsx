@@ -8,7 +8,7 @@ import {
   Calendar, MapPin, Users, Building2, ArrowRight, ArrowUpRight,
   Utensils, ShoppingBag, Sparkles, Globe, Award, Clock,
   ChevronRight, Instagram, Facebook, Youtube,
-  Mail, Phone, Star, Ticket, Store, Play, ChevronDown, Zap, X, Send, LogIn
+  Mail, Phone, Star, Ticket, Store, Play, ChevronDown, Zap, LogIn
 } from 'lucide-react'
 import { Logo, LogoMark } from '@/components/logo'
 import { HeroSection } from '@/components/hero-section'
@@ -24,7 +24,6 @@ import { SponsorsSection } from '@/components/sponsors-section'
 import { GallerySection } from '@/components/gallery-section'
 import { SmileFMBanner } from '@/components/smile-fm-banner'
 import { GlowingLine } from '@/components/ui/floating-particles'
-import { toast } from 'sonner'
 
 // Images
 const IMAGES = {
@@ -108,7 +107,7 @@ function GalleryCard({ image, title, delay = 0 }: { image: string; title: string
     >
       <TiltCard className="group relative overflow-hidden rounded-2xl cursor-pointer">
         <ParallaxCard className="aspect-[4/3]" depth={30}>
-          <Image src={image} alt={title} fill className="object-cover transition-transform duration-700 group-hover:scale-110" />
+          <Image src={image} alt={title} fill sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" className="object-cover transition-transform duration-700 group-hover:scale-110" />
         </ParallaxCard>
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-500" />
         <div className="absolute bottom-0 left-0 right-0 p-6 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
@@ -146,151 +145,6 @@ function FeatureCard({ icon: Icon, title, description, delay = 0 }: { icon: Reac
         </div>
       </SpotlightCard>
     </motion.div>
-  )
-}
-
-// Contact Modal Component
-function ContactModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    subject: '',
-    message: ''
-  })
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSubmitting(true)
-
-    // Simulate form submission
-    await new Promise(resolve => setTimeout(resolve, 1000))
-
-    toast.success('Message sent successfully!', {
-      description: "We'll get back to you within 24 hours."
-    })
-
-    setIsSubmitting(false)
-    onClose()
-    setFormData({ name: '', email: '', subject: '', message: '' })
-  }
-
-  return (
-    <AnimatePresence>
-      {isOpen && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          onClick={onClose}
-        >
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-lg bg-neutral-900 border border-white/10 rounded-2xl p-6 shadow-2xl"
-          >
-            <button
-              onClick={onClose}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="mb-6">
-              <h3 className="text-2xl font-bold text-white mb-2">Get In Touch</h3>
-              <p className="text-neutral-400 text-sm">
-                Have questions about Young at Heart Festival 2026? We&apos;d love to hear from you.
-              </p>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-1">Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-[#cd2653]/50 transition-colors"
-                    placeholder="John Doe"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-1">Email</label>
-                  <input
-                    type="email"
-                    required
-                    value={formData.email}
-                    onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                    className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-[#cd2653]/50 transition-colors"
-                    placeholder="you@example.com"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-1">Subject</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.subject}
-                  onChange={(e) => setFormData(prev => ({ ...prev, subject: e.target.value }))}
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-[#cd2653]/50 transition-colors"
-                  placeholder="What's this about?"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-1">Message</label>
-                <textarea
-                  rows={4}
-                  required
-                  value={formData.message}
-                  onChange={(e) => setFormData(prev => ({ ...prev, message: e.target.value }))}
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-[#cd2653]/50 transition-colors resize-none"
-                  placeholder="Your message..."
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full py-3 bg-gradient-to-r from-[#cd2653] to-[#bf3026] rounded-xl font-semibold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Sending...
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    Send Message
-                  </>
-                )}
-              </button>
-            </form>
-
-            <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-center gap-6 text-sm text-neutral-400">
-              <a href="mailto:support@youngatheart.co.za" className="flex items-center gap-2 hover:text-white transition-colors">
-                <Mail className="w-4 h-4" />
-                support@youngatheart.co.za
-              </a>
-              <a href="tel:+27659435012" className="flex items-center gap-2 hover:text-white transition-colors">
-                <Phone className="w-4 h-4" />
-                065 943 5012
-              </a>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
   )
 }
 
@@ -355,7 +209,6 @@ function LoadingScreen() {
 
 export default function HomePage() {
   const [isLoaded, setIsLoaded] = useState(false)
-  const [contactModalOpen, setContactModalOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
@@ -377,7 +230,6 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-white text-neutral-900">
-      <ContactModal isOpen={contactModalOpen} onClose={() => setContactModalOpen(false)} />
       <Spotlight />
 
       {/* Navigation */}
@@ -493,8 +345,19 @@ export default function HomePage() {
                   )
                 ))}
                 <a
+                  href="https://tickets.youngatheart.co.za"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="w-full mt-2 flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold text-white bg-gradient-to-r from-[#cd2653] to-[#bf3026] rounded-xl"
+                >
+                  <Ticket className="w-4 h-4" />
+                  Get Tickets
+                </a>
+                <a
                   href="/apply"
-                  className="w-full mt-2 flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium text-white bg-gradient-to-r from-[#cd2653] to-[#bf3026] rounded-xl sm:hidden"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="w-full flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium text-[#cd2653] border border-[#cd2653]/30 hover:bg-[#cd2653]/5 rounded-xl"
                 >
                   <Store className="w-4 h-4" />
                   Vendor Application
@@ -584,13 +447,13 @@ export default function HomePage() {
               <div className="absolute inset-0 bg-gradient-to-br from-[#cd2653]/20 to-[#f59e0b]/10 rounded-3xl blur-3xl" />
               <div className="relative grid grid-cols-2 gap-4">
                 <TiltCard className="aspect-square rounded-2xl overflow-hidden">
-                  <Image src="/about/festival-food.jpg" alt="Festival food" fill className="object-cover" />
+                  <Image src="/about/festival-food.jpg" alt="Festival food" fill sizes="(min-width: 1024px) 25vw, 50vw" className="object-cover" />
                 </TiltCard>
                 <TiltCard className="aspect-square rounded-2xl overflow-hidden mt-8">
-                  <Image src="/about/festival-crowd.jpg" alt="Festival crowd" fill className="object-cover" />
+                  <Image src="/about/festival-crowd.jpg" alt="Festival crowd" fill sizes="(min-width: 1024px) 25vw, 50vw" className="object-cover" />
                 </TiltCard>
                 <TiltCard className="col-span-2 aspect-video rounded-2xl overflow-hidden shadow-xl">
-                  <Image src={IMAGES.capetown} alt="Cape Town" fill className="object-cover" />
+                  <Image src={IMAGES.capetown} alt="Cape Town" fill sizes="(min-width: 1024px) 50vw, 100vw" className="object-cover" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex items-end p-6">
                     <div>
                       <p className="text-white font-bold text-xl">Youngsfield Military Base</p>
@@ -688,7 +551,9 @@ export default function HomePage() {
       {/* CTA Section */}
       <section className="py-16 md:py-24 relative overflow-x-clip">
         <div className="absolute inset-0">
-          <Image src={IMAGES.food4} alt="Food" fill className="object-cover" />
+          {/* Full-bleed CTA background — 100vw is correct here, unlike the
+              cards above where the implicit 100vw default was the bug. */}
+          <Image src={IMAGES.food4} alt="Food" fill sizes="100vw" className="object-cover" />
           <div className="absolute inset-0 bg-gradient-to-r from-neutral-950/95 via-neutral-950/90 to-neutral-950/95" />
         </div>
 

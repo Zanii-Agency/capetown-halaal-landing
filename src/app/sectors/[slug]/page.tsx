@@ -23,6 +23,17 @@ interface Vendor {
   business_description: string | null
   website: string | null
   instagram: string | null
+  logo_url: string | null
+  has_profile: boolean
+}
+
+function initials(name: string): string {
+  return (name || '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() || '')
+    .join('')
 }
 
 export default function SectorPage() {
@@ -98,7 +109,7 @@ export default function SectorPage() {
               </Link>
             </motion.div>
           ) : (
-            <div className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               {vendors.map((vendor, i) => {
                 const profSlug = (vendor.business_name || '')
                   .toLowerCase()
@@ -108,23 +119,30 @@ export default function SectorPage() {
                   .replace(/\s+/g, '-')
                   .replace(/-+/g, '-')
                   .slice(0, 80)
-                return (
-                  <motion.div
-                    key={vendor.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                  >
-                    <Link
-                      href={`/sectors/${slug}/${profSlug}`}
-                      className="block bg-white rounded-xl border border-neutral-200 p-6 hover:shadow-md transition-shadow"
-                    >
-                      <h3 className="text-lg font-bold text-neutral-900 mb-1">{vendor.business_name}</h3>
+                const card = (
+                  <div className="h-full bg-white rounded-xl border border-neutral-200 p-5 hover:shadow-md transition-shadow flex gap-4">
+                    {/* Logo (or branded initials fallback when not uploaded yet) */}
+                    {vendor.logo_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={vendor.logo_url}
+                        alt={`${vendor.business_name} logo`}
+                        className="w-14 h-14 rounded-lg object-contain bg-neutral-50 border border-neutral-100 flex-shrink-0"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-lg bg-[#cd2653]/10 text-[#cd2653] font-bold flex items-center justify-center flex-shrink-0">
+                        {initials(vendor.business_name)}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <h3 className="text-base font-bold text-neutral-900 mb-0.5 truncate">{vendor.business_name}</h3>
                       {vendor.business_description && (
-                        <p className="text-neutral-600 text-sm mb-3 line-clamp-2">{vendor.business_description}</p>
+                        <p className="text-neutral-600 text-sm mb-2 line-clamp-2">{vendor.business_description}</p>
                       )}
-                      <div className="flex items-center gap-4 text-sm text-[#cd2653]">
-                        <span className="hover:underline">View profile →</span>
+                      <div className="flex items-center gap-3 text-sm">
+                        {vendor.has_profile && (
+                          <span className="text-[#cd2653] hover:underline">View profile →</span>
+                        )}
                         {vendor.website && (
                           <span className="flex items-center gap-1 text-neutral-500">
                             <Globe className="w-3.5 h-3.5" /> Website
@@ -136,7 +154,25 @@ export default function SectorPage() {
                           </span>
                         )}
                       </div>
-                    </Link>
+                    </div>
+                  </div>
+                )
+                return (
+                  <motion.div
+                    key={vendor.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.04 }}
+                  >
+                    {/* Only vendors with a complete public profile have a detail
+                        page; the rest render as a non-linked card (no dead 404). */}
+                    {vendor.has_profile ? (
+                      <Link href={`/sectors/${slug}/${profSlug}`} className="block h-full">
+                        {card}
+                      </Link>
+                    ) : (
+                      card
+                    )}
                   </motion.div>
                 )
               })}

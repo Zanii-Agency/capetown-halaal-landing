@@ -68,6 +68,36 @@ function normalisedPhone(v: string | null | undefined): string {
   return v.replace(/\s+/g, '')
 }
 
+// The public /apply form stores socials nested under
+// special_requirements.social_media (a JSON string), NOT in the top-level
+// instagram/facebook/website columns. So every real applicant would otherwise
+// lose the social-completeness points. This reads from the SAME place the form
+// writes, accepting special_requirements as a JSON string or an already-parsed
+// object, and social_media as a free-text string or a {instagram,facebook,
+// website,...} object. Returns true if any social/website value is present.
+function hasSocialInSpecialRequirements(special: string | null | undefined): boolean {
+  if (special === null || special === undefined) return false
+  let parsed: unknown = special
+  if (typeof special === 'string') {
+    const trimmed = special.trim()
+    if (trimmed === '') return false
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      return false
+    }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return false
+  const social = (parsed as Record<string, unknown>).social_media
+  if (typeof social === 'string') return social.trim().length > 0
+  if (typeof social === 'object' && social !== null) {
+    return Object.values(social as Record<string, unknown>).some(
+      (v) => typeof v === 'string' && v.trim().length > 0
+    )
+  }
+  return false
+}
+
 export function scoreCompleteness(row: CompletenessInput): CompletenessResult {
   const breakdown: CompletenessBreakdown = {
     contact: hasText(row.contact_name),
@@ -76,7 +106,11 @@ export function scoreCompleteness(row: CompletenessInput): CompletenessResult {
     categories_present: Array.isArray(row.product_categories) && row.product_categories.length > 0,
     phone_valid_za: SA_MOBILE_RE.test(normalisedPhone(row.phone)),
     email_valid: typeof row.email === 'string' && EMAIL_RE.test(row.email.trim()),
-    has_social_or_web: hasText(row.instagram) || hasText(row.facebook) || hasText(row.website),
+    has_social_or_web:
+      hasText(row.instagram) ||
+      hasText(row.facebook) ||
+      hasText(row.website) ||
+      hasSocialInSpecialRequirements(row.special_requirements),
     // "answered, even empty string" -> we treat non-null/undefined as answered
     special_requirements_answered: row.special_requirements !== null && row.special_requirements !== undefined,
     booth_tier_set: hasText(row.preferred_booth_tier),

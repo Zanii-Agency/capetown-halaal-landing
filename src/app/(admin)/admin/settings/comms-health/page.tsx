@@ -1,18 +1,19 @@
 'use client'
 
-// Live Comms Health board. Polls three admin-only probe routes every 30s and
+// Live Comms Health board. Polls the admin-only probe routes every 30s and
 // renders one pill per channel. Replaces the prior placeholder which hardcoded
 // status:'unknown' on every row. Each probe is read-only by construction:
 //   WhatsApp = Meta Graph fields read on the phone number
 //   Email    = Resend domains.list (no mail sent — Law 5 compliant)
-//   DGX      = OpenAI-compatible /models read on the vLLM endpoint
+//
+// The bot runs on Anthropic, not DGX, so the DGX probe is not surfaced here.
 //
 // Probes return {ok, status, latency_ms, error?, ...channel-specific fields}.
 // We render only what we have, never invent a green.
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, MessageCircle, Mail, Cpu, RefreshCw } from 'lucide-react'
+import { ArrowLeft, MessageCircle, Mail, RefreshCw } from 'lucide-react'
 
 type ProbeStatus = 'green' | 'amber' | 'red' | 'unknown'
 
@@ -35,15 +36,7 @@ interface EmailProbe extends ProbeBase {
   throttle_hits_note: string
 }
 
-interface DgxProbe extends ProbeBase {
-  tier_used: 'primary' | 'failover' | 'none'
-  primary_ok: boolean | null
-  failover_ok: boolean | null
-  last_run_at: string | null
-  last_run_note: string
-}
-
-type AnyProbe = WhatsappProbe | EmailProbe | DgxProbe
+type AnyProbe = WhatsappProbe | EmailProbe
 
 interface ChannelState<T extends AnyProbe> {
   loading: boolean
@@ -216,16 +209,13 @@ function HealthCard({
 export default function SettingsCommsHealthPage() {
   const wa = useProbe<WhatsappProbe>('/api/admin/comms-health/whatsapp')
   const em = useProbe<EmailProbe>('/api/admin/comms-health/email')
-  const dgx = useProbe<DgxProbe>('/api/admin/comms-health/dgx')
 
   const waStatus = probeStatus(wa)
   const emStatus = probeStatus(em)
-  const dgxStatus = probeStatus(dgx)
 
   const newestFetch = Math.max(
     wa.lastFetched ?? 0,
     em.lastFetched ?? 0,
-    dgx.lastFetched ?? 0,
   )
 
   return (
@@ -240,7 +230,7 @@ export default function SettingsCommsHealthPage() {
         <div>
           <h1 className="text-2xl font-bold text-neutral-900">Comms Health</h1>
           <p className="text-sm text-neutral-500 mt-1">
-            Live probes against WhatsApp, Email, and DGX. Polls every 30 seconds.
+            Live probes against WhatsApp and Email. Polls every 30 seconds.
           </p>
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-neutral-500">
@@ -249,7 +239,7 @@ export default function SettingsCommsHealthPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <HealthCard
           label="WhatsApp"
           Icon={MessageCircle}
@@ -271,26 +261,6 @@ export default function SettingsCommsHealthPage() {
           secondary_label="SMTP"
           secondary_value={em.data?.smtp_note ?? null}
           error={em.fetchError || em.data?.error || null}
-        />
-        <HealthCard
-          label="DGX"
-          Icon={Cpu}
-          description="Zanii inference, primary and failover."
-          status={dgxStatus}
-          latency_ms={dgx.data?.latency_ms ?? null}
-          primary_label="Tier in use"
-          primary_value={dgx.data?.tier_used ?? '-'}
-          secondary_label="Failover"
-          secondary_value={
-            dgx.data
-              ? dgx.data.failover_ok === null
-                ? 'not configured'
-                : dgx.data.failover_ok
-                  ? 'reachable'
-                  : 'down'
-              : null
-          }
-          error={dgx.fetchError || dgx.data?.error || null}
         />
       </div>
     </div>

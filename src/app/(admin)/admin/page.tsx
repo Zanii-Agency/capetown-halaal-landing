@@ -104,6 +104,7 @@ export default function AdminDashboard() {
   const [recentApps, setRecentApps] = useState<VendorApplication[]>([])
   const [recentCount, setRecentCount] = useState(0)
   const [estimatedRevenue, setEstimatedRevenue] = useState(0)
+  const [moneyIn, setMoneyIn] = useState<{ total: number; tickets: number; stalls: number } | null>(null)
   const [categoryBreakdown, setCategoryBreakdown] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -114,10 +115,11 @@ export default function AdminDashboard() {
     setLoading(true)
     setError(false)
 
-    const [statsRes, ticketRes, appsRes] = await Promise.all([
+    const [statsRes, ticketRes, appsRes, financeRes] = await Promise.all([
       fetchWithRetry('/api/admin/stats'),
       fetchWithRetry('/api/admin/tickets'),
       fetchWithRetry('/api/applications?status=pending'),
+      fetchWithRetry('/api/admin/finance'),
     ])
 
     const isAuthError =
@@ -162,6 +164,19 @@ export default function AdminDashboard() {
       }
     }
 
+    if (financeRes?.ok) {
+      try {
+        const data = await financeRes.json()
+        const s = data.stats || {}
+        // Total money in = vendor stall fees + ticket sales (one figure, matches
+        // the Finance page so the home card and Finance never disagree).
+        setMoneyIn({ total: s.total_money_in || 0, tickets: s.ticket_revenue || 0, stalls: s.total_revenue || 0 })
+        anyData = true
+      } catch (e) {
+        console.warn('Failed to parse finance response:', e)
+      }
+    }
+
     if (!anyData) {
       setError(true)
     }
@@ -175,15 +190,21 @@ export default function AdminDashboard() {
 
   const chartData = useMemo(() => {
     if (!ticketStats?.salesByDate) return []
+    let runningRevenue = 0
+    let runningTickets = 0
     return Object.entries(ticketStats.salesByDate)
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-21)
-      .map(([date, d]) => ({
-        date: formatDate(date),
-        revenue: d.revenue,
-        tickets: d.tickets,
-        orders: d.orders,
-      }))
+      .map(([date, d]) => {
+        runningRevenue += d.revenue
+        runningTickets += d.tickets
+        return {
+          date: formatDate(date),
+          revenue: runningRevenue,
+          tickets: runningTickets,
+          orders: d.orders,
+        }
+      })
   }, [ticketStats])
 
   const pipelineData = useMemo(() => {
@@ -280,73 +301,64 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Primary KPI Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Link href="/admin/tickets" className="bg-white rounded-xl border border-neutral-200 p-6 hover:border-neutral-300 hover:shadow-sm transition-all group">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Revenue</span>
-            <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
-              <DollarSign className="w-5 h-5 text-green-600" />
-            </div>
+      {/* Hero Metric */}
+      <Link href="/admin/finance" className="block bg-white rounded-xl border border-neutral-200 p-6 hover:border-neutral-300 hover:shadow-sm transition-all group">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Total Money In</span>
+          <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
+            <DollarSign className="w-5 h-5 text-green-600" />
           </div>
-          <p className="text-3xl font-bold text-neutral-900 tracking-tight">{formatCurrency(ticketStats?.totalRevenue || 0)}</p>
-          {chartData.length > 0 && (
-            <div className="mt-3 h-12">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="sparklineGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#22c55e" stopOpacity={0.2} />
-                      <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <Area type="monotone" dataKey="revenue" stroke="#22c55e" strokeWidth={1.5} fill="url(#sparklineGrad)" dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-          <p className="text-xs text-neutral-400 mt-2">{ticketStats?.totalOrders || 0} orders</p>
+        </div>
+        <p className="text-4xl font-bold text-neutral-900 tracking-tight">{formatCurrency(moneyIn?.total ?? ticketStats?.totalRevenue ?? 0)}</p>
+        {chartData.length > 0 && (
+          <div className="mt-3 h-12">
+            <ResponsiveContainer width="100%" height={48}>
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="sparklineGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#22c55e" stopOpacity={0.2} />
+                    <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area type="monotone" dataKey="revenue" stroke="#22c55e" strokeWidth={1.5} fill="url(#sparklineGrad)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <p className="text-xs text-neutral-400 mt-2">
+          {moneyIn
+            ? `Tickets ${formatCurrency(moneyIn.tickets)} · Stalls ${formatCurrency(moneyIn.stalls)}`
+            : `${ticketStats?.totalOrders || 0} orders`}
+        </p>
+      </Link>
+
+      {/* Supporting Strip */}
+      <div className="grid grid-cols-3 divide-x divide-neutral-100 rounded-xl border border-neutral-200 bg-white">
+        <Link href="/admin/tickets" className="px-4 py-3 hover:bg-neutral-50 transition-colors group">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Ticket className="w-3.5 h-3.5 text-blue-600" />
+            <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">Tickets Sold</span>
+          </div>
+          <p className="text-lg font-bold text-neutral-900">{ticketStats?.totalTickets || 0}</p>
+          <p className="text-[11px] text-neutral-400 mt-0.5">Avg {formatCurrency(avgOrderValue)}/order</p>
         </Link>
 
-        <Link href="/admin/applications?status=pending" className="bg-white rounded-xl border border-amber-200 p-6 hover:border-amber-300 hover:shadow-sm transition-all group">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Pending Applications</span>
-            <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
-              <Users className="w-5 h-5 text-amber-600" />
-            </div>
+        <Link href="/admin/applications?status=approved" className="px-4 py-3 hover:bg-neutral-50 transition-colors group">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Users className="w-3.5 h-3.5 text-green-600" />
+            <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">Approved</span>
           </div>
-          <p className="text-3xl font-bold text-amber-700 tracking-tight">{vendorStats?.pending || 0}</p>
-          <p className="text-xs text-amber-600 mt-2">Needs review</p>
-        </Link>
-      </div>
-
-      {/* Secondary KPI Grid */}
-      <div className="grid grid-cols-3 gap-4">
-        <Link href="/admin/tickets" className="bg-white rounded-xl border border-neutral-200 p-4 hover:border-neutral-300 hover:shadow-sm transition-all group">
-          <div className="flex items-center gap-2 mb-2">
-            <Ticket className="w-4 h-4 text-blue-600" />
-            <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Tickets Sold</span>
-          </div>
-          <p className="text-xl font-bold text-neutral-900">{ticketStats?.totalTickets || 0}</p>
-          <p className="text-xs text-neutral-400 mt-1">Avg {formatCurrency(avgOrderValue)}/order</p>
+          <p className="text-lg font-bold text-neutral-900">{vendorStats?.approved || 0}</p>
+          <p className="text-[11px] text-neutral-400 mt-0.5">Confirmed vendors</p>
         </Link>
 
-        <Link href="/admin/applications?status=approved" className="bg-white rounded-xl border border-neutral-200 p-4 hover:border-neutral-300 hover:shadow-sm transition-all group">
-          <div className="flex items-center gap-2 mb-2">
-            <Users className="w-4 h-4 text-green-600" />
-            <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Approved</span>
+        <div className="px-4 py-3">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Activity className="w-3.5 h-3.5 text-neutral-600" />
+            <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">Conversion</span>
           </div>
-          <p className="text-xl font-bold text-neutral-900">{vendorStats?.approved || 0}</p>
-          <p className="text-xs text-neutral-400 mt-1">Confirmed vendors</p>
-        </Link>
-
-        <div className="bg-white rounded-xl border border-neutral-200 p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Activity className="w-4 h-4 text-neutral-600" />
-            <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Conversion</span>
-          </div>
-          <p className="text-xl font-bold text-neutral-900">{conversionRate.toFixed(0)}%</p>
-          <p className="text-xs text-neutral-400 mt-1">{ticketStats?.failedCount || 0} failed</p>
+          <p className="text-lg font-bold text-neutral-900">{conversionRate.toFixed(0)}%</p>
+          <p className="text-[11px] text-neutral-400 mt-0.5">{ticketStats?.failedCount || 0} failed</p>
         </div>
       </div>
 

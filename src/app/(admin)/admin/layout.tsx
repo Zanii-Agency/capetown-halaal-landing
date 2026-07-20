@@ -5,7 +5,6 @@ import { getRole } from '@/lib/admin-rbac'
 import type { AdminRole } from '@/lib/admin-rbac'
 import { AdminSidebar } from '@/components/admin/AdminSidebar'
 import { CommandK } from '@/components/admin/CommandK'
-import { InteractiveTour } from '@/components/admin/InteractiveTour'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,7 +56,6 @@ export default async function AdminLayout({
         {children}
       </main>
       <CommandK />
-      <InteractiveTour email={email} />
     </div>
   )
 }

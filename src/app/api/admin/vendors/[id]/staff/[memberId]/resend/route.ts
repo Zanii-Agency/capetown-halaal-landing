@@ -13,6 +13,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { sendTicket, toE164 } from '@/lib/whatsapp'
 import { WP_ORIGIN } from '@/lib/woocommerce'
+import { assertRole } from '@/lib/admin-rbac'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const db = createAdminClient()
   const { data: adminUser } = await db.from('admin_users').select('id, role').eq('id', user.id).maybeSingle()
   if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+
+  // Role gate: resending a staff badge sends a live WhatsApp — owner/operator only.
+  try {
+    await assertRole(user.id, ['owner', 'operator'])
+  } catch {
+    return NextResponse.json({ error: 'insufficient_role' }, { status: 403 })
+  }
 
   const { data: appRow } = await db.from('vendor_applications')
     .select('admin_notes, business_name, contact_name, phone')

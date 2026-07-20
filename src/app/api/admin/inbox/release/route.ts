@@ -8,33 +8,16 @@
  */
 
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireOperator } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-async function requireAdmin(): Promise<{ userId: string } | null> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return null
-  const admin = createAdminClient()
-  const { data } = await admin
-    .from('admin_users')
-    .select('id')
-    .eq('id', user.id)
-    .limit(1)
-  if (!data || data.length === 0) return null
-  return { userId: user.id }
-}
-
 export async function POST(req: Request) {
-  const session = await requireAdmin()
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // Mutates wa_threads (clears the human-handover marker). Owner/operator only.
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
 
   let payload: { thread_id?: string }
   try {

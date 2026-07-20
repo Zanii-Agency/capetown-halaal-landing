@@ -4,11 +4,17 @@
 // that embeds the document in an iframe so the operator never leaves the
 // admin shell to view a vendor doc or ticket.
 //
-// FALLBACK: some upstream PDFs (FooEvents on the WP server) ship with
-// X-Frame-Options: SAMEORIGIN and refuse to render inside our iframe.
-// We detect the failure path two ways: an onError event from the iframe,
-// or the operator clicking "Open in new tab" as the escape hatch. Either
-// way, the drawer keeps working and the user is one click from the file.
+// All `url`s handed to this drawer are SAME-ORIGIN proxy routes that stream
+// the PDF bytes through our domain (the admin contract route, the vendor-doc
+// route, and the tickets proxy). Streaming the bytes same-origin is what lets
+// Chrome's built-in PDF viewer render the file inline instead of showing
+// "This page has been blocked" (which happens when an iframe follows a 302 to
+// a cross-origin Supabase/WordPress URL).
+//
+// We intentionally do NOT sandbox the iframe: the same-origin bytes are our
+// own trusted output, and Chrome's PDF plugin will not render inside an
+// over-restricted sandbox. The "Open in new tab" link stays as an escape
+// hatch, and an onError still flips us to the fallback panel.
 
 import { useEffect, useState } from 'react'
 import { ExternalLink, X, AlertCircle } from 'lucide-react'
@@ -96,7 +102,6 @@ export function DocViewerDrawer({ open, url, label, holder, onClose }: DocViewer
               src={url}
               title={label}
               loading="lazy"
-              sandbox="allow-scripts allow-same-origin"
               className="w-full h-full bg-white"
               onError={() => setIframeError(true)}
             />

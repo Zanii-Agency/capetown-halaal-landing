@@ -148,6 +148,34 @@ export async function sendText(to: string, body: string): Promise<SendResult> {
   return extractMessageId(data, waId)
 }
 
+// --- Free-form media (document/image), only valid inside the 24h window ---
+// Uploads the bytes to the WhatsApp media endpoint, then sends a media message.
+// Gated by the same 24h-window/consent check as sendText.
+export async function sendMedia(
+  to: string,
+  opts: { bytes: Buffer | Uint8Array; mimeType: string; filename: string; caption?: string; kind: 'document' | 'image' },
+): Promise<SendResult> {
+  const waId = toWaId(to)
+  const gate = await canSend(toE164(to), { type: 'text' })
+  if (!gate.allowed) return { messageId: '', to: waId, skipped: gate.reason }
+  let mediaId: string
+  try {
+    mediaId = await uploadMedia(opts.bytes, opts.mimeType, opts.filename)
+  } catch (e) {
+    return { messageId: '', to: waId, skipped: `media upload failed: ${(e as Error).message}` }
+  }
+  const media: Record<string, unknown> = { id: mediaId }
+  if (opts.kind === 'document') media.filename = opts.filename
+  if (opts.caption) media.caption = opts.caption
+  const data = await waFetch(`${WA_PHONE_ID}/messages`, {
+    messaging_product: 'whatsapp',
+    to: waId,
+    type: opts.kind,
+    [opts.kind]: media,
+  })
+  return extractMessageId(data, waId)
+}
+
 // --- Approved template (business-initiated) ---
 // `bodyParams` fill the {{1}}, {{2}}... in order. `headerMedia` attaches a
 // document/image to a template that has a media header (e.g. the QR ticket).
@@ -236,6 +264,71 @@ export async function sendTicket(args: {
   )
 }
 
+// --- Resolve a Meta media id -> raw bytes (server-only, token-gated) ---
+// Meta media ids are short-lived (~1h TTL): you first GET the media id to get a
+// signed download URL, then fetch that URL with the bearer token. This is the
+// same two-step the admin inbox media proxy does on demand; centralised here so
+// the webhook can ALSO call it at receipt time to copy the bytes into Storage
+// before the id expires. Returns null (never throws) so callers can treat it as
+// best-effort.
+// Defense-in-depth bounds (B6.1, 2026-06-23): a slow Meta endpoint or an
+// oversized upload must never hang the function or buffer 100MB into memory.
+// Both fetches get a hard ~3s timeout via AbortSignal; the byte fetch is also
+// capped at ~5MB (checked first against Content-Length, then against the
+// actual buffer). Over-cap items bail to null so the caller keeps id-only
+// behavior and the proxy falls back to the live Meta id (~1h TTL).
+const WA_MEDIA_FETCH_TIMEOUT_MS = 3000
+const WA_MEDIA_MAX_BYTES = 5 * 1024 * 1024 // 5MB
+
+export async function fetchMediaBytes(
+  mediaId: string
+): Promise<{ bytes: Buffer; contentType: string } | null> {
+  if (!WA_TOKEN || !mediaId) return null
+  try {
+    const metaRes = await fetch(`${GRAPH}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${WA_TOKEN}` },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(WA_MEDIA_FETCH_TIMEOUT_MS),
+    })
+    if (!metaRes.ok) return null
+    const meta = (await metaRes.json()) as { url?: string; mime_type?: string }
+    if (!meta.url) return null
+
+    const binRes = await fetch(meta.url, {
+      headers: { Authorization: `Bearer ${WA_TOKEN}` },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(WA_MEDIA_FETCH_TIMEOUT_MS),
+    })
+    if (!binRes.ok) return null
+
+    // Size cap (cheap path): if Meta advertises a Content-Length over the cap,
+    // bail before buffering a single byte.
+    const declaredLen = Number(binRes.headers.get('content-length') || '0')
+    if (declaredLen > WA_MEDIA_MAX_BYTES) {
+      console.warn(
+        `[wa-media] skipping oversized media ${mediaId}: content-length ${declaredLen} > ${WA_MEDIA_MAX_BYTES} cap`
+      )
+      return null
+    }
+
+    const arrayBuf = await binRes.arrayBuffer()
+    // Size cap (post-buffer path): some responses omit Content-Length, so also
+    // check the actual buffered length and drop it if it exceeded the cap.
+    if (arrayBuf.byteLength > WA_MEDIA_MAX_BYTES) {
+      console.warn(
+        `[wa-media] skipping oversized media ${mediaId}: buffered ${arrayBuf.byteLength} > ${WA_MEDIA_MAX_BYTES} cap`
+      )
+      return null
+    }
+
+    const contentType =
+      meta.mime_type || binRes.headers.get('content-type') || 'application/octet-stream'
+    return { bytes: Buffer.from(arrayBuf), contentType }
+  } catch {
+    return null
+  }
+}
+
 // --- Webhook verification (GET handshake from Meta) ---
 export function verifyWebhook(mode: string | null, token: string | null, challenge: string | null): string | null {
   if (mode === 'subscribe' && token && token === WA_VERIFY_TOKEN) return challenge
@@ -245,17 +338,20 @@ export function verifyWebhook(mode: string | null, token: string | null, challen
 // --- Payload signature check (POST webhook) ---
 // Meta signs every POST with the app secret. Reject anything that doesn't match
 // so nobody can spoof inbound messages / opt-outs against the bot.
-// Audit C5: fail CLOSED in production. A missing WHATSAPP_APP_SECRET on a
-// preview deploy or after a Vercel env-var \n trim must NOT silently accept
-// every unsigned POST. In dev (NODE_ENV !== 'production'), accept-without-key
-// stays — useful for local webhook tests.
+// Fail CLOSED everywhere by default. The webhook signature is the ONLY thing
+// authenticating the sender's identity (resolveIdentity + findAdmin trust
+// msg.from verbatim), so an open verify = anyone can impersonate any vendor OR
+// the master admin by POSTing a forged payload. The previous NODE_ENV==='production'
+// carve-out failed OPEN on Vercel PREVIEW/branch deploys (NODE_ENV !== 'production'),
+// which are reachable URLs wired to the same creds — full bot impersonation.
+// Now: missing secret rejects on every DEPLOYED env; local dev must opt in
+// EXPLICITLY with WHATSAPP_ALLOW_UNSIGNED=1 (set only in .env.local, never on a
+// deploy).
 export function verifySignature(rawBody: string, signatureHeader: string | null): boolean {
   if (!WA_APP_SECRET) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('[whatsapp] WHATSAPP_APP_SECRET missing in production — rejecting webhook')
-      return false
-    }
-    return true
+    if (process.env.WHATSAPP_ALLOW_UNSIGNED === '1') return true
+    console.error('[whatsapp] WHATSAPP_APP_SECRET missing — rejecting webhook (set WHATSAPP_ALLOW_UNSIGNED=1 for LOCAL dev only)')
+    return false
   }
   if (!signatureHeader?.startsWith('sha256=')) return false
   const expected = 'sha256=' + createHmac('sha256', WA_APP_SECRET).update(rawBody).digest('hex')
@@ -265,6 +361,16 @@ export function verifySignature(rawBody: string, signatureHeader: string | null)
 }
 
 // --- Inbound message parsing (POST webhook payload) ---
+/** Inbound media descriptor (image/document/video/audio/sticker). The `id` is
+ * the Meta media id — distinct from the wamid — and is the ONLY key that can
+ * retrieve the bytes from the Graph API, so we surface + persist it. */
+export interface InboundMedia {
+  kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'
+  id: string
+  mimeType?: string
+  filename?: string
+  caption?: string
+}
 export interface InboundMessage {
   from: string // wa id, digits only
   messageId: string
@@ -273,6 +379,21 @@ export interface InboundMessage {
   name?: string
   /** wamid of the message this one is a reply to (WhatsApp swipe-reply). */
   replyToWamid?: string
+  /** Present when the inbound is a media message (image/doc/video/sticker). */
+  media?: InboundMedia
+}
+
+// Pull the media descriptor (image/document/video/audio/sticker) out of a raw
+// Meta message node, if any. Each media type nests `{ id, mime_type, … }` under
+// a key named for its type. The `id` is the media id used by the media proxy.
+function extractMedia(msg: WaMessageNode): InboundMedia | undefined {
+  for (const kind of ['image', 'document', 'video', 'audio', 'sticker'] as const) {
+    const node = (msg as unknown as Record<string, { id?: string; mime_type?: string; filename?: string; caption?: string }>)[kind]
+    if (node?.id) {
+      return { kind, id: node.id, mimeType: node.mime_type, filename: node.filename, caption: node.caption }
+    }
+  }
+  return undefined
 }
 
 export function parseInbound(body: unknown): InboundMessage[] {
@@ -284,13 +405,26 @@ export function parseInbound(body: unknown): InboundMessage[] {
       const contacts = value?.contacts || []
       const profileName = contacts[0]?.profile?.name
       for (const msg of value?.messages || []) {
+        const media = extractMedia(msg)
+        // Non-text, non-media types (reaction / location / contacts) arrived with
+        // an empty body and showed as "[media message]" / blank in the inbox.
+        // Capture a readable label so they render meaningfully (native feel).
+        const reaction = (msg as { reaction?: { emoji?: string } }).reaction
+        const hasLocation = !!(msg as { location?: unknown }).location
+        const hasContacts = Array.isArray((msg as { contacts?: unknown[] }).contacts)
+        const fallback =
+          reaction?.emoji ? `reacted ${reaction.emoji}` :
+          hasLocation ? '📍 shared a location' :
+          hasContacts ? '📇 shared a contact' : ''
         out.push({
           from: msg.from,
           messageId: msg.id,
           type: msg.type,
-          text: msg.text?.body || msg.button?.text || '',
+          // Use a media caption as the text so a captioned image still reads well.
+          text: msg.text?.body || msg.button?.text || media?.caption || fallback || '',
           name: profileName,
           replyToWamid: (msg as { context?: { id?: string } }).context?.id,
+          ...(media ? { media } : {}),
         })
       }
     }
@@ -324,15 +458,26 @@ export function parseStatuses(body: unknown): StatusUpdate[] {
   return out
 }
 
+// A raw Meta message node. Media types (image/document/video/audio/sticker)
+// each nest `{ id, mime_type, filename?, caption? }` under their own key.
+type WaMediaNode = { id?: string; mime_type?: string; filename?: string; caption?: string }
+interface WaMessageNode {
+  from: string
+  id: string
+  type: string
+  text?: { body: string }
+  button?: { text: string }
+  context?: { id?: string }
+  image?: WaMediaNode
+  document?: WaMediaNode
+  video?: WaMediaNode
+  audio?: WaMediaNode
+  sticker?: WaMediaNode
+}
+
 interface WaChangeValue {
   contacts?: Array<{ profile?: { name?: string }; wa_id?: string }>
-  messages?: Array<{
-    from: string
-    id: string
-    type: string
-    text?: { body: string }
-    button?: { text: string }
-  }>
+  messages?: WaMessageNode[]
   statuses?: Array<{
     id: string
     status: string

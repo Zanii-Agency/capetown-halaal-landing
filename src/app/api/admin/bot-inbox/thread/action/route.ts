@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireAdmin } from '@/lib/admin-rbac'
+import { requireAdmin, requireOperator } from '@/lib/admin-rbac'
 
 // Multi-tool inbox actions: snooze · assign-to-me · mark-done · reopen.
 // Touches wa_threads (the unified inbox spine from migration v11).
@@ -19,12 +19,10 @@ interface ActionBody {
 const ALLOWED_TAGS = new Set(['payment', 'load-in', 'badges', 'contract', 'refund', 'general'])
 
 export async function POST(req: Request) {
-  let userId: string
-  try {
-    userId = await requireAdmin()
-  } catch {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // Mutates wa_threads (status, assignee, tags, links). Owner/operator only.
+  const gate = await requireOperator()
+  if (!gate.ok) return gate.response
+  const userId = gate.user.id
 
   let body: ActionBody
   try {
