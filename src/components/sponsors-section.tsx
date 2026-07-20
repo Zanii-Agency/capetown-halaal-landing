@@ -359,6 +359,9 @@ function SponsorCard({ tier, index, onEnquire }: { tier: SponsorTier; index: num
                 src={tier.partnerLogo}
                 alt={tier.name}
                 fill
+                // Container is h-12 w-32 (128px). See smile-fm-banner: `fill`
+                // without `sizes` falls back to 100vw / the 1920px variant.
+                sizes="128px"
                 className="object-contain"
               />
             </div>

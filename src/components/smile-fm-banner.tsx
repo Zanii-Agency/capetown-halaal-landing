@@ -55,6 +55,11 @@ export function SmileFMBanner() {
                 src="/partners/smile-logo-color.png"
                 alt="Smile 90.4 FM"
                 fill
+                // Container is w-28 sm:w-36 (112-144px). Without `sizes`, a
+                // `fill` image defaults to 100vw and Next serves the 1920px
+                // variant, costing 110KB for a 144px slot. This was the
+                // single heaviest wasted object on the homepage.
+                sizes="144px"
                 className="object-contain"
                 priority
               />

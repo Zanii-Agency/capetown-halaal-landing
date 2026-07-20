@@ -107,7 +107,7 @@ function GalleryCard({ image, title, delay = 0 }: { image: string; title: string
     >
       <TiltCard className="group relative overflow-hidden rounded-2xl cursor-pointer">
         <ParallaxCard className="aspect-[4/3]" depth={30}>
-          <Image src={image} alt={title} fill className="object-cover transition-transform duration-700 group-hover:scale-110" />
+          <Image src={image} alt={title} fill sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" className="object-cover transition-transform duration-700 group-hover:scale-110" />
         </ParallaxCard>
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-500" />
         <div className="absolute bottom-0 left-0 right-0 p-6 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
@@ -447,13 +447,13 @@ export default function HomePage() {
               <div className="absolute inset-0 bg-gradient-to-br from-[#cd2653]/20 to-[#f59e0b]/10 rounded-3xl blur-3xl" />
               <div className="relative grid grid-cols-2 gap-4">
                 <TiltCard className="aspect-square rounded-2xl overflow-hidden">
-                  <Image src="/about/festival-food.jpg" alt="Festival food" fill className="object-cover" />
+                  <Image src="/about/festival-food.jpg" alt="Festival food" fill sizes="(min-width: 1024px) 25vw, 50vw" className="object-cover" />
                 </TiltCard>
                 <TiltCard className="aspect-square rounded-2xl overflow-hidden mt-8">
-                  <Image src="/about/festival-crowd.jpg" alt="Festival crowd" fill className="object-cover" />
+                  <Image src="/about/festival-crowd.jpg" alt="Festival crowd" fill sizes="(min-width: 1024px) 25vw, 50vw" className="object-cover" />
                 </TiltCard>
                 <TiltCard className="col-span-2 aspect-video rounded-2xl overflow-hidden shadow-xl">
-                  <Image src={IMAGES.capetown} alt="Cape Town" fill className="object-cover" />
+                  <Image src={IMAGES.capetown} alt="Cape Town" fill sizes="(min-width: 1024px) 50vw, 100vw" className="object-cover" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex items-end p-6">
                     <div>
                       <p className="text-white font-bold text-xl">Youngsfield Military Base</p>
@@ -551,7 +551,9 @@ export default function HomePage() {
       {/* CTA Section */}
       <section className="py-16 md:py-24 relative overflow-x-clip">
         <div className="absolute inset-0">
-          <Image src={IMAGES.food4} alt="Food" fill className="object-cover" />
+          {/* Full-bleed CTA background — 100vw is correct here, unlike the
+              cards above where the implicit 100vw default was the bug. */}
+          <Image src={IMAGES.food4} alt="Food" fill sizes="100vw" className="object-cover" />
           <div className="absolute inset-0 bg-gradient-to-r from-neutral-950/95 via-neutral-950/90 to-neutral-950/95" />
         </div>
 

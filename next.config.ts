@@ -57,12 +57,39 @@ const nextConfig: NextConfig = {
         hostname: 'images.unsplash.com',
       },
     ],
+    // Trimmed from the Next default ladder, which also includes 2048 and 3840.
+    // Nothing on this site renders wider than a 1920 viewport, so those two
+    // only ever served crawlers requesting arbitrary widths. Each entry here
+    // is a distinct billable transform and a distinct CDN cache key.
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920],
+    // Small fixed-width slots (partner logos, avatars) resolve from this list.
+    imageSizes: [16, 32, 48, 64, 96, 128, 144, 256, 384],
+    // Default is 60 seconds, which makes the optimizer re-fetch and re-encode
+    // constantly under crawler load. 31 days. Source images are static assets
+    // that change only on deploy.
+    minimumCacheTTL: 2678400,
   },
   async headers() {
     return [
       {
         source: '/:path*',
         headers: securityHeaders,
+      },
+      {
+        // Static media in public/ ships with Next's default
+        // `max-age=0, must-revalidate`, so browsers revalidate every asset on
+        // every page load. Unlike /_next/static these filenames are not
+        // content hashed, so `immutable` would strand a replaced photo. One
+        // day fresh plus a week of stale-while-revalidate is the safe middle:
+        // repeat visitors stop re-requesting, and a swapped image still
+        // propagates within a day.
+        source: '/:dir(photos|gallery|partners|about|videos)/:file*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=86400, stale-while-revalidate=604800',
+          },
+        ],
       },
     ];
   },
