@@ -39,17 +39,25 @@ export default async function PortalLayout({ children }: { children: React.React
   const inboxUnread = await hasUnreadAdminReply({ vendorPhone: prefillPhone })
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col bg-[#F6F2E8] text-[#1B1A17]">
+    // Responsive app shell. DESKTOP (lg+): fixed-height shell with an inner
+    // scrolling <main>, for the dashboard feel. MOBILE: natural document scroll
+    // (min-h-[100dvh], no overflow-hidden) so the sticky nav scrolls away, the
+    // full viewport is used, and iOS's 100vh address-bar clipping + the nested
+    // scroll-hijack (both hurt vendors, most of whom are on phones) are avoided.
+    <div className="min-h-[100dvh] lg:h-screen lg:overflow-hidden flex flex-col bg-[#F6F2E8] text-[#1B1A17]">
       {/* Override PageShell min-h-screen inside the vendor portal so short
           pages don't force the main area to scroll. The layout constrains
           height; PageShell's 100vh minimum would exceed available space. */}
-      <style>{'main > div:first-child { min-height: fit-content !important; }'}</style>
+      {/* min-height override for short pages; plus a mobile-only 16px floor on
+          form controls so iOS Safari does not auto-zoom on focus (fires below
+          16px). Scoped to <=640px so desktop keeps its denser 14px inputs. */}
+      <style>{'main > div:first-child { min-height: fit-content !important; } @media (max-width:640px){ input:not([type=checkbox]):not([type=radio]), textarea, select { font-size: 16px !important; } }'}</style>
       <div className="flex-shrink-0">
         <PortalNav businessName={businessName} inboxUnread={inboxUnread} />
         {showWaBanner && <WaOptInBanner prefillPhone={prefillPhone} firstName={firstName} />}
         {needsLogo && <LogoReminderBanner firstName={firstName} />}
       </div>
-      <main className="flex-1 overflow-y-auto min-h-0 pb-8">{children}</main>
+      <main className="flex-1 pb-8 lg:overflow-y-auto lg:min-h-0">{children}</main>
     </div>
   )
 }
