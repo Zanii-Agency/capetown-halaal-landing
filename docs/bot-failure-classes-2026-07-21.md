@@ -1,6 +1,7 @@
 # CTH Bot — Vendor-Conversation Failure Classes (staged, 2026-07-21)
 
-## FIXED 2026-07-21 (built + typecheck/lint/tests green, NOT yet deployed)
+## FIXED + DEPLOYED 2026-07-21 (commit 8beeb10, live on cthalaal.co.za, HTTP 200)
+_tsc clean · eslint clean · 20 tests pass · prod build ok · vercel --prod READY · aliased cthalaal.co.za_
 - **Root cause found: the live WhatsApp agent (`vendor-agent.ts`, `CTH_AGENT` on) ran a thin prompt.** All the grounding (31-Aug part-payment policy, documents, stall sizes, allocation timing) lived in `system-prompt.ts` `BASE_PROMPT`/`VENDOR_FACTS`, which only the FAQ path uses. The policy answers existed but never reached vendors. `part-payment.test.ts` asserted them on `BASE_PROMPT` (the wrong prompt), so it passed green while vendors got an ungrounded bot.
 - **A — grounded the live agent:** `vendor-agent.ts` now imports `VENDOR_FACTS` (verified vendors only) + the `vendor_part_payment` FAQ answer + a RESOLVE-DON'T-DEFLECT rule. Single-sourced, no policy rewrite. Fixes C-1, C-8, C-5, most of C-4.
 - **B — killed self-contradiction (I-2):** `check_application_status` now reads back open `support[]` / pending stall-change / stall-move and tells the vendor "already logged, do not log again." Stops the "no request on file" contradiction and duplicate tickets.
