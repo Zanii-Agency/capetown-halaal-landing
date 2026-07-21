@@ -9,9 +9,13 @@ _tsc clean · eslint clean · 20 tests pass · prod build ok · vercel --prod RE
 - **Skipped D (mass phone backfill):** 492/541 rows are benign `0…` local format; `normalizePhone`/`toE164` already convert every variant correctly. A 492-row prod write for zero functional gain, not done.
 - **Tests:** `src/lib/bot/grounding.test.ts` (6) guards A + B against the wrong-prompt regression.
 
+## Stranded escalations — MIGRATED 2026-07-21 (data fix, no deploy)
+- **Correction to the earlier "17/17 stranded" figure:** the Needs You queue keys by `norm(phone) = phone.replace(/^\+/,'')` (strips the `+` only). So the 5 breadcrumbs stored as `27…` (no `+`) already merged with the canonical `+27…` thread and were VISIBLE. Only the 12 on leading-`0`/malformed keys were truly stranded. Measuring raw keys over-counted; the queue's own norm() is the right yardstick.
+- **Applied:** re-pointed the 12 stranded breadcrumbs to canonical `+27…` E.164 (update-by-id, guarded on old value, `repointed_from` audit trail, count asserted 12/12, 0 left on non-`27` keys). No code change — they now flow through the already-live queue.
+- **Verified against the exact queue formula:** 10 escalations now surface as OPEN (9 rescued vendors + Velvet Crumb already-visible); 2 correctly hidden (Farhan, En Vogue — human replied after). Rescued: Layali Haus + MeeAad (withdrawals), MaterniTee + Amklegend + Flaming Spuds (payment plans), Elegant Muslimah (POP), Islamic Relief, CN Collection (sharing), Sakiena (clothing).
+- Final UI confirm: a human glance at cthalaal.co.za/admin/customer-inbox.
+
 ## Remaining
-- **DEPLOY** (gated — live vendor bot, needs sign-off + soak).
-- **17 stranded historical escalations** — staged re-point migration; needs the "Needs You" clear-logic check first (risk: resurfacing already-resolved items).
 - **Open policy (no grounding exists):** discounts/returning-vendor (C-4), stall sharing (C-6), withdrawal/refund for vendors (C-11). The other three (extension=31 Aug, installments=no, EFT=card-only) are answered and now wired.
 - **Infra subsystems (not the bot brain):** password-reset email deliverability (C-9), badge-add portal bug (C-10).
 
