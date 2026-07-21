@@ -27,7 +27,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalState, type PortalState } from '@/lib/portal-state'
-import { TIER_META, TYPE_META, tierLabel, type StallType } from '@/lib/stalls'
+import { TIER_META, TYPE_META, tierLabel, resolveTierSlug, type StallType } from '@/lib/stalls'
 import { notifyVendor } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
   // against acting on a request that is no longer pending (double-click / race).
   const { data: app } = await db
     .from('vendor_applications')
-    .select('id, business_name, admin_notes')
+    .select('id, business_name, admin_notes, special_requirements')
     .eq('id', id)
     .maybeSingle()
   if (!app) return NextResponse.json({ error: 'Application not found' }, { status: 404 })
@@ -161,11 +161,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No pending stall change request', code: 'NOT_PENDING' }, { status: 409 })
   }
 
-  const requestedTier = cr.requestedTier
-  // Tier must be a valid TIER_META key before we ever write it to
-  // preferred_booth_tier (Law 8: keep stall data well-formed).
+  // Resolve the vendor's FREE-TEXT request (e.g. "3x3m Full Marquee", as the
+  // WhatsApp bot stores it) to a canonical TIER_META slug. Previously the flow
+  // validated the free text against TIER_META directly, so it never matched and
+  // the booth change got stuck (Samreen voice note, 2026-07-21). resolveTierSlug
+  // returns null when the text is ambiguous, so we never approve a mis-priced tier.
+  const requestedTier = resolveTierSlug(cr.requestedTier) || ''
   if (action === 'approve' && !TIER_META[requestedTier]) {
-    return NextResponse.json({ error: `Invalid requested tier: ${requestedTier}` }, { status: 400 })
+    return NextResponse.json({
+      error: `Could not match "${cr.requestedTier}" to a known stall size. Set the tier manually on the vendor page.`,
+      code: 'UNRESOLVED_TIER',
+    }, { status: 400 })
   }
 
   const newStatus: 'approved' | 'rejected' = action === 'approve' ? 'approved' : 'rejected'
@@ -184,9 +190,25 @@ export async function POST(req: NextRequest) {
   // /admin/vendor-ops so a tier change never silently strands a vendor on a
   // stall that no longer fits their booth size.
   if (action === 'approve') {
+    const meta = TIER_META[requestedTier]
+    // Sync the frozen display snapshot (special_requirements) to the new tier.
+    // Pricing itself now reads preferred_booth_tier (computeVendorPricing), so
+    // these are display-only, but keeping them in step stops the admin
+    // application page from showing/charging the OLD size after an approve.
+    let sr: Record<string, unknown> = {}
+    try {
+      const rawSr = app.special_requirements
+      sr = typeof rawSr === 'string' ? JSON.parse(rawSr) : ((rawSr as Record<string, unknown>) || {})
+    } catch { sr = {} }
+    const prevStall = Number(sr.stall_price) || 0
+    const prevTotal = Number(sr.total_estimate) || prevStall
+    const addOns = Math.max(0, prevTotal - prevStall)
+    sr.stall_type = meta.label
+    sr.stall_price = meta.price
+    sr.total_estimate = meta.price + addOns
     const { error: updErr } = await db
       .from('vendor_applications')
-      .update({ preferred_booth_tier: requestedTier })
+      .update({ preferred_booth_tier: requestedTier, special_requirements: JSON.stringify(sr) })
       .eq('id', id)
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
   }

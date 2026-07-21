@@ -75,10 +75,18 @@ function readReqs(app: ApplicationLike): SpecialRequirementsShape {
 
 export function computeVendorPricing(app: ApplicationLike): VendorPricing {
   const reqs = readReqs(app)
-  const tierSlug = (reqs.stall_type as string) || (app.preferred_booth_tier as string) || ''
+  // preferred_booth_tier is the CURRENT canonical tier — a booth change updates
+  // it, so pricing MUST read it first. special_requirements.stall_type/stall_price
+  // are the frozen application-time snapshot; reading them first meant a booth
+  // change updated the tier but the invoice kept charging the old size (the
+  // MaterniTee 6x3->3x3 bug: still charged R12,000). Fall back to the frozen
+  // snapshot, then stall_price, for legacy rows whose tier isn't a TIER_META key.
+  // Custom/negotiated prices live in portal_state.payment.amount (which the
+  // invoice prefers over this), so this never clobbers a Samreen override.
+  const tierSlug = (app.preferred_booth_tier as string) || (reqs.stall_type as string) || ''
   const tier = TIER_META[tierSlug]
   const stallLabel = tier?.label || tierSlug || 'Custom stall'
-  const stallPrice = tier?.price ?? Number(reqs.stall_price) ?? 0
+  const stallPrice = tier?.price ?? (Number.isFinite(Number(reqs.stall_price)) ? Number(reqs.stall_price) : 0)
 
   const electrical: LineItem[] = []
   const elec = reqs.electrical_appliances

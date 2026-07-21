@@ -68,6 +68,45 @@ export function tierLabel(slug: string | null | undefined): string {
   return TIER_META[slug]?.label || slug
 }
 
+// Resolve a FREE-TEXT stall-size request (as the WhatsApp bot's
+// request_stall_change stores it, e.g. "3x3m Full Marquee") to a canonical
+// TIER_META slug so the admin approve flow can action it. The approve flow
+// validated cr.requestedTier against TIER_META directly, so a free-text request
+// could never be approved (400), which is why booth changes got "stuck".
+// CONSERVATIVE: returns null unless the text identifies EXACTLY ONE tier, so a
+// caller never charges a vendor for a wrongly-guessed (mis-priced) tier.
+const _slugDim = (slug: string) => { const m = slug.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)/); return m ? `${m[1]}x${m[2]}` : null }
+const _slugLen = (slug: string) => { const m = slug.match(/(\d+(?:\.\d+)?)m$/); return m ? `${m[1]}m` : null }
+export function resolveTierSlug(input: string | null | undefined): string | null {
+  if (!input) return null
+  const raw = String(input).trim()
+  if (TIER_META[raw]) return raw // already a slug
+  const s = raw.toLowerCase().replace(/×/g, 'x')
+  const dimM = s.match(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/)
+  const dim = dimM ? `${dimM[1]}x${dimM[2]}` : null
+  // Length only when there is no NxN dimension, so "3x3m" reads as dim 3x3, not len 3m.
+  const lenM = dim ? null : s.match(/(\d+(?:\.\d+)?)\s*m\b/)
+  const len = lenM ? `${lenM[1]}m` : null
+  if (!dim && !len) return null
+  // Match against SLUGS (clean dimensions), not labels (whose norm splits decimals).
+  const candidates = Object.keys(TIER_META).filter(
+    (slug) => (dim && _slugDim(slug) === dim) || (len && _slugLen(slug) === len),
+  )
+  if (candidates.length === 1) return candidates[0]
+  if (candidates.length > 1) {
+    // Same dimension in >1 tier (3x3 = marquee-full vs food-gazebo). Disambiguate
+    // by a type keyword the input shares with exactly one candidate slug.
+    const KEYS = ['marquee', 'full', 'table', 'double', 'gazebo', 'food', 'truck', 'dessert', 'bedouin', 'outdoor']
+    const inputKeys = KEYS.filter((k) => s.includes(k))
+    const scored = candidates
+      .map((slug) => ({ slug, hits: inputKeys.filter((k) => slug.includes(k)).length }))
+      .filter((c) => c.hits > 0)
+      .sort((a, b) => b.hits - a.hits)
+    if (scored.length === 1 || (scored.length > 1 && scored[0].hits > scored[1].hits)) return scored[0].slug
+  }
+  return null
+}
+
 // ---- allocation marker on admin_notes ----
 //
 // MARKER = LIST. A vendor's booths are a comma-separated code list inside ONE
