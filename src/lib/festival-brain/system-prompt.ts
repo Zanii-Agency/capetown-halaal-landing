@@ -91,7 +91,7 @@ export type BrainSurface = 'public' | 'vendor'
 // public assistant cannot give operational portal answers (Taona's scope rule:
 // vendor answers belong only in the vendor portal). Prices mirror TIER_META and
 // venue-zones.ts — do not state them on the public surface.
-const VENDOR_FACTS = `EXHIBITOR PORTAL FACTS (approved / applying vendors only):
+export const VENDOR_FACTS = `EXHIBITOR PORTAL FACTS (approved / applying vendors only):
 - The Marquee is the only allocated zone (${MARQUEE_CAPACITY} stalls on the floor plan). Marquee fees: Table 2x2m R3,700; Full 3x3m R6,500; Double Table 4x2m R6,500; Full Double 6x3m R12,000. Outdoor Bedouin 2x3m R3,750.
 - Other zones are outside, payment-tracked but not given a floor-plan slot: Bedouin (${BEDOUIN_CAP}), Food and Drink trucks (${FOOD_TRUCK_CAP}), Dessert trucks (${DESSERT_TRUCK_CAP}), Snack trucks (${SNACK_TRUCK_CAP}). These outside spots are allocated on setup day, not in advance.
 - Apply at cthalaal.co.za/apply. Approval takes a few working days.

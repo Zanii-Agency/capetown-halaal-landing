@@ -155,12 +155,35 @@ async function ownRow(vendorId: string) {
   } | null
 }
 
+// Surface requests the vendor already has open with the team, so the bot never
+// tells a vendor "no request on file" seconds after logging one, and never opens
+// a duplicate. escalate_to_human writes to state.support[]; stall changes write
+// their own pending markers. A trailing vendor message with no admin reply after
+// it is still awaiting the team.
+export function pendingRequestsLine(state: ReturnType<typeof parsePortalState>): string {
+  const bits: string[] = []
+  const sup = state.support || []
+  const last = sup[sup.length - 1]
+  if (last && last.from === 'vendor') {
+    const day = (last.at || '').slice(0, 10)
+    bits.push(`a request already logged with the team${day ? ` on ${day}` : ''} ("${last.body.slice(0, 90)}")`)
+  }
+  if (state.stallChangeRequest?.status === 'pending') {
+    bits.push(`a pending stall-size change request to "${state.stallChangeRequest.requestedTier}"`)
+  }
+  if (state.stallMoveRequest?.status === 'pending') {
+    bits.push('a pending stall-position request')
+  }
+  if (!bits.length) return ''
+  return ` Open with the team (they will follow up here, do not log it again): ${bits.join('; ')}.`
+}
+
 async function checkApplicationStatus(vendorId: string): Promise<string> {
   const row = await ownRow(vendorId)
   if (!row) return 'I could not find your application. Please contact support@youngatheart.co.za.'
   const state = parsePortalState(row.admin_notes || '')
   const alloc = parseAllocation(row.admin_notes || '')
-  return `Business: ${row.business_name}. Application status: ${row.status}. Payment: ${state.payment?.status || 'none'}. Contract: ${row.contract_signed_at ? 'signed' : 'not signed yet'}. Stall: ${alloc.stall ? `allocated ${alloc.stall}` : 'not allocated yet'}.`
+  return `Business: ${row.business_name}. Application status: ${row.status}. Payment: ${state.payment?.status || 'none'}. Contract: ${row.contract_signed_at ? 'signed' : 'not signed yet'}. Stall: ${alloc.stall ? `allocated ${alloc.stall}` : 'not allocated yet'}.${pendingRequestsLine(state)}`
 }
 
 async function getPaymentStatus(vendorId: string): Promise<string> {
@@ -273,15 +296,19 @@ function getLogoUploadLink(): string {
 // inbox scan reads it and isMarker() hides it from previews. It clears when a
 // human replies through the composer (metadata.sent_by) or the thread is
 // resolved. Best-effort: never breaks the tool it rides on.
-async function flagNeedsHuman(vendorId: string, label: string): Promise<void> {
+//
+// Write to session.waPhone (the LIVE inbound thread key, == toE164(msg.from)),
+// NOT the on-file application.phone. The old path re-derived from application
+// .phone and stripped to digits-only, so the breadcrumb landed on a phantom
+// `27…` key while the real conversation lived on `+27…` — the fragmentation
+// that made escalations invisible on the vendor's actual thread.
+async function flagNeedsHuman(waPhone: string, label: string): Promise<void> {
   try {
+    if (!waPhone) return
     const db = createAdminClient()
-    const { data } = await db.from('vendor_applications').select('phone').eq('id', vendorId).maybeSingle()
-    const phone = ((data as { phone?: string | null } | null)?.phone || '').replace(/\D/g, '')
-    if (!phone) return
     await db.from('wa_messages').insert({
       direction: 'out',
-      wa_phone: phone,
+      wa_phone: waPhone,
       body: `[NEEDS_HUMAN] ${label}`.slice(0, 300),
       status: 'sent',
       metadata: { system: true, needs_human: true },
@@ -289,7 +316,8 @@ async function flagNeedsHuman(vendorId: string, label: string): Promise<void> {
   } catch (e) { console.error('[flagNeedsHuman] failed:', (e as Error).message) }
 }
 
-async function requestStallChange(vendorId: string, requestedTier: string): Promise<string> {
+async function requestStallChange(session: VendorSession, requestedTier: string): Promise<string> {
+  const vendorId = session.vendorId!
   const row = await ownRow(vendorId)
   if (!row) return 'I could not find your application.'
   const currentTier = row.preferred_booth_tier ? tierLabel(row.preferred_booth_tier) : 'your current stall'
@@ -311,11 +339,12 @@ async function requestStallChange(vendorId: string, requestedTier: string): Prom
       audience: 'all',
     })
   } catch (e) { console.error('[tool request_stall_change] notify failed:', (e as Error).message) }
-  await flagNeedsHuman(vendorId, `stall change request: "${clean}"`)
+  await flagNeedsHuman(session.waPhone, `stall change request: "${clean}"`)
   return `Done. I have submitted your request to change from ${currentTier} to "${clean}". The team will review it (stall changes affect pricing and placement, so a person confirms them) and get back to you. You can also track it in your portal.`
 }
 
-async function escalateToHuman(vendorId: string, note: string): Promise<string> {
+async function escalateToHuman(session: VendorSession, note: string): Promise<string> {
+  const vendorId = session.vendorId!
   const row = await ownRow(vendorId)
   const biz = row?.business_name || 'a vendor'
   const clean = (note || '').trim().slice(0, 1000)
@@ -330,7 +359,7 @@ async function escalateToHuman(vendorId: string, note: string): Promise<string> 
       audience: 'all',
     })
   } catch (e) { console.error('[tool escalate_to_human] notify failed:', (e as Error).message) }
-  await flagNeedsHuman(vendorId, `asked for a human: "${clean.slice(0, 120)}"`)
+  await flagNeedsHuman(session.waPhone, `asked for a human: "${clean.slice(0, 120)}"`)
   return `I have logged this for the festival team and notified them: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". They will follow up with you here. Anything else in the meantime?`
 }
 
@@ -357,8 +386,8 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'get_logo_upload_link': content = getLogoUploadLink(); break
       case 'start_verification': content = await startVerification(session, (args as { email?: string })?.email || ''); break
       case 'request_password_reset': content = await requestPasswordReset(session.vendorId!); break
-      case 'request_stall_change': content = await requestStallChange(session.vendorId!, (args as { requested_tier?: string })?.requested_tier || ''); break
-      case 'escalate_to_human': content = await escalateToHuman(session.vendorId!, (args as { note?: string })?.note || ''); break
+      case 'request_stall_change': content = await requestStallChange(session, (args as { requested_tier?: string })?.requested_tier || ''); break
+      case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
         deferred = getInvoiceDeferred(session)
         content = 'Sending the vendor their invoice as a PDF now.'
