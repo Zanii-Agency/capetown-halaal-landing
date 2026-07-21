@@ -53,9 +53,22 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
   const [menuOpen, setMenuOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const activeRef = useRef<HTMLAnchorElement>(null)
   const cleanName = businessName.replace(/^DEMO\s*·?\s*/i, '')
 
   useClickOutside(menuRef, () => setMenuOpen(false))
+
+  // On mobile the nav is a horizontal-scroll pill row. Centre the active pill in
+  // the scroller when the route changes, so the current page is never hidden
+  // off-screen (most vendors are on phones). Scoped to the scroller, so it never
+  // scrolls the page itself.
+  useEffect(() => {
+    const el = activeRef.current, sc = scrollerRef.current
+    if (!el || !sc) return
+    const target = el.offsetLeft + el.offsetWidth / 2 - sc.clientWidth / 2
+    sc.scrollTo({ left: Math.max(0, target), behavior: 'auto' })
+  }, [pathname])
 
   async function signOut() {
     setSigningOut(true)
@@ -85,14 +98,14 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
           </a>
 
           {/* Nav buttons with horizontal scroll */}
-          <div className="flex items-center gap-2 lg:gap-3 flex-1 justify-center min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div ref={scrollerRef} className="flex items-center gap-2 lg:gap-3 flex-1 justify-center min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {NAV_GROUPS.map((g) => {
               const active = isActive(g.href)
               const Icon = g.icon
               const showDot = inboxUnread && (g.href === '/exhibitor/portal/support' || g.href === '/exhibitor/portal')
 
               return (
-                <a key={g.href} href={g.href}
+                <a key={g.href} href={g.href} ref={active ? activeRef : undefined}
                   className={`relative flex items-center gap-2 rounded-full px-4 lg:px-5 py-2 text-sm font-medium whitespace-nowrap transition-colors ${active ? 'bg-[#cd2653] text-white shadow-sm ring-1 ring-[#cd2653]/40' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'}`}>
                   <Icon className="w-4 h-4" />{g.label}
                   {showDot && (
