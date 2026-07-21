@@ -147,3 +147,23 @@ export function computeVendorPricing(app: ApplicationLike): VendorPricing {
 export function formatRand(n: number): string {
   return 'R' + Number(n || 0).toLocaleString('en-ZA')
 }
+
+// When a vendor's booth tier changes, the FROZEN special_requirements snapshot
+// (stall_type/stall_price/total_estimate) must move with it, or admin pages and
+// the stored invoice line keep showing the OLD size. computeVendorPricing reads
+// preferred_booth_tier for the live total, so pricing is already correct, but
+// these fields are the stored display copy that many admin surfaces render.
+// Returns the patched pricing fields for the new tier, preserving any add-on
+// delta (total - base); null if the tier is not a known TIER_META key. Every
+// path that writes preferred_booth_tier should Object.assign this onto reqs.
+export function tierPricingFields(
+  tierSlug: string,
+  prev: { stall_price?: number | string; total_estimate?: number | string },
+): { stall_type: string; stall_price: number; total_estimate: number } | null {
+  const meta = TIER_META[tierSlug]
+  if (!meta) return null
+  const prevStall = Number(prev.stall_price) || 0
+  const prevTotal = Number(prev.total_estimate) || prevStall
+  const addOns = Math.max(0, prevTotal - prevStall)
+  return { stall_type: meta.label, stall_price: meta.price, total_estimate: meta.price + addOns }
+}

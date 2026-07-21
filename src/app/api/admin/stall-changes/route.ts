@@ -28,6 +28,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalState, type PortalState } from '@/lib/portal-state'
 import { TIER_META, TYPE_META, tierLabel, resolveTierSlug, type StallType } from '@/lib/stalls'
+import { tierPricingFields } from '@/lib/payments/pricing'
 import { notifyVendor } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
@@ -190,22 +191,16 @@ export async function POST(req: NextRequest) {
   // /admin/vendor-ops so a tier change never silently strands a vendor on a
   // stall that no longer fits their booth size.
   if (action === 'approve') {
-    const meta = TIER_META[requestedTier]
-    // Sync the frozen display snapshot (special_requirements) to the new tier.
-    // Pricing itself now reads preferred_booth_tier (computeVendorPricing), so
-    // these are display-only, but keeping them in step stops the admin
-    // application page from showing/charging the OLD size after an approve.
+    // Sync the frozen display snapshot to the new tier via the shared helper
+    // (same wall as the manual vendor-edit path), so the admin application page
+    // never shows/charges the OLD size after an approve.
     let sr: Record<string, unknown> = {}
     try {
       const rawSr = app.special_requirements
       sr = typeof rawSr === 'string' ? JSON.parse(rawSr) : ((rawSr as Record<string, unknown>) || {})
     } catch { sr = {} }
-    const prevStall = Number(sr.stall_price) || 0
-    const prevTotal = Number(sr.total_estimate) || prevStall
-    const addOns = Math.max(0, prevTotal - prevStall)
-    sr.stall_type = meta.label
-    sr.stall_price = meta.price
-    sr.total_estimate = meta.price + addOns
+    const fields = tierPricingFields(requestedTier, sr as { stall_price?: number; total_estimate?: number })
+    if (fields) Object.assign(sr, fields)
     const { error: updErr } = await db
       .from('vendor_applications')
       .update({ preferred_booth_tier: requestedTier, special_requirements: JSON.stringify(sr) })

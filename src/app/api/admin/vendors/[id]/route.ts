@@ -28,6 +28,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { TIER_META, parseAllocation } from '@/lib/stalls'
+import { tierPricingFields } from '@/lib/payments/pricing'
 import { parsePortalState, updatePortalStateImpl } from '@/lib/portal-state'
 import { syncExhibitorAuth } from '@/lib/exhibitor-auth'
 
@@ -135,6 +136,7 @@ export async function PATCH(
     }
 
     // --- preferred_booth_tier (constrained to TIER_META keys) ---
+    let newTier: string | null = null
     if (typeof body.preferred_booth_tier === 'string') {
       const tier = body.preferred_booth_tier.trim()
       if (tier && !TIER_META[tier]) {
@@ -145,6 +147,7 @@ export async function PATCH(
       }
       update.preferred_booth_tier = tier || null
       changed.push('preferred_booth_tier')
+      if (tier) newTier = tier
     }
 
     // --- special_requirements slices (electrical_appliances + electrical_custom) ---
@@ -152,6 +155,15 @@ export async function PATCH(
     // and write once at the end. Untouched slices are left intact (no clobber).
     let reqsDirty = false
     const reqs = readReqs((before as { special_requirements?: unknown }).special_requirements)
+
+    // Tier changed → sync the frozen pricing snapshot (stall_type/stall_price/
+    // total_estimate) so the admin application page + invoice line stop showing
+    // the OLD size. This is the universal wall: EVERY preferred_booth_tier writer
+    // (here + the stall-change approve) routes the price through tierPricingFields.
+    if (newTier) {
+      const fields = tierPricingFields(newTier, reqs as { stall_price?: number; total_estimate?: number })
+      if (fields) { Object.assign(reqs, fields); reqsDirty = true }
+    }
 
     // electrical_appliances: slug -> qty, whitelisted, merged into the blob.
     if (body.electrical_appliances && typeof body.electrical_appliances === 'object' && !Array.isArray(body.electrical_appliances)) {
