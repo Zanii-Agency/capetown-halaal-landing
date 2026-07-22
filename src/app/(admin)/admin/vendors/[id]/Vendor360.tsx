@@ -26,6 +26,7 @@ import { VendorPaymentsSection } from '@/components/admin/vendor/VendorPaymentsS
 import { VendorContractSection } from '@/components/admin/vendor/VendorContractSection'
 import { VendorDocsChecklist } from '@/components/admin/vendor/VendorDocsChecklist'
 import { VendorActivityLog } from '@/components/admin/vendor/VendorActivityLog'
+import { SpecialRequirementsView } from '@/components/admin/SpecialRequirementsView'
 
 // Mirror of ELECTRICAL_OPTIONS in src/app/apply/page.tsx (minus 'none') and
 // ELECTRICAL_PRICES in src/lib/payments/pricing.ts. Keep in sync.
@@ -571,8 +572,11 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           />
           <LabeledField label="Stall code" value={stallCode || '—'} mono />
           <LabeledField label="Sector" value={category || '—'} />
-          <LabeledField label="Special requirements" value={v.special_requirements ? String(v.special_requirements) : '—'} />
           <LabeledField label="Items / menu" value={v.items_description ? String(v.items_description).slice(0, 200) : '—'} />
+          <div className="sm:col-span-2">
+            <p className="text-[11px] uppercase tracking-wide text-neutral-400 mb-1.5">Special requirements</p>
+            <SpecialRequirementsView raw={v.special_requirements as string | Record<string, unknown> | null} />
+          </div>
           <LabeledField label="Applied" value={v.created_at ? fmtDate(v.created_at as string) : '—'} />
         </div>
       </Section>

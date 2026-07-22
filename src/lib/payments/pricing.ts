@@ -75,18 +75,29 @@ function readReqs(app: ApplicationLike): SpecialRequirementsShape {
 
 export function computeVendorPricing(app: ApplicationLike): VendorPricing {
   const reqs = readReqs(app)
-  // preferred_booth_tier is the CURRENT canonical tier — a booth change updates
-  // it, so pricing MUST read it first. special_requirements.stall_type/stall_price
-  // are the frozen application-time snapshot; reading them first meant a booth
-  // change updated the tier but the invoice kept charging the old size (the
-  // MaterniTee 6x3->3x3 bug: still charged R12,000). Fall back to the frozen
-  // snapshot, then stall_price, for legacy rows whose tier isn't a TIER_META key.
-  // Custom/negotiated prices live in portal_state.payment.amount (which the
-  // invoice prefers over this), so this never clobbers a Samreen override.
+  // SOURCE OF TRUTH for the charge is the price the SYSTEM stored: the amount the
+  // vendor selected/agreed at application time (special_requirements.stall_price),
+  // which is what the vendor portal shows and Yoco charges. A negotiated / sponsor
+  // rate (e.g. Telkom at R4,800 for a 3x3) lives here and must NOT be overwritten
+  // by a TIER_META standard-price lookup. Reading the tier price first (an earlier
+  // attempt at the MaterniTee fix) over-charged every vendor whose agreed price
+  // differs from the standard. The correct root fix is tierPricingFields, which
+  // RE-SYNCS this stored price whenever the tier actually changes, so reading the
+  // stored price is always current. TIER_META supplies the label, and a fallback
+  // price only for legacy rows that never stored a stall_price.
+  const hasTier = !!(app.preferred_booth_tier && String(app.preferred_booth_tier).trim())
   const tierSlug = (app.preferred_booth_tier as string) || (reqs.stall_type as string) || ''
   const tier = TIER_META[tierSlug]
-  const stallLabel = tier?.label || tierSlug || 'Custom stall'
-  const stallPrice = tier?.price ?? (Number.isFinite(Number(reqs.stall_price)) ? Number(reqs.stall_price) : 0)
+  const storedPrice = Number(reqs.stall_price)
+  // Base stall fee applies ONLY when a booth TIER is assigned. If Samreen clears
+  // the tier, the vendor is custom-only: NO base fee, just the custom charges
+  // below. This is the "reset to Other + a custom charge" she expects on clearing
+  // the tier (the flower sisters: R2,000 custom charge, not R3,750 stale base
+  // PLUS R2,000). A tiered vendor keeps their stored/agreed price.
+  const stallPrice = hasTier
+    ? (Number.isFinite(storedPrice) && storedPrice > 0 ? storedPrice : (tier?.price ?? 0))
+    : 0
+  const stallLabel = hasTier ? (tier?.label || tierSlug || 'Custom stall') : 'Custom (no tier)'
 
   const electrical: LineItem[] = []
   const elec = reqs.electrical_appliances
