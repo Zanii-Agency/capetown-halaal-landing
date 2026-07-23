@@ -77,9 +77,9 @@ export default function EftPanel({
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 flex items-start gap-4 text-emerald-800">
           <CheckCircle2 className="w-6 h-6 shrink-0 mt-0.5" />
           <div>
-            <p className="font-bold">Payment received, pending confirmation</p>
+            <p className="font-bold">Proof received, thank you</p>
             <p className="text-sm mt-1 opacity-90">
-              Thank you. We have your EFT proof and your portal is unlocked. Our team will confirm the payment on our side shortly. You do not need to do anything else.
+              Please allow up to 24 hours for our team to confirm your payment and contact you. Once we have confirmed it, we will mark you as paid and your full portal will unlock so you can continue. You do not need to do anything else in the meantime.
             </p>
           </div>
         </div>

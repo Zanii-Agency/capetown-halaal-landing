@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
+import { getEftMode, vendorInEftLane, isEftAdmin } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -50,6 +51,34 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const phone = (url.searchParams.get('phone') || '').trim()
   const email = (url.searchParams.get('email') || '').trim().toLowerCase()
+
+  // TEMPORARY EFT lane privacy: if this contact resolves to an EFT-lane vendor,
+  // ONLY the EFT admin (dev@) may read the thread. The email- and phone-resolved
+  // vendors are checked INDEPENDENTLY (a crafted request can mismatch them, e.g. a
+  // benign email + an EFT vendor's phone) and we block if EITHER is in the lane.
+  // No .limit(1): a last-9 phone collision must not hide the lane vendor behind
+  // another matching row. Seals the direct-API path completely.
+  if (!isEftAdmin(user.email)) {
+    type LaneRow = { admin_notes: string | null; paid_at: string | null }
+    const globalOn = await getEftMode()
+    const anyInLane = (rows: LaneRow[] | null) =>
+      (rows || []).some((r) => vendorInEftLane(r.admin_notes, globalOn, r.paid_at))
+    let blocked = false
+    if (email) {
+      const { data } = await db.from('vendor_applications').select('admin_notes, paid_at').eq('email', email)
+      blocked = anyInLane(data as LaneRow[] | null)
+    }
+    if (!blocked && phone) {
+      const last9 = phone.replace(/\D/g, '').slice(-9)
+      if (last9) {
+        const { data } = await db.from('vendor_applications')
+          .select('admin_notes, paid_at')
+          .or(`phone.like.*${last9},admin_notes.like.*WAV${last9}*`)
+        blocked = anyInLane(data as LaneRow[] | null)
+      }
+    }
+    if (blocked) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   const comms: CommItem[] = []
   const local = (e?: string | null) => (e ? e.split('@')[0] : null)

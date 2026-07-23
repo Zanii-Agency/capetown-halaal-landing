@@ -111,7 +111,7 @@ export async function getEftMode(): Promise<boolean> {
 }
 
 /** True when the vendor is in the EFT lane: global mode on, OR individually
- *  selected (⟦EFT⟧) — but NEVER if they have already paid. An already-paid
+ *  selected (⟦EFT⟧), but NEVER if they have already paid. An already-paid
  *  vendor (Yoco before the outage, or a reconciled EFT vendor) is treated as
  *  normal even while global mode is on: normal bot replies, their messages stay
  *  on the main inbox, and they see their paid state, not the EFT panel. Only
@@ -146,4 +146,5 @@ export const EFT_MAINTENANCE_MESSAGE =
   'Thanks for your message. Our WhatsApp assistant is under maintenance at the moment, ' +
   'so please communicate with us by email only at support@youngatheart.co.za. ' +
   'If you are paying by EFT, upload your proof of payment in your vendor portal or email it to us, ' +
-  'and your portal will reflect your payment. We will be back to normal shortly.'
+  'and please allow up to 24 hours for our team to confirm your payment and update you. ' +
+  'We will be back to normal shortly.'

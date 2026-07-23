@@ -117,9 +117,9 @@ export default async function PaymentsPage() {
       <MiniTaskStrip activeKey="payment" />
       <PageHeader
         kicker="Payments"
-        title={eftPending ? 'Payment received' : fullyPaid ? 'You are paid in full' : topUpDue ? 'Additional payment due' : 'Pay your stall fee'}
+        title={eftPending ? 'Proof received' : fullyPaid ? 'You are paid in full' : topUpDue ? 'Additional payment due' : 'Pay your stall fee'}
         subtitle={eftPending
-          ? 'We have your EFT proof and your portal is unlocked. Our team will confirm your payment shortly.'
+          ? 'We have your EFT proof. Please allow up to 24 hours for us to confirm your payment and update you. Once confirmed, your full portal unlocks and you can continue.'
           : fullyPaid
           ? 'Thank you. Your booth is confirmed. The full festival portal is unlocked for you below.'
           : topUpDue

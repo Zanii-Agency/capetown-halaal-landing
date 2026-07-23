@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode, vendorInEftLane } from '@/lib/eft'
+import { getEftMode, vendorInEftLane, isEftAdmin } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -99,6 +99,13 @@ export async function GET(req: NextRequest) {
   // tab feed); otherwise the main inbox EXCLUDES them. globalOn = every vendor is
   // in the lane; individually-marked (⟦EFT⟧) vendors join even when global is off.
   const eftOnly = url.searchParams.get('eftOnly') === '1'
+  // The EFT tab feed (eftOnly=1) is DEV-ONLY. A non-EFT admin (e.g. Samreen) must
+  // never retrieve the EFT cohort's conversations, even by crafting this request
+  // directly. The main inbox (no eftOnly) already excludes them from every other
+  // admin's list; this seals the direct-API path too.
+  if (eftOnly && !isEftAdmin(user.email)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
   const eftGlobalOn = await getEftMode()
 
   // ---- Resolution maps: phone -> vendor, email -> vendor ----

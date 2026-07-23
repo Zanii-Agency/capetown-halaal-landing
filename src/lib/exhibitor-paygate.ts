@@ -28,11 +28,11 @@ function isPaid(app: Record<string, unknown>): boolean {
   if (app.paid_at) return true
   const state = parsePortalState((app.admin_notes as string) || null)
   if (state.payment?.status === 'paid') return true
-  // TEMPORARY EFT lane (lib/eft.ts): a vendor who uploaded their own EFT proof is
-  // PROVISIONALLY unlocked so they are not locked out mid-outage. This is the ONLY
-  // gate that honors it; every admin surface still reads payment.status and shows
-  // them unpaid until an operator reconciles. Reverts when the lane is retired.
-  if (state.payment?.eft_submitted_at) return true
+  // TEMPORARY EFT lane (lib/eft.ts): uploading an EFT proof does NOT unlock the
+  // portal. The vendor stays gated on /payments with a "we will confirm within 24
+  // hours" message until an OPERATOR verifies the money landed and reconciles them
+  // to really paid (which sets status/paid_at above). eft_submitted_at is only a
+  // provisional "proof on file" flag, never an access grant.
   return false
 }
 
