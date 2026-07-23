@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane } from './eft'
+import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -53,6 +53,19 @@ test('vendorInEftLane excludes already-paid vendors even under global mode', () 
   assert.equal(vendorInEftLane('just a note', true), true)
   // Unpaid + unmarked + global OFF -> NOT in the lane.
   assert.equal(vendorInEftLane('just a note', false), false)
+})
+
+test('vendorCommsInEftLane is the ACTIVE set only (added or uploaded proof), NOT global', () => {
+  // Individually added + unpaid -> comms move to the dev tab.
+  assert.equal(vendorCommsInEftLane('⟦EFT⟧', null), true)
+  // Uploaded an EFT proof + unpaid -> comms move.
+  const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-23T00:00:00Z' } })
+  assert.equal(vendorCommsInEftLane(submitted, null), true)
+  // Unpaid, not added, no proof -> stays on the main inbox even if global mode is on
+  // (global mode never enters this predicate). This is the bug that flooded the tab.
+  assert.equal(vendorCommsInEftLane('just a note', null), false)
+  // Already paid -> never in the comms lane.
+  assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z'), false)
 })
 
 test('eftReference prefers the allocated stall, else a stable short code', () => {

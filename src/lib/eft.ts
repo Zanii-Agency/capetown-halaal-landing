@@ -110,8 +110,21 @@ export async function getEftMode(): Promise<boolean> {
   }
 }
 
-/** True when the vendor is in the EFT lane: global mode on, OR individually
- *  selected (⟦EFT⟧), but NEVER if they have already paid. An already-paid
+/** Whose CONVERSATIONS move to the dev EFT tab (and off the main inbox) and who
+ *  gets the bot maintenance reply. This is the ACTIVE EFT set: individually added
+ *  (⟦EFT⟧) OR has uploaded an EFT proof (payment.eft_submitted_at), and not paid.
+ *  DELIBERATELY independent of global mode: turning global mode on shows every
+ *  unpaid vendor the EFT bank details, but must NOT sweep their conversations off
+ *  Samreen's inbox. Only a vendor actively being handled for EFT moves. */
+export function vendorCommsInEftLane(adminNotes: string | null | undefined, paidAt?: string | null): boolean {
+  if (paidAt) return false
+  const p = parsePortalState(adminNotes).payment
+  if (p?.status === 'paid') return false
+  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at
+}
+
+/** True when the vendor sees EFT details on their PAYMENT view: global mode on,
+ *  OR individually selected (⟦EFT⟧), but NEVER if they have already paid. An already-paid
  *  vendor (Yoco before the outage, or a reconciled EFT vendor) is treated as
  *  normal even while global mode is on: normal bot replies, their messages stay
  *  on the main inbox, and they see their paid state, not the EFT panel. Only

@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode, vendorInEftLane, isEftAdmin } from '@/lib/eft'
+import { vendorCommsInEftLane, isEftAdmin } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -94,10 +94,10 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const channelFilter = (url.searchParams.get('channel') || 'all') as 'all' | 'whatsapp' | 'email'
   const q = (url.searchParams.get('q') || '').trim().toLowerCase()
-  // TEMPORARY EFT lane: an EFT-lane vendor's conversations are pulled OUT of the
-  // main inbox and shown only on /admin/eft. eftOnly=1 returns ONLY them (the EFT
-  // tab feed); otherwise the main inbox EXCLUDES them. globalOn = every vendor is
-  // in the lane; individually-marked (⟦EFT⟧) vendors join even when global is off.
+  // TEMPORARY EFT lane: only vendors ACTIVELY handled for EFT (individually added,
+  // or who uploaded a proof) are pulled OUT of the main inbox onto the dev /admin/eft
+  // tab. INDEPENDENT of global mode: turning global on shows all unpaid vendors the
+  // EFT bank details but does NOT move their conversations off the main inbox.
   const eftOnly = url.searchParams.get('eftOnly') === '1'
   // The EFT tab feed (eftOnly=1) is DEV-ONLY. A non-EFT admin (e.g. Samreen) must
   // never retrieve the EFT cohort's conversations, even by crafting this request
@@ -106,7 +106,6 @@ export async function GET(req: NextRequest) {
   if (eftOnly && !isEftAdmin(user.email)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
-  const eftGlobalOn = await getEftMode()
 
   // ---- Resolution maps: phone -> vendor, email -> vendor ----
   const { data: apps } = await db
@@ -119,9 +118,9 @@ export async function GET(req: NextRequest) {
   for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null; admin_notes: string | null; paid_at: string | null }>) {
     if (a.phone) byPhone.set(norm(a.phone), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
     if (a.email) byEmail.set(a.email.toLowerCase(), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
-    // Paid vendors (paid_at set) are excluded from the lane, so they stay on the
-    // main inbox even under global EFT mode.
-    if (vendorInEftLane(a.admin_notes, eftGlobalOn, a.paid_at)) eftAppIds.add(a.id)
+    // Only the ACTIVE EFT set (added or uploaded-proof, not paid) leaves the main
+    // inbox. Global mode does NOT sweep unpaid vendors off Samreen's inbox.
+    if (vendorCommsInEftLane(a.admin_notes, a.paid_at)) eftAppIds.add(a.id)
   }
 
   // ---- Conversation state from vendor_tickets (status/star/assignee/unread) ----

@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
-import { getEftMode, vendorInEftLane, isEftAdmin } from '@/lib/eft'
+import { vendorCommsInEftLane, isEftAdmin } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -60,9 +60,8 @@ export async function GET(req: NextRequest) {
   // another matching row. Seals the direct-API path completely.
   if (!isEftAdmin(user.email)) {
     type LaneRow = { admin_notes: string | null; paid_at: string | null }
-    const globalOn = await getEftMode()
     const anyInLane = (rows: LaneRow[] | null) =>
-      (rows || []).some((r) => vendorInEftLane(r.admin_notes, globalOn, r.paid_at))
+      (rows || []).some((r) => vendorCommsInEftLane(r.admin_notes, r.paid_at))
     let blocked = false
     if (email) {
       const { data } = await db.from('vendor_applications').select('admin_notes, paid_at').eq('email', email)

@@ -31,6 +31,7 @@ export interface ResolvedIdentity {
     applicationCount?: number    // how many applications this person has (multi-apply)
     otherBusinesses?: string[]   // distinct business names on this phone, set ONLY when >1 (disambiguate)
     eftLane?: boolean            // TEMPORARY: vendor carries the ⟦EFT⟧ lane marker (lib/eft.ts)
+    eftSubmitted?: boolean       // TEMPORARY: vendor uploaded an EFT proof (payment.eft_submitted_at)
   }
   // Ticket-buyer role (schema = email, name, phone, ticket_count, total_spent,
   // last_purchase_at — no first/last name split, no order column).
@@ -134,6 +135,7 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
         applicationCount: (vendors || []).length,
         otherBusinesses: distinctBusinesses.length > 1 ? distinctBusinesses : undefined,
         eftLane: hasEftMarker(vendor.admin_notes),
+        eftSubmitted: !!portal.payment?.eft_submitted_at,
       },
     }
   }
