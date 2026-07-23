@@ -41,7 +41,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
           href="/admin/eft?tab=messages"
           className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px ${activeTab === 'messages' ? 'border-[#cd2653] text-[#cd2653]' : 'border-transparent text-[#1B1A17]/55 hover:text-[#1B1A17]'}`}
         >
-          Messages
+          Master lane
         </Link>
       </div>
     </div>

@@ -139,21 +139,19 @@ export async function getEftMode(): Promise<boolean> {
 /** Whose CONVERSATIONS move to the master EFT tab (and off the festival owner's
  *  main inbox) and who gets the bot maintenance reply. A vendor is in the comms
  *  lane when they are UNPAID and any of:
- *    - global EFT mode is ON (`globalOn`), which sweeps EVERY unpaid vendor, OR
- *    - individually added (⟦EFT⟧), OR
+ *    - individually added to the Master lane (⟦EFT⟧), OR
  *    - has uploaded an EFT proof (payment.eft_submitted_at).
- *  INVARIANT: a PAID vendor is NEVER in the lane, in any mode, so the festival
- *  owner keeps full visibility of paid vendors' chats + emails (Taona 2026-07-23).
- *  `⟦NOEFT⟧` is an explicit exclusion that beats global mode. `globalOn` is passed
- *  in so callers read getEftMode() once per request and reuse it across a loop.
- *  (Before 2026-07-23 global mode did NOT sweep; that was reversed on operator
- *  ask so the owner's numbers stay clean while the festival runs on EFT.) */
-export function vendorCommsInEftLane(adminNotes: string | null | undefined, paidAt?: string | null, globalOn = false): boolean {
+ *  DELIBERATELY NOT tied to global mode: turning global mode ON lets every unpaid
+ *  vendor PAY by EFT, but does NOT move their conversations. A PAID vendor is
+ *  never in the lane; ⟦NOEFT⟧ is an explicit exclusion. So the festival owner's
+ *  inbox stays normal for EVERYONE except the vendors actually being handled on
+ *  the Master lane (added by an operator, or who uploaded a proof). */
+export function vendorCommsInEftLane(adminNotes: string | null | undefined, paidAt?: string | null): boolean {
   if (paidAt) return false
-  if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins over global
+  if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins
   const p = parsePortalState(adminNotes).payment
   if (p?.status === 'paid') return false
-  return globalOn || hasEftMarker(adminNotes) || !!p?.eft_submitted_at
+  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at
 }
 
 /** True when the vendor sees EFT details on their PAYMENT view: global mode on,

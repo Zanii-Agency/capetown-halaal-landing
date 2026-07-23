@@ -55,25 +55,21 @@ test('vendorInEftLane excludes already-paid vendors even under global mode', () 
   assert.equal(vendorInEftLane('just a note', false), false)
 })
 
-test('vendorCommsInEftLane: active set without global, ALL unpaid with global (2026-07-23 reversal)', () => {
-  // Individually added + unpaid -> comms move to the master tab.
+test('vendorCommsInEftLane is the ACTIVE Master-lane set only (added or uploaded proof), never global', () => {
+  // Individually added + unpaid -> comms move to the Master lane.
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', null), true)
   // Uploaded an EFT proof + unpaid -> comms move.
   const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-23T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(submitted, null), true)
-  // Unpaid, not added, no proof, global OFF (default) -> stays on the owner's inbox.
+  // Unpaid, not added, no proof -> stays on the festival owner's inbox. Global mode
+  // is NOT a parameter, so an ordinary unpaid vendor is NEVER swept just for the mode.
   assert.equal(vendorCommsInEftLane('just a note', null), false)
-  assert.equal(vendorCommsInEftLane('just a note', null, false), false)
-  // Unpaid, global ON -> swept to the master tab (the reversal).
-  assert.equal(vendorCommsInEftLane('just a note', null, true), true)
-  // INVARIANT: a PAID vendor is never swept, even with global ON. The festival
-  // owner keeps full visibility of paid vendors' chats + emails.
+  // A PAID vendor is never on the Master lane -> owner keeps their chats + emails.
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z'), false)
-  assert.equal(vendorCommsInEftLane('just a note', '2026-07-23T00:00:00Z', true), false)
   const paidState = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } })
-  assert.equal(vendorCommsInEftLane(paidState, null, true), false)
-  // ⟦NOEFT⟧ explicit exclusion beats global ON.
-  assert.equal(vendorCommsInEftLane('⟦NOEFT⟧', null, true), false)
+  assert.equal(vendorCommsInEftLane(paidState, null), false)
+  // ⟦NOEFT⟧ explicit exclusion wins even when added.
+  assert.equal(vendorCommsInEftLane('⟦NOEFT⟧', null), false)
 })
 
 test('⟦NOEFT⟧ exclusion overrides global mode AND ⟦EFT⟧ in both predicates', () => {
