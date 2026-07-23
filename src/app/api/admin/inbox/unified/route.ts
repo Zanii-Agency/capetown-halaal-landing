@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { vendorCommsInEftLane, isEftAdmin } from '@/lib/eft'
+import { vendorCommsInEftLane, isEftAdmin, getEftMode } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -117,13 +117,16 @@ export async function GET(req: NextRequest) {
   const byId = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
   const eftAppIds = new Set<string>()
   // Only the ACTIVE Master-lane set leaves the festival owner's inbox: vendors an
-  // operator added (⟦EFT⟧) or who uploaded a proof. Global mode does NOT sweep
-  // ordinary unpaid vendors, so Samreen's inbox stays normal for everyone else.
+  // operator added (⟦EFT⟧), who uploaded a proof, or who revealed the bank details
+  // while global mode is on (i.e. are actually paying by EFT). Global mode does NOT
+  // sweep ordinary unpaid vendors who never engaged, so Samreen's inbox stays
+  // normal for everyone else. globalOn only gates the reveal signal, never a blanket sweep.
+  const globalOn = await getEftMode()
   for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null; admin_notes: string | null; paid_at: string | null }>) {
     if (a.phone) byPhone.set(norm(a.phone), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
     if (a.email) byEmail.set(a.email.toLowerCase(), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
     byId.set(a.id, { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
-    if (vendorCommsInEftLane(a.admin_notes, a.paid_at)) eftAppIds.add(a.id)
+    if (vendorCommsInEftLane(a.admin_notes, a.paid_at, globalOn)) eftAppIds.add(a.id)
   }
 
   // ---- Conversation state from vendor_tickets (status/star/assignee/unread) ----

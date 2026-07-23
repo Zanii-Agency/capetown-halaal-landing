@@ -55,20 +55,32 @@ test('vendorInEftLane excludes already-paid vendors even under global mode', () 
   assert.equal(vendorInEftLane('just a note', false), false)
 })
 
-test('vendorCommsInEftLane is the ACTIVE Master-lane set only (added or uploaded proof), never global', () => {
-  // Individually added + unpaid -> comms move to the Master lane.
+test('vendorCommsInEftLane seals the ACTIVE EFT set (added, proof, or reveal-under-global), never a blanket sweep', () => {
+  // Individually added + unpaid -> sealed, regardless of global mode.
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', null), true)
-  // Uploaded an EFT proof + unpaid -> comms move.
+  assert.equal(vendorCommsInEftLane('⟦EFT⟧', null, true), true)
+  // Uploaded an EFT proof + unpaid -> sealed regardless of global (mid-transaction).
   const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-23T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(submitted, null), true)
-  // Unpaid, not added, no proof -> stays on the festival owner's inbox. Global mode
-  // is NOT a parameter, so an ordinary unpaid vendor is NEVER swept just for the mode.
-  assert.equal(vendorCommsInEftLane('just a note', null), false)
-  // A PAID vendor is never on the Master lane -> owner keeps their chats + emails.
-  assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z'), false)
-  const paidState = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } })
-  assert.equal(vendorCommsInEftLane(paidState, null), false)
-  // ⟦NOEFT⟧ explicit exclusion wins even when added.
+  assert.equal(vendorCommsInEftLane(submitted, null, false), true)
+  // Revealed the bank details -> sealed ONLY while global mode is on. Lifts when
+  // global is off so a curious click does not strand the vendor on the master tab
+  // after Yoco returns. A vendor cannot pay by EFT without revealing, so this is
+  // what makes "anyone paying by EFT never reaches the owner" hold during the crisis.
+  const revealed = updatePortalStateImpl('note', { v: 1, payment: { eft_revealed_at: '2026-07-23T00:00:00Z' } })
+  assert.equal(vendorCommsInEftLane(revealed, null, true), true)   // global on  -> sealed
+  assert.equal(vendorCommsInEftLane(revealed, null, false), false) // global off -> reverts
+  assert.equal(vendorCommsInEftLane(revealed, null), false)        // default global off
+  // Unpaid, not added, no proof, no reveal -> stays on the owner's inbox EVEN under
+  // global mode. Global alone NEVER sweeps an un-engaged vendor (the reverted class bug).
+  assert.equal(vendorCommsInEftLane('just a note', null, true), false)
+  // A PAID vendor is never sealed, even having revealed while global on.
+  const paidRevealed = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', eft_revealed_at: '2026-07-23T00:00:00Z' } })
+  assert.equal(vendorCommsInEftLane(paidRevealed, null, true), false)
+  assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z', true), false)
+  // ⟦NOEFT⟧ explicit exclusion wins even under global + reveal.
+  const noEftRevealed = withNoEftMarker(updatePortalStateImpl('note', { v: 1, payment: { eft_revealed_at: '2026-07-23T00:00:00Z' } }))
+  assert.equal(vendorCommsInEftLane(noEftRevealed, null, true), false)
   assert.equal(vendorCommsInEftLane('⟦NOEFT⟧', null), false)
 })
 

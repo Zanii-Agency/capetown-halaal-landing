@@ -8,7 +8,7 @@
 
 import { useState } from 'react'
 import {
-  Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check,
+  Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check, Eye,
 } from 'lucide-react'
 
 interface Bank {
@@ -52,6 +52,17 @@ export default function EftPanel({
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Bank details start hidden behind a reveal button. Revealing them is a strong
+  // "about to pay by EFT" signal, so the click pings the operator (and seals the
+  // vendor off the festival owner's inbox server-side). A vendor who has already
+  // submitted a proof has clearly seen the details, so show them unhidden.
+  const [revealed, setRevealed] = useState(submitted)
+
+  function reveal() {
+    setRevealed(true)
+    // Fire-and-forget: the heads-up to the operator must never block the reveal.
+    fetch('/api/exhibitor/eft-intent', { method: 'POST' }).catch(() => {})
+  }
 
   async function submit() {
     if (!file) { setError('Please choose your proof of payment first.'); return }
@@ -108,17 +119,33 @@ export default function EftPanel({
           </div>
         </div>
         {bank ? (
-          <div>
-            <Row label="Account name" value={bank.accountName} />
-            <Row label="Bank" value={bank.bank} />
-            <Row label="Account number" value={bank.accountNumber} />
-            <Row label="Branch code" value={bank.branchCode} />
-            {bank.accountType && <Row label="Account type" value={bank.accountType} />}
-            <Row label="Reference" value={reference} />
-            <p className="text-xs text-white/50 mt-3">
-              Use <span className="font-semibold text-white/80">{reference}</span> as your payment reference so we can match your payment to {businessName}.
-            </p>
-          </div>
+          revealed ? (
+            <div>
+              <Row label="Account name" value={bank.accountName} />
+              <Row label="Bank" value={bank.bank} />
+              <Row label="Account number" value={bank.accountNumber} />
+              <Row label="Branch code" value={bank.branchCode} />
+              {bank.accountType && <Row label="Account type" value={bank.accountType} />}
+              <Row label="Reference" value={reference} />
+              <p className="text-xs text-white/50 mt-3">
+                Use <span className="font-semibold text-white/80">{reference}</span> as your payment reference so we can match your payment to {businessName}.
+              </p>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={reveal}
+              className="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 transition-colors px-5 py-4 text-left flex items-center gap-3"
+            >
+              <span className="w-9 h-9 rounded-lg flex items-center justify-center bg-white/10 text-[#ff7a9c] shrink-0">
+                <Eye className="w-4 h-4" />
+              </span>
+              <span>
+                <span className="block text-sm font-semibold text-white">Show bank details to pay</span>
+                <span className="block text-xs text-white/55 mt-0.5">Tap to reveal the account number and your payment reference.</span>
+              </span>
+            </button>
+          )
         ) : (
           <p className="text-sm text-white/70 flex items-start gap-2">
             <Info className="w-4 h-4 mt-0.5 shrink-0" />

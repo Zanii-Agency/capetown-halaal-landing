@@ -108,6 +108,12 @@ export interface PortalState {
      *  vendor as unpaid until an operator reconciles via the normal mark-paid.
      *  Never set by confirmPayment(). Writer: /api/exhibitor/eft-proof. */
     eft_submitted_at?: string
+    /** TEMPORARY EFT lane. ISO time the vendor last clicked "Show bank details to
+     *  pay" on their EFT panel — an intent signal they are about to pay. Used ONLY
+     *  to throttle the master-only WhatsApp heads-up (at most once per 12h) so a
+     *  vendor re-clicking does not buzz the operator repeatedly. Never touches
+     *  status/paid_at. Writer: /api/exhibitor/eft-intent. */
+    eft_revealed_at?: string
     /** EFT receipt / refund proof files. The file lives in the private
      *  vendor-docs bucket; only the storage path is stored here, the vendor
      *  portal mints a short-lived signed URL server-side (Law 2). kind:
