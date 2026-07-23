@@ -85,11 +85,11 @@ export default function EftPanel({
         </div>
       )}
 
-      {/* Maintenance + channel notice: which channels we actually receive. */}
+      {/* Channel notice: which channels we actually receive. */}
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 text-amber-800">
         <Info className="w-4 h-4 shrink-0 mt-0.5" />
         <p className="text-sm">
-          Card payments are paused for now, so please pay by EFT below. To reach us, please use only your portal inbox, email at{' '}
+          Please pay your stall fee by EFT using the details below and upload your proof of payment. To reach us, use your portal inbox, email at{' '}
           <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>, or WhatsApp. We cannot see or reply to messages on any other channel, including social media. Your payment status updates here on your portal.
         </p>
       </div>

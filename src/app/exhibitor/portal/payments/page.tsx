@@ -125,7 +125,7 @@ export default async function PaymentsPage() {
           : topUpDue
           ? 'Extra charges were added to your stall. Please settle the balance below to stay confirmed.'
           : inEftLane
-          ? 'Card payments are paused. Please pay by EFT using the details below and upload your proof of payment.'
+          ? 'Please pay your stall fee by EFT using the details below, then upload your proof of payment.'
           : 'Your portal unlocks the moment your stall fee clears. Pay by card via Yoco, EFT details on request via support.'}
       />
 
