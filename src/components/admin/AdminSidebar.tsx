@@ -88,7 +88,7 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
   const groups: NavGroup[] = eftAdmin
     ? navGroups.map((g) =>
         g.label === 'MONEY'
-          ? { ...g, items: [...g.items, { name: 'EFT (Yoco down)', href: '/admin/eft', icon: LifeBuoy }] }
+          ? { ...g, items: [...g.items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }] }
           : g,
       )
     : navGroups

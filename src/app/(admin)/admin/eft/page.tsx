@@ -26,7 +26,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
 
   const header = (
     <div className="mb-6">
-      <h1 className="font-serif text-2xl text-[#1B1A17]">EFT payments (Yoco down)</h1>
+      <h1 className="font-serif text-2xl text-[#1B1A17]">Master Lane</h1>
       <p className="text-sm text-[#1B1A17]/55 mt-1">
         Temporary lane. Managed only from here, never on the main admin. Signed in as {email}.
       </p>
