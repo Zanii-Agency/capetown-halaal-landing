@@ -68,6 +68,9 @@ const navGroups: NavGroup[] = [
 interface AdminSidebarProps {
   role: AdminRole
   email: string | null
+  // TEMPORARY EFT lane: show the dev-only /admin/eft nav item. Computed in the
+  // server layout (isEftAdmin) so this client component never imports @/lib/eft.
+  eftAdmin?: boolean
 }
 
 const ROLE_BADGE_STYLE: Record<AdminRole, { label: string; cls: string; Icon: typeof Shield }> = {
@@ -76,11 +79,19 @@ const ROLE_BADGE_STYLE: Record<AdminRole, { label: string; cls: string; Icon: ty
   viewer:   { label: 'Viewer',   cls: 'bg-neutral-100 text-neutral-600 border-neutral-200', Icon: Eye },
 }
 
-export function AdminSidebar({ role, email }: AdminSidebarProps) {
+export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const router = useRouter()
   const badge = ROLE_BADGE_STYLE[role]
+  // TEMPORARY EFT lane: inject the dev-only EFT item into the MONEY group.
+  const groups: NavGroup[] = eftAdmin
+    ? navGroups.map((g) =>
+        g.label === 'MONEY'
+          ? { ...g, items: [...g.items, { name: 'EFT (Yoco down)', href: '/admin/eft', icon: LifeBuoy }] }
+          : g,
+      )
+    : navGroups
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
   const [supportUnread, setSupportUnread] = useState(0)
@@ -237,7 +248,7 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 p-3 overflow-y-auto">
-        {navGroups.map((group, gi) => (
+        {groups.map((group, gi) => (
           <div key={group.label ?? `group-${gi}`} className="space-y-1">
             {group.label && !collapsed && (
               <p className="px-4 mt-6 mb-1 text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">

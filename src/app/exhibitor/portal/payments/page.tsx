@@ -6,6 +6,8 @@ import { paymentsEnabled, paymentReference } from '@/lib/payments'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
+import EftPanel from '@/components/exhibitor/EftPanel'
+import { getEftBankDetails, eftReference, getEftMode, vendorInEftLane } from '@/lib/eft'
 import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
   PageShell, PageHeader, Card
@@ -27,6 +29,18 @@ export default async function PaymentsPage() {
   const reference = state.payment?.reference || (app ? paymentReference(app.id as string) : null)
   const attemptedAt = state.payment?.attempted_at as string | undefined
   const failedAttempts = (state.payment?.failed_attempts as number | undefined) || 0
+
+  // TEMPORARY EFT lane: a vendor pays by EFT while Yoco is down when global EFT
+  // mode is ON, or when an operator selected them individually (⟦EFT⟧). They see
+  // EftPanel (bank details + proof upload) instead of the Yoco panel; once a proof
+  // is on file the portal reads a provisional "received, pending" state.
+  const eftModeOn = await getEftMode()
+  // Paid vendors are excluded from the lane (they keep their normal paid view even
+  // under global mode); only unpaid lane vendors see the EFT panel.
+  const inEftLane = vendorInEftLane(app?.admin_notes as string, eftModeOn, app?.paid_at as string | null)
+  const eftSubmitted = !!state.payment?.eft_submitted_at
+  const eftPending = eftSubmitted && status !== 'paid'
+  const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null }) : 'CTH'
 
   // EFT payment receipts / refund proofs an organiser uploaded for this vendor.
   // Each proof's file lives in the private vendor-docs bucket; we mint a short
@@ -81,7 +95,9 @@ export default async function PaymentsPage() {
   // Countdown banner. Until the vendor pays, the rest of the portal is locked
   // (requirePaid on every other route redirects them here). The banner makes
   // the 30-day window obvious and the consequence concrete.
-  const showCountdown = status !== 'paid' && daysLeft !== null
+  // Suppress the card-centric countdown (it mentions WhatsApp reminders) for any
+  // EFT-lane vendor and once EFT proof is in.
+  const showCountdown = status !== 'paid' && !eftPending && !inEftLane && daysLeft !== null
   const countdownTone =
     daysLeft === null ? 'neutral'
     : daysLeft < 0 ? 'overdue'
@@ -101,18 +117,22 @@ export default async function PaymentsPage() {
       <MiniTaskStrip activeKey="payment" />
       <PageHeader
         kicker="Payments"
-        title={fullyPaid ? 'You are paid in full' : topUpDue ? 'Additional payment due' : 'Pay your stall fee'}
-        subtitle={fullyPaid
+        title={eftPending ? 'Payment received' : fullyPaid ? 'You are paid in full' : topUpDue ? 'Additional payment due' : 'Pay your stall fee'}
+        subtitle={eftPending
+          ? 'We have your EFT proof and your portal is unlocked. Our team will confirm your payment shortly.'
+          : fullyPaid
           ? 'Thank you. Your booth is confirmed. The full festival portal is unlocked for you below.'
           : topUpDue
           ? 'Extra charges were added to your stall. Please settle the balance below to stay confirmed.'
+          : inEftLane
+          ? 'Card payments are paused. Please pay by EFT using the details below and upload your proof of payment.'
           : 'Your portal unlocks the moment your stall fee clears. Pay by card via Yoco, EFT details on request via support.'}
       />
 
       {/* Wrong size? Let the vendor change stall size before paying so the fee
           matches the booth they want. Reachable pre-payment (stall-request page
           gates on approval, not payment). */}
-      {!fullyPaid && (
+      {!fullyPaid && !eftPending && (
         <div className="rounded-2xl border border-[#cd2653]/20 bg-[#cd2653]/5 p-4 mb-6 text-sm text-[#1B1A17]">
           Need a bigger or smaller booth? Change your stall size or request a different position{' '}
           <Link href="/exhibitor/portal/stand/change" className="font-semibold text-[#cd2653] underline underline-offset-2">
@@ -229,16 +249,26 @@ export default async function PaymentsPage() {
           </Card>
         )}
 
-        <PaymentPanel
-          enabled={paymentsEnabled()}
-          status={status}
-          amount={amount}
-          outstanding={outstanding}
-          reference={reference}
-          dueDate={due}
-          attemptedAt={attemptedAt || null}
-          failedAttempts={failedAttempts}
-        />
+        {inEftLane && !fullyPaid ? (
+          <EftPanel
+            submitted={eftSubmitted}
+            bank={getEftBankDetails()}
+            reference={eftRef}
+            amount={outstanding ?? amount}
+            businessName={(app?.business_name as string) || 'your business'}
+          />
+        ) : (
+          <PaymentPanel
+            enabled={paymentsEnabled()}
+            status={status}
+            amount={amount}
+            outstanding={outstanding}
+            reference={reference}
+            dueDate={due}
+            attemptedAt={attemptedAt || null}
+            failedAttempts={failedAttempts}
+          />
+        )}
 
         {proofViews.length > 0 && (
           <Card>
@@ -253,7 +283,7 @@ export default async function PaymentsPage() {
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-[#1B1A17]">
-                      {p.kind === 'refund' ? 'Refund proof' : 'Payment receipt'}
+                      {p.kind === 'refund' ? 'Refund proof' : p.kind === 'eft_submission' ? 'Your EFT proof' : 'Payment receipt'}
                     </p>
                     {p.note && (
                       <p className="text-sm text-[#1B1A17]/70 mt-0.5 break-words">{p.note}</p>

@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getEftMode, vendorInEftLane } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -93,17 +94,27 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const channelFilter = (url.searchParams.get('channel') || 'all') as 'all' | 'whatsapp' | 'email'
   const q = (url.searchParams.get('q') || '').trim().toLowerCase()
+  // TEMPORARY EFT lane: an EFT-lane vendor's conversations are pulled OUT of the
+  // main inbox and shown only on /admin/eft. eftOnly=1 returns ONLY them (the EFT
+  // tab feed); otherwise the main inbox EXCLUDES them. globalOn = every vendor is
+  // in the lane; individually-marked (⟦EFT⟧) vendors join even when global is off.
+  const eftOnly = url.searchParams.get('eftOnly') === '1'
+  const eftGlobalOn = await getEftMode()
 
   // ---- Resolution maps: phone -> vendor, email -> vendor ----
   const { data: apps } = await db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, phone, email')
+    .select('id, business_name, contact_name, phone, email, admin_notes, paid_at')
     .limit(2000)
   const byPhone = new Map<string, { id: string; business_name: string | null; contact_name: string | null; email: string | null }>()
   const byEmail = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
-  for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null }>) {
+  const eftAppIds = new Set<string>()
+  for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null; admin_notes: string | null; paid_at: string | null }>) {
     if (a.phone) byPhone.set(norm(a.phone), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
     if (a.email) byEmail.set(a.email.toLowerCase(), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
+    // Paid vendors (paid_at set) are excluded from the lane, so they stay on the
+    // main inbox even under global EFT mode.
+    if (vendorInEftLane(a.admin_notes, eftGlobalOn, a.paid_at)) eftAppIds.add(a.id)
   }
 
   // ---- Conversation state from vendor_tickets (status/star/assignee/unread) ----
@@ -428,18 +439,22 @@ export async function GET(req: NextRequest) {
   })
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
 
-  // Counts are ALWAYS computed from the full cross-channel list (never the
-  // channel-filtered display list below), so the tab badges stay true no
-  // matter which tab is currently selected.
+  // TEMPORARY EFT lane partition. A contact is EFT iff it resolves to a vendor in
+  // the lane; non-vendor ticket buyers are never EFT and always stay on the main
+  // inbox. eftOnly=1 keeps ONLY EFT contacts (the /admin/eft feed); the main inbox
+  // drops them. Counts derive from the SAME partition so the tab badges stay true.
+  const isEftContact = (c: { application_id: string | null }) => !!c.application_id && eftAppIds.has(c.application_id)
+  const scoped = eftOnly ? list.filter(isEftContact) : list.filter((c) => !isEftContact(c))
+
   const counts = {
-    all: list.length,
-    whatsapp: list.filter((c) => c.channels.includes('whatsapp')).length,
-    email: list.filter((c) => c.channels.includes('email')).length,
-    unread: list.filter((c) => c.unread).length,
-    needs_response: list.filter((c) => c.needs_response).length,
+    all: scoped.length,
+    whatsapp: scoped.filter((c) => c.channels.includes('whatsapp')).length,
+    email: scoped.filter((c) => c.channels.includes('email')).length,
+    unread: scoped.filter((c) => c.unread).length,
+    needs_response: scoped.filter((c) => c.needs_response).length,
   }
 
-  const displayList = channelFilter === 'all' ? list : list.filter((c) => c.channels.includes(channelFilter))
+  const displayList = channelFilter === 'all' ? scoped : scoped.filter((c) => c.channels.includes(channelFilter))
 
   return NextResponse.json({ contacts: displayList.slice(0, 500), counts })
 }

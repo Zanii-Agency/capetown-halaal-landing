@@ -6,6 +6,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { findAdmin, type BotAdmin } from '@/lib/bot/admins'
+import { hasEftMarker } from '@/lib/eft'
 
 export type IdentityRole = 'admin' | 'vendor' | 'ticket_buyer' | 'unknown'
 
@@ -29,6 +30,7 @@ export interface ResolvedIdentity {
     tier_label: string | null
     applicationCount?: number    // how many applications this person has (multi-apply)
     otherBusinesses?: string[]   // distinct business names on this phone, set ONLY when >1 (disambiguate)
+    eftLane?: boolean            // TEMPORARY: vendor carries the ⟦EFT⟧ lane marker (lib/eft.ts)
   }
   // Ticket-buyer role (schema = email, name, phone, ticket_count, total_spent,
   // last_purchase_at — no first/last name split, no order column).
@@ -131,6 +133,7 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
         tier_label: vendor.preferred_booth_tier ? tierLabel(vendor.preferred_booth_tier) : null,
         applicationCount: (vendors || []).length,
         otherBusinesses: distinctBusinesses.length > 1 ? distinctBusinesses : undefined,
+        eftLane: hasEftMarker(vendor.admin_notes),
       },
     }
   }

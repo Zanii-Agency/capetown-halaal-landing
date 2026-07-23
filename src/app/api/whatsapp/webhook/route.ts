@@ -22,6 +22,7 @@ import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { findAdmin, isDevNumber } from '@/lib/bot/admins'
 import { resolveIdentity } from '@/lib/bot/identity'
+import { getEftMode, EFT_MAINTENANCE_MESSAGE } from '@/lib/eft'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
 import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
@@ -489,6 +490,22 @@ async function handleInbound(msg: {
   // count, etc.). Admins are already handled above; resolution here is for
   // vendors / ticket buyers / unknowns.
   const identity = await resolveIdentity(e164)
+
+  // TEMPORARY EFT lane (lib/eft.ts). An UNPAID lane vendor (individually marked
+  // ⟦EFT⟧, or ALL unpaid vendors while global EFT mode is on) gets a maintenance
+  // holding reply and is steered to email, instead of the normal agent/brain.
+  // An ALREADY-PAID vendor (Yoco before the outage, or a reconciled EFT vendor)
+  // is explicitly excluded: they fall through to the normal bot as if nothing
+  // changed, and their messages stay on the main inbox. Marker is checked before
+  // the global-mode DB read so it only runs for un-marked vendors.
+  // zanii-codef: one site_events read per un-marked unpaid vendor message; fine
+  // at bot volume, add a cached flag if message throughput ever spikes.
+  const vendorPaid = identity.vendor?.payment_status === 'paid'
+  if (identity.role === 'vendor' && !vendorPaid && (identity.vendor?.eftLane || (await getEftMode()))) {
+    const res = await sendText(e164, EFT_MAINTENANCE_MESSAGE)
+    await logMessage({ direction: 'out', wa_phone: e164, body: EFT_MAINTENANCE_MESSAGE, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+    return
+  }
 
   const history = await recentHistory(e164)
   // New brain shape: pass the latest user turn as the message, prior turns as

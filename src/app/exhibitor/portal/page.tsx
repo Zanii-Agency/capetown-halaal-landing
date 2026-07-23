@@ -76,6 +76,12 @@ export default async function Overview() {
   const docsTileValue = requiredDocs.length === 0 ? '—' : `${docsUploaded}/${requiredDocs.length}`
   const staffCount = (state.staff || []).length
   const isPaid = state.payment?.status === 'paid' || app?.payment_status === 'paid'
+  // TEMPORARY EFT lane: the vendor uploaded EFT proof but an operator has not yet
+  // reconciled it. Provisional, honest state (NOT "paid"). `paymentDone` advances
+  // the checklist / unlocks Pay-Now so they are not nagged, while the label stays
+  // truthful. isPaid still gates the logo nudge + stage pipeline (real paid only).
+  const eftPending = !!state.payment?.eft_submitted_at && !isPaid
+  const paymentDone = isPaid || eftPending
   const profileLive = !!(state.profile?.logo_path || state.profile?.description)
   const paymentDue = (app?.payment_due_date as string) || '1 Sep 2026'
 
@@ -85,7 +91,7 @@ export default async function Overview() {
     { done: true, label: 'Application approved', sub: 'Welcome to the festival', href: '/exhibitor/portal' },
     { done: termsAccepted, label: 'Accept terms & conditions', sub: termsAccepted ? 'Recorded against your account' : 'Required before payment', href: '/exhibitor/portal/terms' },
     { done: contractSigned, label: 'Sign vendor contract', sub: contractSigned ? 'Vendor Contract 2026 signed' : 'Locks your stall fee and your spot.', href: '/exhibitor/portal/contract' },
-    { done: isPaid, label: 'Pay your stall fee', sub: isPaid ? 'Received, thank you' : `Due ${paymentDue}`, href: '/exhibitor/portal/payments' },
+    { done: paymentDone, label: 'Pay your stall fee', sub: isPaid ? 'Received, thank you' : eftPending ? 'EFT proof received, pending confirmation' : `Due ${paymentDue}`, href: '/exhibitor/portal/payments' },
     { done: !!stall, label: 'Stall allocated', sub: stall ? `${stall} · ${stallZone}` : 'Organisers will place you', href: '/exhibitor/portal/stand' },
     {
       done: requiredDocs.length === 0 || docsUploaded === requiredDocs.length,
@@ -158,7 +164,7 @@ export default async function Overview() {
             <StatTile icon={MapPin} value={stall || 'Pending'} label={stall ? (stallZone || 'your stall') : 'stall not set'} href="/exhibitor/portal/stand" />
             <StatTile icon={FileCheck} value={docsTileValue} label={docsLabel} href="/exhibitor/portal/documents" />
             <StatTile icon={Users} value={`${staffCount}`} label="team registered" href="/exhibitor/portal/staff" />
-            <StatTile icon={CreditCard} value={isPaid ? 'Paid' : 'Due'} label={isPaid ? 'stall fee' : paymentDue} href="/exhibitor/portal/payments" />
+            <StatTile icon={CreditCard} value={isPaid ? 'Paid' : eftPending ? 'Pending' : 'Due'} label={isPaid ? 'stall fee' : eftPending ? 'EFT confirming' : paymentDue} href="/exhibitor/portal/payments" />
             <StatTile icon={Store} value={profileLive ? 'Live' : 'Set up'} label="public profile" href="/exhibitor/portal/profile" />
           </div>
         </div>
@@ -166,7 +172,7 @@ export default async function Overview() {
         {/* Quick actions */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <ActionCard href="/exhibitor/portal/payments" label="Pay Now"
-            icon={CreditCard} disabled={isPaid} />
+            icon={CreditCard} disabled={paymentDone} />
           <ActionCard href="/exhibitor/portal/documents" label="Upload Docs"
             icon={Upload} />
           <ActionCard href="/exhibitor/portal/stand" label="View My Stand"

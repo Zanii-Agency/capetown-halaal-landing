@@ -180,7 +180,10 @@ interface VendorContext {
   stall: string | null; docs_complete: boolean; contract_signed: boolean
 }
 
-export function CustomerInboxClient({ currentUserId, operators }: { currentUserId: string; operators: Operator[] }) {
+export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { currentUserId: string; operators: Operator[]; eftOnly?: boolean }) {
+  // TEMPORARY EFT lane: when mounted on /admin/eft this appends &eftOnly=1 to the
+  // contact-list fetches, so the same inbox shows ONLY EFT-lane conversations.
+  const eftParam = eftOnly ? '&eftOnly=1' : ''
   const [tab, setTab] = useState<Tab>('all')
   const [tagFilter, setTagFilter] = useState<InboxTag | null>(null)
   const [channel, setChannel] = useState<Channel>('all')
@@ -239,11 +242,11 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/admin/inbox/unified?channel=${channel}`)
+      const res = await fetch(`/api/admin/inbox/unified?channel=${channel}${eftParam}`)
       const j = await res.json()
       if (res.ok) { setContacts(j.contacts || []); setCounts(j.counts || null) }
     } finally { setLoading(false) }
-  }, [channel])
+  }, [channel, eftParam])
 
   useEffect(() => { load() }, [load])
 
@@ -254,7 +257,7 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
     if (!term) { if (prevSearch.current) load(); prevSearch.current = ''; return }
     prevSearch.current = term
     const t = setTimeout(() => {
-      fetch(`/api/admin/inbox/unified?channel=${channel}&q=${encodeURIComponent(term)}`)
+      fetch(`/api/admin/inbox/unified?channel=${channel}&q=${encodeURIComponent(term)}${eftParam}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => { if (j) { setContacts(j.contacts || []); setCounts(j.counts || null) } })
         .catch(() => { /* keep last */ })
@@ -273,11 +276,11 @@ export function CustomerInboxClient({ currentUserId, operators }: { currentUserI
   // Silent refreshers for polling (no spinners, no state resets).
   const loadSilent = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/inbox/unified?channel=${channel}`)
+      const res = await fetch(`/api/admin/inbox/unified?channel=${channel}${eftParam}`)
       const j = await res.json()
       if (res.ok) { setContacts(j.contacts || []); setCounts(j.counts || null) }
     } catch { /* keep last good */ }
-  }, [channel])
+  }, [channel, eftParam])
 
   const refreshMessages = useCallback(async (c: Contact) => {
     try {

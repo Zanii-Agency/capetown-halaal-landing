@@ -100,11 +100,20 @@ export interface PortalState {
     zone?: string
     /** Free-text note the operator added when capturing a manual payment. */
     capture_note?: string
-    /** EFT receipt / refund proof files an operator uploaded. The file lives in
-     *  the private vendor-docs bucket; only the storage path is stored here, the
-     *  vendor portal mints a short-lived signed URL server-side (Law 2). Writer:
-     *  /api/admin/vendors/[id]/payment-proof. */
-    proofs?: Array<{ path: string; kind: 'receipt' | 'refund'; note?: string; uploaded_at: string }>
+    /** TEMPORARY EFT lane (Yoco-outage side-channel, lib/eft.ts). ISO time the
+     *  VENDOR uploaded their own EFT proof. This is a PROVISIONAL flag read ONLY
+     *  by the vendor-side portal (paygate + portal pages) to show "payment
+     *  received, pending confirmation" and unlock the portal. It deliberately
+     *  does NOT touch `status`/`paid_at`, so every admin surface still shows the
+     *  vendor as unpaid until an operator reconciles via the normal mark-paid.
+     *  Never set by confirmPayment(). Writer: /api/exhibitor/eft-proof. */
+    eft_submitted_at?: string
+    /** EFT receipt / refund proof files. The file lives in the private
+     *  vendor-docs bucket; only the storage path is stored here, the vendor
+     *  portal mints a short-lived signed URL server-side (Law 2). kind:
+     *  'receipt'|'refund' = operator-uploaded (/api/admin/vendors/[id]/payment-proof);
+     *  'eft_submission' = the vendor's own EFT proof (/api/exhibitor/eft-proof). */
+    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission'; note?: string; uploaded_at: string }>
   }
   docs?: DocRecord[]
   staff?: StaffMember[]

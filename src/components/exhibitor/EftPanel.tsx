@@ -1,0 +1,170 @@
+'use client'
+
+// TEMPORARY EFT lane (Yoco-outage side-channel). Shown INSTEAD of the Yoco card
+// PaymentPanel to vendors an operator has put in the EFT lane (⟦EFT⟧ marker).
+// The vendor sees CTH's bank details, pays by EFT, and uploads their proof (or
+// emails support). On submit the portal flips to a PROVISIONAL "payment received,
+// pending confirmation" state and unlocks. No em-dashes anywhere (Law 7).
+
+import { useState } from 'react'
+import {
+  Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check,
+} from 'lucide-react'
+
+interface Bank {
+  accountName: string
+  bank: string
+  accountNumber: string
+  branchCode: string
+  accountType?: string
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="flex items-center justify-between gap-3 py-2 border-b border-white/10 last:border-0">
+      <span className="text-sm text-white/60">{label}</span>
+      <span className="flex items-center gap-2">
+        <span className="text-sm font-semibold text-white">{value}</span>
+        <button
+          type="button"
+          onClick={() => { navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500) }}
+          className="text-white/50 hover:text-white transition-colors"
+          aria-label={`Copy ${label}`}
+        >
+          {copied ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+        </button>
+      </span>
+    </div>
+  )
+}
+
+export default function EftPanel({
+  submitted, bank, reference, amount, businessName,
+}: {
+  submitted: boolean
+  bank: Bank | null
+  reference: string
+  amount: number | null
+  businessName: string
+}) {
+  const [file, setFile] = useState<File | null>(null)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit() {
+    if (!file) { setError('Please choose your proof of payment first.'); return }
+    setBusy(true); setError(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      if (note.trim()) fd.append('note', note.trim())
+      const res = await fetch('/api/exhibitor/eft-proof', { method: 'POST', body: fd })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || 'Upload failed')
+      window.location.reload()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Provisional confirmation once a proof is on file. */}
+      {submitted && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 flex items-start gap-4 text-emerald-800">
+          <CheckCircle2 className="w-6 h-6 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Payment received, pending confirmation</p>
+            <p className="text-sm mt-1 opacity-90">
+              Thank you. We have your EFT proof and your portal is unlocked. Our team will confirm the payment on our side shortly. You do not need to do anything else.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Maintenance notice: explains why no WhatsApp confirmation arrives. */}
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 text-amber-800">
+        <Info className="w-4 h-4 shrink-0 mt-0.5" />
+        <p className="text-sm">
+          Card payments are paused for now, so please pay by EFT below. WhatsApp is under maintenance, so please contact us by email only at{' '}
+          <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>. Your payment status updates here on your portal.
+        </p>
+      </div>
+
+      {/* Bank details. */}
+      <div className="rounded-2xl p-6 border bg-[#1a1416] border-[#1a1416] text-white">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center bg-white/10 text-[#ff7a9c]">
+            <Building2 className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-sm text-white/60">Pay by EFT</p>
+            <p className="text-2xl font-bold text-white">
+              {amount ? `R${amount.toFixed(2)} due` : 'Amount pending'}
+            </p>
+          </div>
+        </div>
+        {bank ? (
+          <div>
+            <Row label="Account name" value={bank.accountName} />
+            <Row label="Bank" value={bank.bank} />
+            <Row label="Account number" value={bank.accountNumber} />
+            <Row label="Branch code" value={bank.branchCode} />
+            {bank.accountType && <Row label="Account type" value={bank.accountType} />}
+            <Row label="Reference" value={reference} />
+            <p className="text-xs text-white/50 mt-3">
+              Use <span className="font-semibold text-white/80">{reference}</span> as your payment reference so we can match your payment to {businessName}.
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-white/70 flex items-start gap-2">
+            <Info className="w-4 h-4 mt-0.5 shrink-0" />
+            Please email support@youngatheart.co.za for our EFT banking details and quote reference {reference}.
+          </p>
+        )}
+      </div>
+
+      {/* Upload proof. */}
+      <div className="bg-white border border-neutral-200 rounded-2xl p-6">
+        <p className="font-semibold text-neutral-900 mb-1">{submitted ? 'Upload another proof' : 'Upload your proof of payment'}</p>
+        <p className="text-sm text-neutral-500 mb-4">
+          Attach your EFT confirmation or bank slip (PDF or image, up to 10MB). You can also email it to{' '}
+          <a href="mailto:support@youngatheart.co.za" className="underline hover:text-neutral-700">support@youngatheart.co.za</a>.
+        </p>
+        {error && <div className="p-3 mb-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+        <input
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
+          onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null) }}
+          className="block w-full text-sm text-neutral-600 mb-3 file:mr-3 file:rounded-lg file:border-0 file:bg-[#cd2653]/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-[#cd2653] hover:file:bg-[#cd2653]/15"
+        />
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Optional note (date paid, amount, who paid)"
+          rows={2}
+          className="block w-full text-sm rounded-lg border border-neutral-200 p-3 mb-3 focus:border-[#cd2653] focus:outline-none"
+        />
+        <button
+          onClick={submit}
+          disabled={busy || !file}
+          className="bg-[#cd2653] hover:bg-[#b01f45] text-white font-semibold rounded-lg px-5 py-3 text-sm flex items-center gap-2 disabled:opacity-60"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          {submitted ? 'Upload another proof' : 'Submit proof of payment'}
+        </button>
+      </div>
+
+      {/* Support fallback. */}
+      <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5">
+        <p className="text-sm text-neutral-700 flex items-start gap-2">
+          <Mail className="w-4 h-4 text-[#cd2653] mt-0.5 shrink-0" />
+          Any trouble paying? Email <a href="mailto:support@youngatheart.co.za" className="font-semibold text-[#cd2653] underline">support@youngatheart.co.za</a> and we will help you.
+        </p>
+      </div>
+    </div>
+  )
+}
