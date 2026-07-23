@@ -16,7 +16,23 @@ const unknown: VendorSession = { status: 'unknown', waPhone: '+27821234567' } as
 test('verified vendor prompt carries the part-payment 31-August policy', () => {
   const p = systemPrompt(verified)
   assert.match(p, /31 August 2026/)
-  assert.match(p, /RESOLVE, DO NOT DEFLECT/)
+  assert.match(p, /actually solve it with your tools/) // solve-don't-deflect discipline
+})
+
+test('persona: support person, not a robot; no ticket-buyer payment line for vendors', () => {
+  const p = systemPrompt(verified)
+  assert.match(p, /support person for the Young at Heart Festival/)
+  assert.match(p, /Wa alaikum assalam/)               // keeps the Islamic warmth
+  assert.match(p, /cash at the event/)                // the guard AGAINST saying it to vendors
+  assert.match(p, /card-in-the-portal only/)
+})
+
+test('EFT nuance: legit organisation exception, but no for an ordinary individual', () => {
+  const p = systemPrompt(verified)
+  assert.match(p, /genuine ORGANISATION/)
+  assert.match(p, /does not use credit cards/)
+  assert.match(p, /ordinary individual who just prefers EFT/)
+  assert.match(p, /arrange EFT for them/)
 })
 
 test('verified vendor prompt carries operational facts (documents, allocation)', () => {
