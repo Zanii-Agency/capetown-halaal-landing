@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane } from './eft'
+import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -66,6 +66,21 @@ test('vendorCommsInEftLane is the ACTIVE set only (added or uploaded proof), NOT
   assert.equal(vendorCommsInEftLane('just a note', null), false)
   // Already paid -> never in the comms lane.
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z'), false)
+})
+
+test('⟦NOEFT⟧ exclusion overrides global mode AND ⟦EFT⟧ in both predicates', () => {
+  // Excluding a vendor strips any ⟦EFT⟧ and adds ⟦NOEFT⟧ (the two never coexist).
+  const ex = withNoEftMarker('⟦EFT⟧')
+  assert.ok(hasNoEftMarker(ex))
+  assert.ok(!hasEftMarker(ex))
+  // Excluded: never in the payment lane (even global ON) or the comms lane.
+  assert.equal(vendorInEftLane(ex, true, null), false)
+  assert.equal(vendorCommsInEftLane(ex, null), false)
+  // Un-exclude lifts it; preserves prose + ⟦STALL⟧.
+  assert.ok(!hasNoEftMarker(withoutNoEftMarker(ex)))
+  const keep = withNoEftMarker('Priority.\n\n⟦STALL:FS1⟧')
+  assert.match(keep, /⟦STALL:FS1⟧/)
+  assert.match(keep, /Priority\./)
 })
 
 test('eftReference prefers the allocated stall, else a stable short code', () => {

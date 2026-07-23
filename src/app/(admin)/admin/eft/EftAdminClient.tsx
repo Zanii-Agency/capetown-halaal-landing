@@ -28,16 +28,18 @@ interface Candidate { id: string; business_name: string | null; contact_name: st
 const rand = (n: number | null) => (n === null ? 'TBC' : `R${n.toFixed(2)}`)
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
 
-export default function EftAdminClient({ globalOn, bank, rows, candidates }: {
+export default function EftAdminClient({ globalOn, bank, rows, candidates, excluded }: {
   globalOn: boolean
   bank: Bank
   rows: Row[]
   candidates: Candidate[]
+  excluded: Candidate[]
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [exQuery, setExQuery] = useState('')
 
   async function post(url: string, body: unknown, key: string) {
     setBusy(key); setErr(null)
@@ -53,13 +55,15 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates }: {
     }
   }
 
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return []
+  const filterCandidates = (q: string) => {
+    const term = q.trim().toLowerCase()
+    if (!term) return [] as Candidate[]
     return candidates
-      .filter((c) => `${c.business_name || ''} ${c.contact_name || ''} ${c.email || ''}`.toLowerCase().includes(q))
+      .filter((c) => `${c.business_name || ''} ${c.contact_name || ''} ${c.email || ''}`.toLowerCase().includes(term))
       .slice(0, 8)
-  }, [query, candidates])
+  }
+  const matches = useMemo(() => filterCandidates(query), [query, candidates]) // eslint-disable-line react-hooks/exhaustive-deps
+  const exMatches = useMemo(() => filterCandidates(exQuery), [exQuery, candidates]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-6">
@@ -130,6 +134,59 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates }: {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Exclude a vendor from EFT (handle manually) */}
+      <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
+        <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-1">Exclude a vendor from EFT</p>
+        <p className="text-xs text-[#1B1A17]/50 mb-3">They never see EFT (even with global mode on) and stay on the main inbox for a person to handle. Use for NPOs and vendors you deal with directly.</p>
+        <div className="relative">
+          <Search className="w-4 h-4 text-[#1B1A17]/40 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            value={exQuery}
+            onChange={(e) => setExQuery(e.target.value)}
+            placeholder="Search by business, contact, or email"
+            className="w-full text-sm rounded-lg border border-neutral-200 pl-9 pr-3 py-2.5 focus:border-[#cd2653] focus:outline-none"
+          />
+          {exMatches.length > 0 && (
+            <div className="absolute z-10 mt-1 w-full rounded-lg border border-neutral-200 bg-white shadow-lg overflow-hidden">
+              {exMatches.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => { setExQuery(''); post('/api/admin/eft/lane', { applicationId: c.id, action: 'exclude' }, `ex-${c.id}`) }}
+                  disabled={busy === `ex-${c.id}`}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-[#F2EBD8]/60 flex items-center justify-between gap-2"
+                >
+                  <span className="min-w-0">
+                    <span className="font-medium text-[#1B1A17]">{c.business_name || 'Unnamed'}</span>
+                    <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}</span>
+                  </span>
+                  {busy === `ex-${c.id}` && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {excluded.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs uppercase tracking-wider text-[#1B1A17]/45 font-semibold">Excluded from EFT ({excluded.length})</p>
+            {excluded.map((c) => (
+              <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#F2EBD8] px-3 py-2 text-sm">
+                <span className="min-w-0">
+                  <span className="font-medium text-[#1B1A17]">{c.business_name || 'Unnamed'}</span>
+                  <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}</span>
+                </span>
+                <button
+                  onClick={() => post('/api/admin/eft/lane', { applicationId: c.id, action: 'unexclude' }, `unex-${c.id}`)}
+                  disabled={busy === `unex-${c.id}`}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 hover:border-[#cd2653] hover:text-[#cd2653] px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                >
+                  {busy === `unex-${c.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Un-exclude
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Lane table */}

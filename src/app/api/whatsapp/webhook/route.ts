@@ -22,7 +22,6 @@ import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { findAdmin, isDevNumber } from '@/lib/bot/admins'
 import { resolveIdentity } from '@/lib/bot/identity'
-import { EFT_MAINTENANCE_MESSAGE } from '@/lib/eft'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
 import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
@@ -491,20 +490,11 @@ async function handleInbound(msg: {
   // vendors / ticket buyers / unknowns.
   const identity = await resolveIdentity(e164)
 
-  // TEMPORARY EFT lane (lib/eft.ts). Only an UNPAID vendor ACTIVELY in the lane
-  // (individually added ⟦EFT⟧, or who uploaded an EFT proof) gets a maintenance
-  // holding reply steered to email, instead of the normal agent/brain. This is
-  // INDEPENDENT of global mode: turning global on shows all unpaid vendors the EFT
-  // details but does NOT put them on the maintenance path or move their messages.
-  // ALREADY-PAID vendors are excluded and fall through to the normal bot, their
-  // messages staying on the main inbox. Both flags come from resolveIdentity, no
-  // extra DB read.
-  const vendorPaid = identity.vendor?.payment_status === 'paid'
-  if (identity.role === 'vendor' && !vendorPaid && (identity.vendor?.eftLane || identity.vendor?.eftSubmitted)) {
-    const res = await sendText(e164, EFT_MAINTENANCE_MESSAGE)
-    await logMessage({ direction: 'out', wa_phone: e164, body: EFT_MAINTENANCE_MESSAGE, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
-    return
-  }
+  // NOTE: the EFT lane deliberately does NOT change the bot's replies. Vendors in
+  // the lane get the normal agent/brain like everyone else (no "maintenance"
+  // message). The lane only affects the PAYMENT VIEW (EFT details vs Yoco) and
+  // which admin surface shows the conversation (dev /admin/eft tab vs main inbox),
+  // both handled outside the bot. "Everything remains normal" on WhatsApp.
 
   const history = await recentHistory(e164)
   // New brain shape: pass the latest user turn as the message, prior turns as

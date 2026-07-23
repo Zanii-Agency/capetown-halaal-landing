@@ -25,6 +25,13 @@ const EFT_MARKER = '⟦EFT⟧'
 // survives their read-modify-writes untouched.
 const EFT_RE = /⟦EFT⟧/
 
+const NOEFT_MARKER = '⟦NOEFT⟧'
+// Explicit EXCLUSION: this vendor is handled manually and must NEVER enter the EFT
+// lane, even under global mode. They never see EFT details on their portal and
+// their conversations stay on the main inbox. Overrides both global mode and
+// ⟦EFT⟧. Distinct token, no collision with /⟦EFT⟧/ (the char after ⟦ is 'N').
+const NOEFT_RE = /⟦NOEFT⟧/
+
 /** Admin email allowed to see and operate the /admin/eft surface. Env-overridable
  *  so the gate can move without a code change. Compared lower-cased. */
 export const EFT_ADMIN_EMAIL = (process.env.EFT_ADMIN_EMAIL || 'dev@cthalaal.co.za').toLowerCase()
@@ -52,6 +59,25 @@ export function withEftMarker(adminNotes?: string | null): string {
  *  marker. */
 export function withoutEftMarker(adminNotes?: string | null): string {
   return (adminNotes || '').replace(EFT_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** True when the vendor is explicitly EXCLUDED from EFT (handled manually). */
+export function hasNoEftMarker(adminNotes?: string | null): boolean {
+  return NOEFT_RE.test(adminNotes || '')
+}
+
+/** Exclude the vendor from EFT (idempotent). Also strips any ⟦EFT⟧ so the two
+ *  never coexist. Preserves prose and every other marker. */
+export function withNoEftMarker(adminNotes?: string | null): string {
+  const base = withoutEftMarker(adminNotes) // drop ⟦EFT⟧ if present
+  if (NOEFT_RE.test(base)) return base
+  const trimmed = base.trim()
+  return trimmed ? `${trimmed}\n${NOEFT_MARKER}` : NOEFT_MARKER
+}
+
+/** Lift the EFT exclusion. Preserves prose and every other marker. */
+export function withoutNoEftMarker(adminNotes?: string | null): string {
+  return (adminNotes || '').replace(NOEFT_RE, '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 export interface EftBankDetails {
@@ -118,6 +144,7 @@ export async function getEftMode(): Promise<boolean> {
  *  Samreen's inbox. Only a vendor actively being handled for EFT moves. */
 export function vendorCommsInEftLane(adminNotes: string | null | undefined, paidAt?: string | null): boolean {
   if (paidAt) return false
+  if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins
   const p = parsePortalState(adminNotes).payment
   if (p?.status === 'paid') return false
   return hasEftMarker(adminNotes) || !!p?.eft_submitted_at
@@ -137,6 +164,7 @@ export function vendorInEftLane(
   paidAt?: string | null,
 ): boolean {
   if (paidAt) return false
+  if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins over global
   if (parsePortalState(adminNotes).payment?.status === 'paid') return false
   return globalOn || hasEftMarker(adminNotes)
 }

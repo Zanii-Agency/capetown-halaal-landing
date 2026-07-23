@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, getEftMode, getEftBankDetails } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { CustomerInboxClient } from '../customer-inbox/CustomerInboxClient'
@@ -86,11 +86,16 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     proofs: Array<{ url: string; uploaded_at: string; note?: string }>
   }
 
+  type Contact = { id: string; business_name: string | null; contact_name: string | null; email: string | null }
   const rows: Row[] = []
-  const candidates: Array<{ id: string; business_name: string | null; contact_name: string | null; email: string | null }> = []
+  const candidates: Contact[] = []
+  const excluded: Contact[] = []
 
   for (const a of (apps || []) as Array<Record<string, unknown>>) {
     const notes = (a.admin_notes as string) || ''
+    const contact: Contact = { id: a.id as string, business_name: a.business_name as string | null, contact_name: a.contact_name as string | null, email: a.email as string | null }
+    // Excluded from EFT (handled manually): never in the lane list or the add picker.
+    if (hasNoEftMarker(notes)) { excluded.push(contact); continue }
     const marked = hasEftMarker(notes)
     const state = parsePortalState(notes)
     const submitted = !!state.payment?.eft_submitted_at
@@ -129,13 +134,8 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         proofs,
       })
     } else if (!reconciled && !inLane) {
-      // Candidate for the "add to lane" picker: not in lane, not already paid.
-      candidates.push({
-        id: a.id as string,
-        business_name: a.business_name as string | null,
-        contact_name: a.contact_name as string | null,
-        email: a.email as string | null,
-      })
+      // Candidate for the add / exclude pickers: not in lane, not already paid.
+      candidates.push(contact)
     }
   }
 
@@ -148,7 +148,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
   return (
     <div className="p-6">
       {header}
-      <EftAdminClient globalOn={globalOn} bank={getEftBankDetails()} rows={rows} candidates={candidates} />
+      <EftAdminClient globalOn={globalOn} bank={getEftBankDetails()} rows={rows} candidates={candidates} excluded={excluded} />
     </div>
   )
 }
