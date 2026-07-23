@@ -114,6 +114,7 @@ export async function GET(req: NextRequest) {
     .limit(2000)
   const byPhone = new Map<string, { id: string; business_name: string | null; contact_name: string | null; email: string | null }>()
   const byEmail = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
+  const byId = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
   const eftAppIds = new Set<string>()
   // Read the mode once; in global EFT mode EVERY unpaid vendor's comms leave the
   // festival owner's inbox for the master EFT tab. Paid vendors are never swept.
@@ -121,6 +122,7 @@ export async function GET(req: NextRequest) {
   for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null; admin_notes: string | null; paid_at: string | null }>) {
     if (a.phone) byPhone.set(norm(a.phone), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
     if (a.email) byEmail.set(a.email.toLowerCase(), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
+    byId.set(a.id, { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
     if (vendorCommsInEftLane(a.admin_notes, a.paid_at, globalOn)) eftAppIds.add(a.id)
   }
 
@@ -334,13 +336,17 @@ export async function GET(req: NextRequest) {
   {
     const { data: threads } = await db
       .from('support_inbox_threads')
-      .select('peer_email, peer_name, subject, status, tag, assignee_id, last_handled_at, last_inbound_at, unread_count, created_at')
+      .select('peer_email, peer_name, subject, status, tag, assignee_id, last_handled_at, last_inbound_at, unread_count, created_at, vendor_application_id')
       .order('last_handled_at', { ascending: false, nullsFirst: false })
       .limit(1500)
-    for (const t of (threads || []) as Array<{ peer_email: string; peer_name: string | null; subject: string | null; status: string | null; tag: string | null; assignee_id: string | null; last_handled_at: string | null; last_inbound_at: string | null; unread_count: number | null; created_at: string }>) {
+    for (const t of (threads || []) as Array<{ peer_email: string; peer_name: string | null; subject: string | null; status: string | null; tag: string | null; assignee_id: string | null; last_handled_at: string | null; last_inbound_at: string | null; unread_count: number | null; created_at: string; vendor_application_id: string | null }>) {
       const email = (t.peer_email || '').toLowerCase()
       if (!email) continue
-      const vendor = byEmail.get(email)
+      // Resolve the vendor by the sender's registered email OR, when that misses
+      // (the vendor wrote from a secondary address), by the thread's linked
+      // vendor_application_id. This lets a vendor emailing from an unknown address
+      // still be recognised and, in global EFT mode, swept off this inbox.
+      const vendor = byEmail.get(email) || (t.vendor_application_id ? byId.get(t.vendor_application_id) : null)
       const appId = vendor?.id || null
       const st = appId ? tByApp.get(appId) : tByEmail.get(email)
       const at = t.last_handled_at || t.last_inbound_at || t.created_at
