@@ -460,14 +460,17 @@ export async function GET(req: NextRequest) {
   // the lane; non-vendor ticket buyers are never EFT and always stay on the main
   // inbox. eftOnly=1 keeps ONLY EFT contacts (the /admin/eft feed); the main inbox
   // drops them. Counts derive from the SAME partition so the tab badges stay true.
-  // Operator lines (Taona the master, Samreen the owner) are NEVER customer
-  // conversations: their bot threads carry owner alerts and, for the master, the
-  // master-brain's cross-vendor replies (names, phones, amounts). Drop them from
-  // EVERY inbox so one operator can never open another operator's thread and read
-  // cross-vendor PII out of the transcript (the residue leak past the tool wall).
-  const adminPhoneDigits = new Set(BOT_ADMINS.map((a) => norm(a.phone)))
-  const isAdminThread = (c: { phone: string | null }) => !!c.phone && adminPhoneDigits.has(norm(c.phone))
-  const visible = list.filter((c) => !isAdminThread(c))
+  // Drop the MASTER line (Taona) from every inbox: its bot thread carries the
+  // master-brain's cross-vendor replies (names, phones, amounts), so leaving it
+  // visible would let another operator open it and read cross-vendor PII out of
+  // the transcript (the residue leak past the tool wall). We exclude ONLY the
+  // master, NOT the festival owner: a real vendor (GLOBAL CUISINE) shares the
+  // owner's exact number, so blanket-excluding operator lines would wrongly hide
+  // that vendor's thread. The owner seeing her own thread is not a leak; the
+  // master's cross-vendor thread reaching her is, and this seals exactly that.
+  const masterPhoneDigits = new Set(BOT_ADMINS.filter((a) => a.role === 'master').map((a) => norm(a.phone)))
+  const isMasterThread = (c: { phone: string | null }) => !!c.phone && masterPhoneDigits.has(norm(c.phone))
+  const visible = list.filter((c) => !isMasterThread(c))
   const isEftContact = (c: { application_id: string | null }) => !!c.application_id && eftAppIds.has(c.application_id)
   const scoped = eftOnly ? visible.filter(isEftContact) : visible.filter((c) => !isEftContact(c))
 
