@@ -12,6 +12,7 @@
 // on a single sentence; the human gets a draft + count + explicit YES gate.
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getEftMode } from '@/lib/eft'
 import { matchSegment, segmentCount, SEGMENT_LABELS, type SegmentKey } from './segments'
 import { runBlast, type BlastTemplate } from './blast'
 import type { BotAdmin } from './admins'
@@ -110,6 +111,18 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
   const t = text.trim()
   const lower = t.toLowerCase()
   const adminPhone = admin.phone
+
+  // EFT-mode wall: while global EFT mode is ON, the bot must not surface payment
+  // numbers, segment counts, drafts or blasts to the festival owner (Samreen).
+  // Taona handles all payment ops on his side. She can still message the bot, and
+  // the webhook still mirrors her message to him; this just walls the DATA and
+  // action paths to a neutral reply so nothing leaks. Reverts when EFT mode is off.
+  if (admin.role === 'festival_owner' && (await getEftMode())) {
+    return {
+      reply: `Thanks ${admin.name.split(' ')[0]}. While the payment period is running, Taona is handling all the payment numbers, vendor lists and emails directly, so I am keeping those on his side for now. I have passed your message on to him, and I am here for anything else.`,
+      action: 'none',
+    }
+  }
 
   // (1) Confirmation / cancellation of a pending action.
   const confirmMatch = t.match(/^(?:confirm|yes\s+send|approve)\s*([A-Z0-9]{3,8})?/i)

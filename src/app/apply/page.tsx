@@ -664,7 +664,7 @@ export default function ApplyPage() {
                   You are required to submit a <strong>COA</strong> if you sell any food products. If you sell warm meals, you also need a <strong>Hawkers License</strong>. Gas certification is required if applicable.
                 </p>
                 <p className="text-sm text-neutral-500">
-                  Documents can be emailed to <a href="mailto:capetownhalaal@gmail.com" className="text-[#cd2653] font-medium hover:underline">capetownhalaal@gmail.com</a> after submission.
+                  Documents can be emailed to <a href="mailto:support@youngatheart.co.za" className="text-[#cd2653] font-medium hover:underline">support@youngatheart.co.za</a> after submission.
                 </p>
               </div>
 
