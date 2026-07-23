@@ -13,6 +13,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { sendText } from '@/lib/whatsapp'
 import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, EMAIL_MIRROR, type InboundEmail } from '@/lib/email-concierge'
+import { getEftMode } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -27,7 +28,12 @@ export async function GET(req: Request) {
   }
 
   const db = createAdminClient()
-  const confirmer = EMAIL_CONFIRMER
+  // Global EFT mode: route the confirm flow to the master (Taona), so support@
+  // emails never ping the festival owner (Samreen). She still SEES paid vendors'
+  // emails passively in the support inbox; only the active WhatsApp draft/confirm
+  // moves to Taona. Reverts when EFT mode is off (Taona 2026-07-23).
+  const eftOn = await getEftMode()
+  const confirmer = eftOn ? EMAIL_MIRROR : EMAIL_CONFIRMER
 
   // One in-flight: if Samreen already has an email awaiting her confirm, wait
   // — UNLESS it's gone stale (found 2026-07-12: this had no timeout at all, so
@@ -123,16 +129,20 @@ export async function GET(req: Request) {
 
   // Mirror to Taona (FYI only; Samreen is handling/confirming). Best-effort, one
   // compact message so he sees every email come in without being the confirmer.
-  try {
-    const mirror =
-      `👀 Mirror (Samreen is handling): email on ${box}\n` +
-      `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
-      `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
-      `"${snippet.slice(0, 350)}"` +
-      (draft ? `\n\nDraft: ${draft.slice(0, 450)}` : '')
-    await sendText(EMAIL_MIRROR.phone, mirror)
-  } catch (e) {
-    console.warn('[email-concierge] mirror to Taona failed:', (e as Error).message)
+  // In EFT mode Taona IS the confirmer, so the mirror is redundant and would
+  // mislabel ("Samreen is handling") — skip it.
+  if (!eftOn) {
+    try {
+      const mirror =
+        `👀 Mirror (Samreen is handling): email on ${box}\n` +
+        `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
+        `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
+        `"${snippet.slice(0, 350)}"` +
+        (draft ? `\n\nDraft: ${draft.slice(0, 450)}` : '')
+      await sendText(EMAIL_MIRROR.phone, mirror)
+    } catch (e) {
+      console.warn('[email-concierge] mirror to Taona failed:', (e as Error).message)
+    }
   }
 
   return NextResponse.json({

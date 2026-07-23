@@ -85,12 +85,12 @@ export default function EftPanel({
         </div>
       )}
 
-      {/* Maintenance notice: explains why no WhatsApp confirmation arrives. */}
+      {/* Maintenance + channel notice: which channels we actually receive. */}
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 text-amber-800">
         <Info className="w-4 h-4 shrink-0 mt-0.5" />
         <p className="text-sm">
-          Card payments are paused for now, so please pay by EFT below. WhatsApp is under maintenance, so please contact us by email only at{' '}
-          <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>. Your payment status updates here on your portal.
+          Card payments are paused for now, so please pay by EFT below. To reach us, please use only your portal inbox, email at{' '}
+          <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>, or WhatsApp. We cannot see or reply to messages on any other channel, including social media. Your payment status updates here on your portal.
         </p>
       </div>
 

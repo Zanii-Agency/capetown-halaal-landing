@@ -55,17 +55,25 @@ test('vendorInEftLane excludes already-paid vendors even under global mode', () 
   assert.equal(vendorInEftLane('just a note', false), false)
 })
 
-test('vendorCommsInEftLane is the ACTIVE set only (added or uploaded proof), NOT global', () => {
-  // Individually added + unpaid -> comms move to the dev tab.
+test('vendorCommsInEftLane: active set without global, ALL unpaid with global (2026-07-23 reversal)', () => {
+  // Individually added + unpaid -> comms move to the master tab.
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', null), true)
   // Uploaded an EFT proof + unpaid -> comms move.
   const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-23T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(submitted, null), true)
-  // Unpaid, not added, no proof -> stays on the main inbox even if global mode is on
-  // (global mode never enters this predicate). This is the bug that flooded the tab.
+  // Unpaid, not added, no proof, global OFF (default) -> stays on the owner's inbox.
   assert.equal(vendorCommsInEftLane('just a note', null), false)
-  // Already paid -> never in the comms lane.
+  assert.equal(vendorCommsInEftLane('just a note', null, false), false)
+  // Unpaid, global ON -> swept to the master tab (the reversal).
+  assert.equal(vendorCommsInEftLane('just a note', null, true), true)
+  // INVARIANT: a PAID vendor is never swept, even with global ON. The festival
+  // owner keeps full visibility of paid vendors' chats + emails.
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z'), false)
+  assert.equal(vendorCommsInEftLane('just a note', '2026-07-23T00:00:00Z', true), false)
+  const paidState = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } })
+  assert.equal(vendorCommsInEftLane(paidState, null, true), false)
+  // ⟦NOEFT⟧ explicit exclusion beats global ON.
+  assert.equal(vendorCommsInEftLane('⟦NOEFT⟧', null, true), false)
 })
 
 test('⟦NOEFT⟧ exclusion overrides global mode AND ⟦EFT⟧ in both predicates', () => {

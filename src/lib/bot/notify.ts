@@ -9,6 +9,7 @@ import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
+import { getEftMode, EFT_ADMIN_EMAIL } from '@/lib/eft'
 
 // EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
 // alerts; production regressed to 86% of owner WhatsApp sends dropped with
@@ -51,7 +52,7 @@ interface NotifyArgs {
 
 // Logs every send to wa_messages so the Bot Inbox surfaces it next to admin
 // replies — one feed for owner attention.
-async function deliverOne(admin: BotAdmin, args: NotifyArgs) {
+async function deliverOne(admin: BotAdmin, args: NotifyArgs, fallbackEmail?: string) {
   const db = createAdminClient()
   const e164 = toE164(admin.phone)
   const firstName = admin.name.split(/\s+/)[0]
@@ -98,11 +99,16 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs) {
   // silently (the failure is async, set later by a status webhook), so the WA
   // send above can never be trusted as delivered. For actionable events we ALSO
   // email the admin so the ping always lands. Best-effort, never throws.
-  if (EMAIL_BACKSTOP_EVENTS.has(args.event) && admin.email) {
+  // Master (Taona) has no email in BOT_ADMINS by design, so in EFT mode the
+  // festival-owner mute would leave critical alerts with NO non-Meta delivery
+  // path (Meta drops ~86% of owner templates silently). Fall back to the EFT
+  // admin's monitored CTH address so payment_failed / system_alert never vanish.
+  const backstopTo = admin.email || fallbackEmail
+  if (EMAIL_BACKSTOP_EVENTS.has(args.event) && backstopTo) {
     try {
       const label = args.event.replace(/_/g, ' ')
       await sendEmail({
-        to: admin.email,
+        to: backstopTo,
         subject: `[YAH] ${label}: ${args.body.split('\n')[0].slice(0, 80)}`,
         text: `${args.body}\n\nOpen the admin inbox to action this: https://cthalaal.co.za/admin/bot-inbox`,
       })
@@ -113,7 +119,14 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs) {
 }
 
 export async function notifyOwners(args: NotifyArgs): Promise<void> {
-  const audience = args.audience || 'all'
+  // Global EFT mode: the festival owner (Samreen) is muted on EVERY channel.
+  // While the festival is on EFT, every inbound platform event routes to the
+  // master-only EFT tab so her numbers/data stay clean (Taona 2026-07-23). Only
+  // the master is notified; it reverts the moment EFT mode is switched off.
+  // getEftMode fails CLOSED to false (normal = both notified), so a read blip
+  // can only fall back to prior behaviour, never silently over-mute.
+  const eftOn = await getEftMode()
+  const audience = eftOn ? 'master' : (args.audience || 'all')
   const excludeNorm = args.exclude ? toE164(args.exclude) : null
   const targets = BOT_ADMINS.filter((a) => {
     if (excludeNorm && toE164(a.phone) === excludeNorm) return false
@@ -122,5 +135,8 @@ export async function notifyOwners(args: NotifyArgs): Promise<void> {
     if (audience === 'festival_owner') return a.role === 'festival_owner'
     return false
   })
-  await Promise.all(targets.map((a) => deliverOne(a, args)))
+  // In EFT mode the only target is the master (no email on file), so give the
+  // email backstop a home: the EFT admin's monitored CTH inbox.
+  const fallbackEmail = eftOn ? EFT_ADMIN_EMAIL : undefined
+  await Promise.all(targets.map((a) => deliverOne(a, args, fallbackEmail)))
 }

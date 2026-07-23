@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
-import { vendorCommsInEftLane, isEftAdmin } from '@/lib/eft'
+import { vendorCommsInEftLane, isEftAdmin, getEftMode } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -59,9 +59,12 @@ export async function GET(req: NextRequest) {
   // No .limit(1): a last-9 phone collision must not hide the lane vendor behind
   // another matching row. Seals the direct-API path completely.
   if (!isEftAdmin(user.email)) {
+    // In global EFT mode every unpaid vendor is in the lane, so a non-EFT admin
+    // (the festival owner) is blocked from reading any unpaid vendor's thread.
+    const globalOn = await getEftMode()
     type LaneRow = { admin_notes: string | null; paid_at: string | null }
     const anyInLane = (rows: LaneRow[] | null) =>
-      (rows || []).some((r) => vendorCommsInEftLane(r.admin_notes, r.paid_at))
+      (rows || []).some((r) => vendorCommsInEftLane(r.admin_notes, r.paid_at, globalOn))
     let blocked = false
     if (email) {
       const { data } = await db.from('vendor_applications').select('admin_notes, paid_at').eq('email', email)
