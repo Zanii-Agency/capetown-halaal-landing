@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { vendorCommsInEftLane, isEftAdmin, getEftMode } from '@/lib/eft'
+import { BOT_ADMINS } from '@/lib/bot/admins'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -459,8 +460,16 @@ export async function GET(req: NextRequest) {
   // the lane; non-vendor ticket buyers are never EFT and always stay on the main
   // inbox. eftOnly=1 keeps ONLY EFT contacts (the /admin/eft feed); the main inbox
   // drops them. Counts derive from the SAME partition so the tab badges stay true.
+  // Operator lines (Taona the master, Samreen the owner) are NEVER customer
+  // conversations: their bot threads carry owner alerts and, for the master, the
+  // master-brain's cross-vendor replies (names, phones, amounts). Drop them from
+  // EVERY inbox so one operator can never open another operator's thread and read
+  // cross-vendor PII out of the transcript (the residue leak past the tool wall).
+  const adminPhoneDigits = new Set(BOT_ADMINS.map((a) => norm(a.phone)))
+  const isAdminThread = (c: { phone: string | null }) => !!c.phone && adminPhoneDigits.has(norm(c.phone))
+  const visible = list.filter((c) => !isAdminThread(c))
   const isEftContact = (c: { application_id: string | null }) => !!c.application_id && eftAppIds.has(c.application_id)
-  const scoped = eftOnly ? list.filter(isEftContact) : list.filter((c) => !isEftContact(c))
+  const scoped = eftOnly ? visible.filter(isEftContact) : visible.filter((c) => !isEftContact(c))
 
   const counts = {
     all: scoped.length,

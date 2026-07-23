@@ -25,6 +25,7 @@ import { resolveIdentity } from '@/lib/bot/identity'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
 import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
+import { runMasterAgent } from '@/lib/bot/master-agent'
 import { resolveVendorSession, confirmVendorVerification } from '@/lib/bot/vendor-session'
 import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
@@ -380,7 +381,21 @@ async function handleInbound(msg: {
     }
 
     const adminResult = await handleAdminMessage(admin, msg.text)
-    const reply = adminResult.reply ||
+    let reply = adminResult.reply
+    // MASTER BRAIN: when no rigid command matched, let Taona's ops assistant
+    // answer his free-form question (vendor lookups, pipeline numbers, drafts)
+    // instead of a canned hint. Read-only + master-gated (the tool wall refuses
+    // any non-master caller); returns null when disabled or the LLM is
+    // unavailable, so we fall through to the canned reply below.
+    if (!reply && admin.role === 'master') {
+      try {
+        const brain = await runMasterAgent(admin, msg.text, { history: await recentHistory(e164) })
+        if (brain?.message) reply = brain.message
+      } catch (e) {
+        console.error('[master-brain] failed:', (e as Error).message)
+      }
+    }
+    reply = reply ||
       (admin.role === 'festival_owner'
         ? `Got it ${admin.name.split(' ')[0]}, passed to Taona. Ask me 'stats' for live numbers, or tell me who you want to email and I'll draft it.`
         : `Logged for you, ${admin.name}. Try 'stats' or 'email approved unpaid the payment reminder'.`)
