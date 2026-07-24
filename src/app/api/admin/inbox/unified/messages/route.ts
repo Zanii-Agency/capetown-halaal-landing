@@ -64,12 +64,12 @@ export async function GET(req: NextRequest) {
     // admin. Ordinary unpaid vendors who never engaged read normally.
     const globalOn = await getEftMode()
     type LaneRow = { admin_notes: string | null; paid_at: string | null }
-    const anyInLane = (rows: LaneRow[] | null) =>
-      (rows || []).some((r) => vendorCommsInEftLane(r.admin_notes, r.paid_at, globalOn))
+    const anyInLane = (rows: LaneRow[] | null, identity: { email?: string | null; phone?: string | null }) =>
+      (rows || []).some((r) => vendorCommsInEftLane(r.admin_notes, r.paid_at, globalOn, identity))
     let blocked = false
     if (email) {
       const { data } = await db.from('vendor_applications').select('admin_notes, paid_at').eq('email', email)
-      blocked = anyInLane(data as LaneRow[] | null)
+      blocked = anyInLane(data as LaneRow[] | null, { email })
     }
     if (!blocked && phone) {
       const last9 = phone.replace(/\D/g, '').slice(-9)
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
         const { data } = await db.from('vendor_applications')
           .select('admin_notes, paid_at')
           .or(`phone.like.*${last9},admin_notes.like.*WAV${last9}*`)
-        blocked = anyInLane(data as LaneRow[] | null)
+        blocked = anyInLane(data as LaneRow[] | null, { phone })
       }
     }
     if (blocked) return NextResponse.json({ error: 'forbidden' }, { status: 403 })

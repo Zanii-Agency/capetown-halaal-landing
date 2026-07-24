@@ -37,7 +37,7 @@ export default async function PaymentsPage() {
   const eftModeOn = await getEftMode()
   // Paid vendors are excluded from the lane (they keep their normal paid view even
   // under global mode); only unpaid lane vendors see the EFT panel.
-  const inEftLane = vendorInEftLane(app?.admin_notes as string, eftModeOn, app?.paid_at as string | null)
+  const inEftLane = vendorInEftLane(app?.admin_notes as string, eftModeOn, app?.paid_at as string | null, { email: app?.email as string | null, phone: app?.phone as string | null })
   const eftSubmitted = !!state.payment?.eft_submitted_at
   const eftPending = eftSubmitted && status !== 'paid'
   const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null }) : 'CTH'

@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft } from './eft'
+import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -97,6 +97,26 @@ test('⟦NOEFT⟧ exclusion overrides global mode AND ⟦EFT⟧ in both predicat
   const keep = withNoEftMarker('Priority.\n\n⟦STALL:FS1⟧')
   assert.match(keep, /⟦STALL:FS1⟧/)
   assert.match(keep, /Priority\./)
+})
+
+test('internal/operator accounts are never in either lane, even under global mode', () => {
+  // Matched by identity: samreenkumandan* email, GLOBAL CUISINE email/phone, capetownhalaal@.
+  assert.ok(isInternalAccount('samreenkumandan1@gmail.com', null))
+  assert.ok(isInternalAccount('SamreenKumandan99@outlook.com', null)) // substring, case-insensitive
+  assert.ok(isInternalAccount('sales@globalcuisine.co.za', null))
+  assert.ok(isInternalAccount('capetownhalaal@gmail.com', null))
+  assert.ok(isInternalAccount(null, '+27 72 380 3393')) // last-9 match, any formatting
+  assert.ok(isInternalAccount(null, '0723803393'))
+  // Real vendors do NOT match.
+  assert.ok(!isInternalAccount('chef@realvendor.co.za', '+27821234567'))
+  assert.ok(!isInternalAccount(null, null))
+  // Global mode would normally sweep an unmarked unpaid vendor into the payment
+  // lane; an internal identity blocks it in BOTH predicates.
+  const identity = { email: 'samreenkumandan1@gmail.com', phone: null }
+  assert.equal(vendorInEftLane('just a note', true, null, identity), false)
+  assert.equal(vendorCommsInEftLane('⟦EFT⟧', null, true, identity), false) // even an explicit ⟦EFT⟧ marker
+  // Without identity, behaviour is unchanged (backward-compatible).
+  assert.equal(vendorInEftLane('just a note', true, null), true)
 })
 
 test('mentionsEft fires on EFT replies, not on unrelated ones', () => {

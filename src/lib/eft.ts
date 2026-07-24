@@ -66,6 +66,30 @@ export function hasNoEftMarker(adminNotes?: string | null): boolean {
   return NOEFT_RE.test(adminNotes || '')
 }
 
+// Internal / operator accounts that are NEVER EFT-paying vendors, regardless of
+// global mode or markers (Taona 2026-07-24: "anything with samreenkumandan should
+// have no eft"; Samreen, Altaf, and GLOBAL CUISINE are her own internal rows).
+// Identity-matched so FUTURE rows are caught too, not just today's. Email is
+// matched case-insensitively (exact set + the shared operator handle as a
+// substring); phone on last-9 digits so formatting never breaks the match.
+const INTERNAL_EMAILS = new Set<string>(['sales@globalcuisine.co.za', 'capetownhalaal@gmail.com'])
+const INTERNAL_EMAIL_SUBSTRINGS = ['samreenkumandan']
+const INTERNAL_PHONE_LAST9 = new Set<string>(['723803393']) // Samreen's line (GLOBAL CUISINE)
+// TODO(altaf): add Altaf's email + phone here once known so his rows are covered.
+
+/** True when a contact identity belongs to an internal/operator account that must
+ *  never be routed through EFT (no payment panel, never swept to the Master lane). */
+export function isInternalAccount(email?: string | null, phone?: string | null): boolean {
+  const e = (email || '').toLowerCase().trim()
+  if (e && (INTERNAL_EMAILS.has(e) || INTERNAL_EMAIL_SUBSTRINGS.some((s) => e.includes(s)))) return true
+  const last9 = (phone || '').replace(/\D/g, '').slice(-9)
+  return !!last9 && INTERNAL_PHONE_LAST9.has(last9)
+}
+
+/** Contact identity, passed to the lane predicates so an internal account is
+ *  excluded even when global EFT mode would otherwise sweep it in. */
+export interface LaneIdentity { email?: string | null; phone?: string | null }
+
 /** Exclude the vendor from EFT (idempotent). Also strips any ⟦EFT⟧ so the two
  *  never coexist. Preserves prose and every other marker. */
 export function withNoEftMarker(adminNotes?: string | null): string {
@@ -159,7 +183,9 @@ export function vendorCommsInEftLane(
   adminNotes: string | null | undefined,
   paidAt?: string | null,
   globalOn: boolean = false,
+  identity?: LaneIdentity,
 ): boolean {
+  if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator account, never EFT
   if (paidAt) return false
   if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins
   const p = parsePortalState(adminNotes).payment
@@ -179,7 +205,9 @@ export function vendorInEftLane(
   adminNotes: string | null | undefined,
   globalOn: boolean,
   paidAt?: string | null,
+  identity?: LaneIdentity,
 ): boolean {
+  if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator account, never EFT
   if (paidAt) return false
   if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins over global
   if (parsePortalState(adminNotes).payment?.status === 'paid') return false

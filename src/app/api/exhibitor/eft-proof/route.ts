@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   // vendor individually marked ⟦EFT⟧. Same predicate the payments page uses to
   // decide who sees the EFT panel, so the UI and this guard never disagree. This
   // is what stops a non-lane vendor from self-unlocking via eft_submitted_at.
-  if (!vendorInEftLane(ctx.application.admin_notes as string, await getEftMode(), ctx.application.paid_at as string | null)) {
+  if (!vendorInEftLane(ctx.application.admin_notes as string, await getEftMode(), ctx.application.paid_at as string | null, { email: ctx.application.email as string | null, phone: ctx.application.phone as string | null })) {
     return NextResponse.json({ error: 'EFT is not enabled for your account' }, { status: 403 })
   }
 

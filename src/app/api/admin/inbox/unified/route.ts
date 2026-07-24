@@ -127,7 +127,7 @@ export async function GET(req: NextRequest) {
     if (a.phone) byPhone.set(norm(a.phone), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
     if (a.email) byEmail.set(a.email.toLowerCase(), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
     byId.set(a.id, { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
-    if (vendorCommsInEftLane(a.admin_notes, a.paid_at, globalOn)) eftAppIds.add(a.id)
+    if (vendorCommsInEftLane(a.admin_notes, a.paid_at, globalOn, { email: a.email, phone: a.phone })) eftAppIds.add(a.id)
   }
 
   // ---- Conversation state from vendor_tickets (status/star/assignee/unread) ----
@@ -471,7 +471,13 @@ export async function GET(req: NextRequest) {
   const masterPhoneDigits = new Set(BOT_ADMINS.filter((a) => a.role === 'master').map((a) => norm(a.phone)))
   const isMasterThread = (c: { phone: string | null }) => !!c.phone && masterPhoneDigits.has(norm(c.phone))
   const visible = list.filter((c) => !isMasterThread(c))
-  const isEftContact = (c: { application_id: string | null }) => !!c.application_id && eftAppIds.has(c.application_id)
+  // A contact is EFT (confined to the dev-only EFT feed, dropped from every other
+  // inbox) when it resolves to an EFT-lane vendor, OR it is the EFT admin's own
+  // address (dev@) whose thread carries the master-brain alert backstop with
+  // cross-vendor PII. Those alerts must live only on the EFT tab, never the general
+  // inbox where the festival owner could open them (Taona 2026-07-24).
+  const isEftContact = (c: { application_id: string | null; email: string | null }) =>
+    (!!c.application_id && eftAppIds.has(c.application_id)) || isEftAdmin(c.email)
   const scoped = eftOnly ? visible.filter(isEftContact) : visible.filter((c) => !isEftContact(c))
 
   const counts = {

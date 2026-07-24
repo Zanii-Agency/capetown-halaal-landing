@@ -26,14 +26,14 @@ export async function POST() {
   const db = createAdminClient()
   const { data: app } = await db
     .from('vendor_applications')
-    .select('business_name, admin_notes, preferred_booth_tier, special_requirements, paid_at')
+    .select('business_name, admin_notes, preferred_booth_tier, special_requirements, paid_at, email, phone')
     .eq('id', applicationId)
     .single()
   if (!app) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // Same gate as the panel + proof route: only a vendor who actually sees the EFT
   // panel may signal here (global mode on, or individually marked ⟦EFT⟧, unpaid).
-  if (!vendorInEftLane(app.admin_notes as string, await getEftMode(), app.paid_at as string | null)) {
+  if (!vendorInEftLane(app.admin_notes as string, await getEftMode(), app.paid_at as string | null, { email: app.email as string | null, phone: app.phone as string | null })) {
     return NextResponse.json({ error: 'EFT is not enabled for your account' }, { status: 403 })
   }
 
