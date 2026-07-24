@@ -20,6 +20,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { transportFor, fromAddressFor } from '@/lib/email-concierge'
 import { mirrorOutboundToSupportInbox } from '@/lib/email/support-mirror'
 import { assertRole } from '@/lib/admin-rbac'
+import { mentionsEft, markVendorToldEft } from '@/lib/eft'
 import { z } from 'zod'
 
 /**
@@ -172,6 +173,8 @@ export async function POST(req: NextRequest) {
       provider_message_id: res.messageId || null,
       metadata: { sent_by: adminUser.email },
     })
+    // Told a vendor about EFT -> move their comms onto the Master lane.
+    if (mentionsEft(text)) await markVendorToldEft({ phone: e164 })
     return NextResponse.json({ ok: true, channel: 'whatsapp' })
   }
 
@@ -224,6 +227,7 @@ export async function POST(req: NextRequest) {
       // raw nodemailer path here must do it explicitly so the reply appears
       // in the thread same as a support@ reply does.
       await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ' })
+      if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
       return NextResponse.json({ ok: true, channel: 'email', via: 'gmail' })
     } catch (e) {
       const msg = (e as Error).message
@@ -244,5 +248,6 @@ export async function POST(req: NextRequest) {
   if (!res.ok) {
     return NextResponse.json({ ok: false, channel: 'email', reason: res.error, message: `Email failed: ${res.error}` }, { status: 502 })
   }
+  if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
   return NextResponse.json({ ok: true, channel: 'email', via: 'support' })
 }

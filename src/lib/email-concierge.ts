@@ -20,7 +20,7 @@
 import nodemailer from 'nodemailer'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode } from '@/lib/eft'
+import { getEftMode, mentionsEft, markVendorToldEft } from '@/lib/eft'
 import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
 
 export const EMAIL_CONFIRMER = { name: 'Samreen', phone: '+27723803393' }
@@ -220,5 +220,7 @@ export async function handleEmailConfirm(
     return { reply: `I couldn't send that email (${res.error}). Nothing went out. Try again or SKIP.`, resolved: false, recognized: true }
   }
   await db.from('support_inbox_messages').update({ concierge_status: 'sent', concierge_draft: bodyToSend }).eq('id', email.id)
+  // Told this vendor about EFT -> move their comms onto the Master lane.
+  if (mentionsEft(bodyToSend)) await markVendorToldEft({ email: email.from_address })
   return { reply: `Sent to ${email.from_name || email.from_address} ✅. I'll bring you the next email when one comes in.`, resolved: true, recognized: true }
 }

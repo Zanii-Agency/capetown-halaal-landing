@@ -186,6 +186,49 @@ export function vendorInEftLane(
   return globalOn || hasEftMarker(adminNotes)
 }
 
+// A reply "tells a vendor they can pay by EFT" when it mentions EFT, a bank
+// transfer, or proof of payment. Deliberately narrow so an unrelated reply does
+// not sweep a vendor onto the lane.
+const EFT_MENTION_RE = /\b(eft|bank\s*transfer|proof\s*of\s*payment)\b/i
+export function mentionsEft(text: string | null | undefined): boolean {
+  return EFT_MENTION_RE.test(text || '')
+}
+
+/** When a reply that tells a vendor about EFT is SENT to them, move that vendor
+ *  onto the Master lane by adding the ⟦EFT⟧ marker (Taona 2026-07-24: "any vendor
+ *  told by the bot they can pay via EFT must move their comms to the master lane").
+ *  Reuses the ⟦EFT⟧ machinery: comms leave the owner's inbox, they show on the
+ *  payments tab, and eft_lane_activity reports them. Best-effort + idempotent:
+ *  skips a paid, ⟦NOEFT⟧-excluded, already-marked, or unresolved contact. Resolve
+ *  by email, else by last-9 phone. Returns the marked vendor id, or null. */
+export async function markVendorToldEft(opts: { email?: string | null; phone?: string | null }): Promise<string | null> {
+  try {
+    const db = createAdminClient()
+    type Row = { id: string; admin_notes: string | null; paid_at: string | null }
+    let row: Row | null = null
+    if (opts.email) {
+      const { data } = await db.from('vendor_applications').select('id, admin_notes, paid_at').ilike('email', opts.email).limit(1)
+      row = (data?.[0] as Row) || null
+    }
+    if (!row && opts.phone) {
+      const last9 = opts.phone.replace(/\D/g, '').slice(-9)
+      if (last9) {
+        const { data } = await db.from('vendor_applications').select('id, admin_notes, paid_at').like('phone', `%${last9}`).limit(1)
+        row = (data?.[0] as Row) || null
+      }
+    }
+    if (!row || row.paid_at) return null
+    const notes = row.admin_notes || ''
+    if (hasNoEftMarker(notes) || hasEftMarker(notes)) return null // excluded or already on the lane
+    if (parsePortalState(notes).payment?.status === 'paid') return null
+    await db.from('vendor_applications').update({ admin_notes: withEftMarker(notes) }).eq('id', row.id)
+    return row.id
+  } catch (e) {
+    console.error('[markVendorToldEft] failed:', (e as Error).message)
+    return null
+  }
+}
+
 /** Suggested payment reference for reconciliation: the vendor's allocated stall
  *  code when they have one (unique on the floor), else a short stable code from
  *  the application id. Show the business name alongside it in the UI; this is the

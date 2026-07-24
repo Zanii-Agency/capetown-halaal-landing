@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker } from './eft'
+import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -97,6 +97,17 @@ test('⟦NOEFT⟧ exclusion overrides global mode AND ⟦EFT⟧ in both predicat
   const keep = withNoEftMarker('Priority.\n\n⟦STALL:FS1⟧')
   assert.match(keep, /⟦STALL:FS1⟧/)
   assert.match(keep, /Priority\./)
+})
+
+test('mentionsEft fires on EFT replies, not on unrelated ones', () => {
+  assert.ok(mentionsEft('You can pay by EFT, upload your proof of payment in the portal.'))
+  assert.ok(mentionsEft('Please do a bank transfer to the account on your portal.'))
+  assert.ok(mentionsEft('Send us your proof of payment once done.'))
+  // Not a payment reply -> must NOT sweep the vendor onto the lane.
+  assert.ok(!mentionsEft('Thanks for your halaal certificate, we have added it.'))
+  assert.ok(!mentionsEft('Your stall is allocated, see you at the festival.'))
+  assert.ok(!mentionsEft(''))
+  assert.ok(!mentionsEft(null))
 })
 
 test('eftReference prefers the allocated stall, else a stable short code', () => {
