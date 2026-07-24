@@ -49,6 +49,13 @@ export const MASTER_TOOL_DEFS = [
       required: ['vendor_id'],
     },
   },
+  {
+    name: 'eft_lane_activity',
+    description:
+      "List vendors actively engaging the EFT payment lane, with timestamps, most recent first: who OPENED / revealed the bank details (a signal they are about to pay), who UPLOADED a proof (awaiting Taona's reconcile), and who is on the Master lane. Call whenever Taona asks who opened or revealed the bank details, who is about to pay, who uploaded proof, who paid recently / last night on EFT, or what is happening on the EFT or Master lane.",
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
 ] as const
 
 export interface MasterToolOutcome { content: string; isError?: boolean }
@@ -148,6 +155,42 @@ async function vendorConversation(vendorId: string): Promise<string> {
   return `Recent thread with ${v.business_name || vendorId} (oldest first):\n` + lines.map((l) => `[${l.at.slice(0, 16).replace('T', ' ')}] ${l.who}: ${l.body}`).join('\n')
 }
 
+// Who is actively on the EFT lane: revealed the bank details (about to pay),
+// uploaded a proof (awaiting reconcile), or was added to the Master lane. This is
+// the tool that answers "anyone opened the bank details / who is about to pay /
+// who uploaded proof". Reads the same portal-state stamps the reveal button
+// (eft_revealed_at) and proof upload (eft_submitted_at) write. Excludes reconciled
+// vendors (paid). Timestamps are ISO/UTC so the brain can reason about "last night".
+async function eftLaneActivity(): Promise<string> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('vendor_applications')
+    .select('id, business_name, contact_name, phone, admin_notes, paid_at, preferred_booth_tier, special_requirements')
+    .limit(2000)
+  const rows = (data || []) as VRow[]
+  type Act = { name: string; phone: string | null; state: string; at: string | null; rank: number; sortAt: number }
+  const acts: Act[] = []
+  for (const r of rows) {
+    if (r.paid_at) continue
+    const p = parsePortalState(r.admin_notes || '').payment
+    if (p?.status === 'paid') continue
+    const submitted = p?.eft_submitted_at
+    const revealed = p?.eft_revealed_at
+    const marked = hasEftMarker(r.admin_notes)
+    if (!submitted && !revealed && !marked) continue
+    // rank: proof uploaded (needs your action) first, then revealed, then just added.
+    let state: string, at: string | null, rank: number
+    if (submitted) { state = 'proof UPLOADED, awaiting your reconcile'; at = submitted; rank = 0 }
+    else if (revealed) { state = 'OPENED the bank details, likely about to pay'; at = revealed; rank = 1 }
+    else { state = 'on the Master lane (has not opened the details yet)'; at = null; rank = 2 }
+    acts.push({ name: r.business_name || 'Unnamed', phone: r.phone, state, at, rank, sortAt: at ? new Date(at).getTime() : 0 })
+  }
+  if (!acts.length) return 'No vendor has opened the EFT bank details, uploaded a proof, or been added to the Master lane yet.'
+  acts.sort((a, b) => a.rank - b.rank || b.sortAt - a.sortAt)
+  const line = (a: Act) => `- ${a.name}${a.phone ? ` (${a.phone})` : ''}: ${a.state}${a.at ? ` at ${a.at.slice(0, 16).replace('T', ' ')} UTC` : ''}`
+  return `${acts.length} vendor${acts.length === 1 ? '' : 's'} active on the EFT lane:\n` + acts.map(line).join('\n')
+}
+
 /**
  * Execute a master tool. THE WALL: refuses unless role === 'master'. Every tool
  * here reads across vendors, so a non-master caller (festival_owner, vendor,
@@ -162,6 +205,7 @@ export async function executeMasterTool(role: string, name: string, args: unknow
       case 'find_vendors': return { content: await findVendors((args as { query?: string })?.query || '') }
       case 'pipeline_numbers': return { content: await pipelineNumbers() }
       case 'vendor_conversation': return { content: await vendorConversation((args as { vendor_id?: string })?.vendor_id || '') }
+      case 'eft_lane_activity': return { content: await eftLaneActivity() }
       default: return { content: `Unknown tool: ${name}`, isError: true }
     }
   } catch (e) {

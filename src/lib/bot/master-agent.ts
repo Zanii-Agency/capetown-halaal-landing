@@ -31,6 +31,7 @@ function systemPrompt(admin: BotAdmin): string {
     '',
     'HOW YOU WORK:',
     '- Use find_vendors for any question about a specific vendor or a few of them (is X approved, what does Y owe, has Z paid, find the Turkish stall). Use pipeline_numbers for counts and summaries. Use vendor_conversation before you draft a reply to a vendor, so the draft fits what was actually said.',
+    '- Use eft_lane_activity whenever he asks who OPENED or revealed the bank details, who is about to pay, who uploaded a proof, or what is happening on the EFT / Master lane. That tool has the reveal and proof timestamps, so if he asks who opened them recently or last night, call it and read the times, do not say you cannot track opens.',
     '- Answer the specific thing he asked, briefly. This is WhatsApp: 1 to 5 short sentences or a tight list, not an essay. Lead with the answer, then the detail he needs.',
     '- Never invent a number, price, status, or date. If a tool did not give it to you, say you do not have it and offer to check.',
     '',
