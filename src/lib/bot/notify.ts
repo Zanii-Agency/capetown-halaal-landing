@@ -9,7 +9,7 @@ import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
-import { getEftMode, EFT_ADMIN_EMAIL } from '@/lib/eft'
+import { getEftMode, EFT_ADMIN_EMAIL, mentionsEft } from '@/lib/eft'
 
 // EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
 // alerts; production regressed to 86% of owner WhatsApp sends dropped with
@@ -118,6 +118,26 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs, fallbackEmail?: str
   }
 }
 
+/** Pure target selection for an owner alert. Extracted so the routing rules are
+ *  unit-testable without the WhatsApp/email/DB side effects.
+ *  - `eftContent` true => the festival owner (Samreen) is NEVER a target, in any
+ *    mode: any alert whose body mentions EFT is walled off from her (Taona
+ *    2026-07-24, "anything that mentions eft must be auto excluded from samreen").
+ *    The master still receives it under an 'all'/'master' audience. */
+export function selectNotifyTargets(
+  admins: BotAdmin[],
+  opts: { audience: 'all' | 'master' | 'festival_owner'; excludeNorm: string | null; eftContent: boolean },
+): BotAdmin[] {
+  return admins.filter((a) => {
+    if (opts.excludeNorm && toE164(a.phone) === opts.excludeNorm) return false
+    if (opts.eftContent && a.role === 'festival_owner') return false
+    if (opts.audience === 'all') return true
+    if (opts.audience === 'master') return a.role === 'master'
+    if (opts.audience === 'festival_owner') return a.role === 'festival_owner'
+    return false
+  })
+}
+
 export async function notifyOwners(args: NotifyArgs): Promise<void> {
   // Global EFT mode: the festival owner (Samreen) is muted on EVERY channel.
   // While the festival is on EFT, every inbound platform event routes to the
@@ -126,15 +146,13 @@ export async function notifyOwners(args: NotifyArgs): Promise<void> {
   // getEftMode fails CLOSED to false (normal = both notified), so a read blip
   // can only fall back to prior behaviour, never silently over-mute.
   const eftOn = await getEftMode()
+  // EFT-content guard: independent of global mode, an alert that mentions EFT is
+  // never delivered to the festival owner. Fixes owner-alert leakage to Samreen's
+  // line when global mode is OFF but the event is EFT-related.
+  const eftContent = mentionsEft(args.body)
   const audience = eftOn ? 'master' : (args.audience || 'all')
   const excludeNorm = args.exclude ? toE164(args.exclude) : null
-  const targets = BOT_ADMINS.filter((a) => {
-    if (excludeNorm && toE164(a.phone) === excludeNorm) return false
-    if (audience === 'all') return true
-    if (audience === 'master') return a.role === 'master'
-    if (audience === 'festival_owner') return a.role === 'festival_owner'
-    return false
-  })
+  const targets = selectNotifyTargets(BOT_ADMINS, { audience, excludeNorm, eftContent })
   // In EFT mode the only target is the master (no email on file), so give the
   // email backstop a home: the EFT admin's monitored CTH inbox.
   const fallbackEmail = eftOn ? EFT_ADMIN_EMAIL : undefined

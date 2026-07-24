@@ -65,16 +65,37 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, waiting: 'an email is awaiting confirmation', autoSkippedStale: stale.length })
   }
 
-  // Oldest NEW inbound email.
-  const { data: rows } = await db
+  // VENDOR-ONLY: the WhatsApp draft/confirm flow fires only for emails whose
+  // sender is a known vendor (matches a vendor_applications email exactly).
+  // Marketing blasts, newsletters, and cold senders (e.g. an NPO fundraising
+  // email from a communications@ address that is NOT the vendor's contact on
+  // file) are bulk-marked skipped_nonvendor so they never ping WhatsApp and never
+  // wedge the queue (Taona 2026-07-24: "only emails from vendors"). They remain
+  // visible in the admin support inbox for manual handling.
+  const BATCH = 25
+  const { data: batch } = await db
     .from('support_inbox_messages')
     .select('id, from_address, from_name, to_address, subject, body_text, message_id, concierge_draft')
     .eq('direction', 'in')
     .is('concierge_status', null)
     .order('received_at', { ascending: true })
-    .limit(1)
-  const r = rows?.[0] as Record<string, unknown> | undefined
-  if (!r) return NextResponse.json({ ok: true, nothing: 'no new emails' })
+    .limit(BATCH)
+  if (!batch?.length) return NextResponse.json({ ok: true, nothing: 'no new emails' })
+
+  // Vendor email set (lowercased) — full column so case/format never breaks the
+  // match. ~O(vendors) rows, negligible.
+  const { data: vendorRows } = await db.from('vendor_applications').select('email')
+  const vendorEmails = new Set((vendorRows || []).map((v) => String(v.email || '').trim().toLowerCase()).filter(Boolean))
+  const isVendor = (addr: unknown) => vendorEmails.has(String(addr || '').trim().toLowerCase())
+
+  const nonVendor = batch.filter((b) => !isVendor(b.from_address))
+  if (nonVendor.length) {
+    await db.from('support_inbox_messages')
+      .update({ concierge_status: 'skipped_nonvendor' })
+      .in('id', nonVendor.map((b) => b.id))
+  }
+  const r = batch.find((b) => isVendor(b.from_address)) as Record<string, unknown> | undefined
+  if (!r) return NextResponse.json({ ok: true, nothing: 'no new vendor emails', skippedNonVendor: nonVendor.length })
 
   const email: InboundEmail = {
     id: String(r.id),

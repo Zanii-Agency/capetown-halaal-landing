@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { vendorCommsInEftLane, isEftAdmin, getEftMode } from '@/lib/eft'
+import { vendorCommsInEftLane, isEftAdmin, getEftMode, mentionsEft } from '@/lib/eft'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 
 export const runtime = 'nodejs'
@@ -478,7 +478,16 @@ export async function GET(req: NextRequest) {
   // inbox where the festival owner could open them (Taona 2026-07-24).
   const isEftContact = (c: { application_id: string | null; email: string | null }) =>
     (!!c.application_id && eftAppIds.has(c.application_id)) || isEftAdmin(c.email)
-  const scoped = eftOnly ? visible.filter(isEftContact) : visible.filter((c) => !isEftContact(c))
+  // EFT-content guard: a non-EFT admin (Samreen) never sees a thread whose latest
+  // message mentions EFT, even if the contact carries no lane marker (Taona
+  // 2026-07-24: "any email or whatsapp that mentions eft must be auto excluded
+  // from samreen"). The durable per-vendor seal remains the ⟦EFT⟧ marker
+  // (eftAppIds, above); this is the display-layer net for the visible message.
+  const viewerIsEftAdmin = isEftAdmin(user.email)
+  const eftMention = (c: { last_preview: string | null }) => !viewerIsEftAdmin && mentionsEft(c.last_preview)
+  const scoped = eftOnly
+    ? visible.filter(isEftContact)
+    : visible.filter((c) => !isEftContact(c) && !eftMention(c))
 
   const counts = {
     all: scoped.length,
