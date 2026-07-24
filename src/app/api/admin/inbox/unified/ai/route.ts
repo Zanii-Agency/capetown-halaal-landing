@@ -12,6 +12,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { stripEmDashes } from '@/lib/festival-brain/system-prompt'
+import { getEftMode } from '@/lib/eft'
+import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -38,11 +40,20 @@ const bodySchema = z.object({
 
 interface Turn { role: 'vendor' | 'team'; channel: 'whatsapp' | 'email'; text: string; at: string }
 
-const HARD_FACTS = `FESTIVAL FACTS (use only these, never invent):
+// Payment reality is time-dependent: while EFT mode is on (Yoco outage) the stall
+// fee is paid by EFT with strict terms, NOT by card. Grounding the smart reply on
+// the stale "card only" line was giving vendors a wrong answer, so the facts follow
+// the live mode and carry the same EFT terms the vendor sees on their portal.
+function hardFacts(eftOn: boolean): string {
+  const payLine = eftOn
+    ? `- STALL FEE PAYMENT (current): card payments are temporarily unavailable, so the stall fee is paid by EFT (bank transfer). The vendor sees the bank details, their unique reference, and the full terms on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, and uploads proof of payment there. Direct them to the portal for the banking details, do NOT state account numbers yourself. EFT TERMS the vendor must follow: ${EFT_TERMS_TEXT}`
+    : `- Vendor flow: apply, approval takes a few working days, pay the stall fee by card in the exhibitor portal, stall allocated closer to the festival.`
+  return `FESTIVAL FACTS (use only these, never invent):
 - Young at Heart Festival (Cape Town Halaal), 11 to 13 December 2026, Youngsfield Military Base, Wetton Road, Claremont, Cape Town.
 - Tickets R30/day, R60 weekend pass, children under 3 free. Buy + apply at cthalaal.co.za. Vendor apply: cthalaal.co.za/apply. Exhibitor portal: cthalaal.co.za/exhibitor/login.
 - All food on site is strictly halaal. Free parking on site. Contact: support@youngatheart.co.za.
-- Vendor flow: apply, approval takes a few working days, pay stall fee by card in the portal, stall allocated closer to the festival.`
+${payLine}`
+}
 
 const STYLE = `STYLE: warm, plain, concise. 2 to 4 sentences. No em-dashes or en-dashes, use commas/periods/colons. Never say AI assistant, Claude, OpenAI, Anthropic. You are the Young at Heart festival team. Do not invent prices, stall numbers, dates, or banking details. If you do not know, defer to support@youngatheart.co.za.`
 
@@ -93,14 +104,14 @@ function lastInbound(turns: Turn[]): string | null {
   return null
 }
 
-function promptFor(action: Action, turns: Turn[], draft: string): { system: string; user: string } | { error: string } {
+function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean): { system: string; user: string } | { error: string } {
   const convo = transcript(turns)
-  const base = `${HARD_FACTS}\n\n${STYLE}`
+  const base = `${hardFacts(eftOn)}\n\n${STYLE}`
   switch (action) {
     case 'smart_reply': {
       const inbound = lastInbound(turns)
       if (!inbound) return { error: 'No incoming message to reply to yet.' }
-      return { system: `You are the Young at Heart festival team replying to a vendor or guest on the same channel. Write the reply only, no preamble.\n\n${base}`, user: `CONVERSATION:\n${convo}\n\nWrite the best reply to their latest message.` }
+      return { system: `You are the Young at Heart festival team replying to a vendor or guest on the same channel. Write the reply only, no preamble.\n\n${base}`, user: `CONVERSATION:\n${convo}\n\nTHEIR LATEST MESSAGE:\n"${inbound}"\n\nReply directly to what they actually asked or said in that latest message, point by point. Do not send a generic acknowledgement or a template: answer their specific questions and requests using the facts above. If they ask about payment, part payment, deposits, proof of payment, or a deadline, answer using the current stall fee payment facts and terms exactly.` }
     }
     case 'tone_adjust': {
       if (!draft.trim()) return { error: 'Type a draft reply first, then adjust its tone.' }
@@ -137,7 +148,8 @@ export async function POST(req: NextRequest) {
   if (!body.phone && !body.email) return NextResponse.json({ error: 'phone or email required' }, { status: 400 })
 
   const turns = await loadThread(db, body.phone, body.email)
-  const prompt = promptFor(body.action, turns, body.draft || '')
+  const eftOn = await getEftMode()
+  const prompt = promptFor(body.action, turns, body.draft || '', eftOn)
   if ('error' in prompt) return NextResponse.json({ ok: false, message: prompt.error }, { status: 200 })
 
   try {

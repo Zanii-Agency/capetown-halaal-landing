@@ -20,6 +20,8 @@
 import nodemailer from 'nodemailer'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getEftMode } from '@/lib/eft'
+import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
 
 export const EMAIL_CONFIRMER = { name: 'Samreen', phone: '+27723803393' }
 // Taona gets a MIRROR (FYI) of every email notification, but does NOT confirm —
@@ -75,11 +77,20 @@ function stripEmDashes(s: string): string {
 /** Draft a reply with Claude. body_text is already clean (mailparser). */
 export async function draftReply(email: InboundEmail): Promise<string> {
   if (!anthropic) return ''
+  // Payment reality is time-dependent. While EFT mode is on (Yoco outage) a vendor
+  // asking how to pay must be answered with the EFT flow + terms, not a vague
+  // holding reply. Give the model those facts so it can answer the actual request.
+  const eftOn = await getEftMode()
+  const paymentFacts = eftOn
+    ? `CURRENT STALL FEE PAYMENT: card payments are temporarily unavailable, so vendors pay the stall fee by EFT (bank transfer). Tell them the bank details, their reference, and the full terms are on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, where they also upload proof of payment. Do NOT state account numbers yourself. EFT TERMS the vendor must follow: ${EFT_TERMS_TEXT} `
+    : ''
   const system =
     `You draft email replies on behalf of the Cape Town Halaal Festival team (operator: Samreen). ` +
     `Tone: warm, professional, concise, helpful, South African English. ` +
     `NEVER use em-dashes (use commas, periods, colons). ` +
+    `Reply to what the email ACTUALLY asks, point by point, using the facts you are given. ` +
     `Do not invent facts, prices, or commitments you were not given. If you cannot answer something, write a short, friendly holding reply saying the team will look into it and follow up. ` +
+    paymentFacts +
     `End with a sign-off line: "Cape Town Halaal Festival Team". ` +
     `Output ONLY the reply body, no subject line, no "Here is a draft", no quotes.`
   // The email is UNTRUSTED, attacker-controllable data. Wrap it in delimiters and

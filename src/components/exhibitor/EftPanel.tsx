@@ -8,8 +8,9 @@
 
 import { useState } from 'react'
 import {
-  Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check, Eye,
+  Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check, Eye, AlertTriangle,
 } from 'lucide-react'
+import { EFT_TERMS, EFT_TERMS_HEADING } from '@/lib/eft-terms'
 
 interface Bank {
   accountName: string
@@ -103,6 +104,22 @@ export default function EftPanel({
           Please pay your stall fee by EFT using the details below and upload your proof of payment. To reach us, use your portal inbox, email at{' '}
           <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>, or WhatsApp. We cannot see or reply to messages on any other channel, including social media. Your payment status updates here on your portal.
         </p>
+      </div>
+
+      {/* EFT terms disclaimer. Full payment only, no part payments, fake POP reported. */}
+      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-900">
+        <div className="flex items-center gap-2 mb-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <p className="font-bold text-sm">{EFT_TERMS_HEADING}</p>
+        </div>
+        <ul className="space-y-1.5 text-sm">
+          {EFT_TERMS.map((t, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+              <span>{t}</span>
+            </li>
+          ))}
+        </ul>
       </div>
 
       {/* Bank details. */}
