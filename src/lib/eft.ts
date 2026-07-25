@@ -41,6 +41,30 @@ export function isEftAdmin(email?: string | null): boolean {
   return !!email && email.toLowerCase() === EFT_ADMIN_EMAIL
 }
 
+/**
+ * The payment status a given admin is allowed to SEE on the general admin lists.
+ *
+ * 'collected' is the EFT lane's interim state: an operator has confirmed the
+ * money landed, so the VENDOR's portal behaves exactly as if they had paid by
+ * card. The festival owner must not learn of it, because the whole lane is
+ * walled from her until the payment is settled through Yoco (Taona, 2026-07-25:
+ * "once I click mark collected, everything for the vendor should be normal, only
+ * Samreen doesn't know and never will know till we do Yoco settlement").
+ *
+ * So for every viewer except the EFT admin, 'collected' is reported as 'none',
+ * which is exactly what the row showed before the money was collected. The EFT
+ * console (/admin/eft) reads the raw state directly and is unaffected, and Yoco
+ * settlement flips the row to a real 'paid' that everyone sees.
+ *
+ * Display only. It never changes what is stored, and never suppresses a real
+ * 'paid', so revenue can not go missing from the owner's finance view.
+ */
+export function visiblePaymentStatus(status: string | null | undefined, viewerEmail?: string | null): string {
+  const s = status || 'none'
+  if (s !== 'collected') return s
+  return isEftAdmin(viewerEmail) ? s : 'none'
+}
+
 // Operator PREVIEW addresses: emails an operator uses to preview vendor-facing
 // output (e.g. a self-sent invoice preview). Their unified-inbox threads are
 // confined to the dev-only EFT feed so a preview never surfaces in the festival

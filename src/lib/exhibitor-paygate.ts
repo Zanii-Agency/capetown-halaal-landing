@@ -20,20 +20,25 @@
 
 import { redirect } from 'next/navigation'
 import { getExhibitorContext } from '@/lib/exhibitor'
-import { parsePortalState } from '@/lib/portal-state'
+import { parsePortalState, hasPaid } from '@/lib/portal-state'
 
 /** True if the application has paid, per either the DB columns or the marker. */
 function isPaid(app: Record<string, unknown>): boolean {
   if (app.payment_status === 'paid') return true
   if (app.paid_at) return true
-  const state = parsePortalState((app.admin_notes as string) || null)
-  if (state.payment?.status === 'paid') return true
-  // TEMPORARY EFT lane (lib/eft.ts): uploading an EFT proof does NOT unlock the
-  // portal. The vendor stays gated on /payments with a "we will confirm within 24
-  // hours" message until an OPERATOR verifies the money landed and reconciles them
-  // to really paid (which sets status/paid_at above). eft_submitted_at is only a
-  // provisional "proof on file" flag, never an access grant.
-  return false
+  // hasPaid() covers 'paid', 'waived' and 'collected'. 'collected' matters here:
+  // an operator has confirmed the EFT money landed and the vendor was sent a
+  // payment confirmation, so from the vendor's side they have paid and the
+  // portal must behave exactly as it does for a card payment. It reads as
+  // unpaid ONLY on the admin/finance surfaces, which deliberately do not use
+  // this helper, until Yoco settlement flips it to real 'paid'.
+  //
+  // TEMPORARY EFT lane (lib/eft.ts): uploading an EFT proof still does NOT
+  // unlock the portal. The vendor stays gated on /payments with a "we will
+  // confirm within 24 hours" message until an OPERATOR marks it collected.
+  // eft_submitted_at is only a provisional "proof on file" flag, never an
+  // access grant.
+  return hasPaid(parsePortalState((app.admin_notes as string) || null))
 }
 
 /** True if an approved vendor still needs to sign the contract. */

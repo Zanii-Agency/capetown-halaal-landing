@@ -13,7 +13,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState, updatePortalState, type PortalState } from '@/lib/portal-state'
+import { parsePortalState, updatePortalState, hasPaid, type PortalState } from '@/lib/portal-state'
 import { sendEmail } from '@/lib/email/resend'
 import { Campaign } from '@/lib/email/templates/Campaign'
 import { sendTemplate } from '@/lib/whatsapp'
@@ -31,7 +31,7 @@ export function firstNameOf(n?: string | null): string {
 
 /** Paid + no logo yet. */
 export function vendorNeedsLogo(state: PortalState): boolean {
-  return state.payment?.status === 'paid' && !state.profile?.logo_path
+  return hasPaid(state) && !state.profile?.logo_path
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

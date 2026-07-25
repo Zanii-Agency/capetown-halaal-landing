@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
       const paidAt = p.paid_at || v.paid_at || null
       const amount = p.amount ?? computeVendorPricing(v).total
       const dueDate = p.due || null
-      const paymentStatus = p.status ?? (v.paid_at ? 'paid' : 'none')
+      const paymentStatus = visiblePaymentStatus(p.status ?? (v.paid_at ? 'paid' : 'none'), viewerEmail)
 
       let overdue = false
       if (paymentStatus === 'pending' && dueDate) {

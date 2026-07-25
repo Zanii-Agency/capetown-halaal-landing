@@ -26,7 +26,7 @@ import { provisionExhibitorAccount } from '@/lib/exhibitor-auth'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { findWaTemplate, renderWaTemplatePreview } from '@/lib/templates/wa-meta'
 import { parseAllocation } from '@/lib/stalls'
-import { updatePortalState } from '@/lib/portal-state'
+import { updatePortalState, hasPaid } from '@/lib/portal-state'
 import type { createAdminClient } from '@/lib/supabase/admin'
 
 type AdminClient = ReturnType<typeof createAdminClient>
@@ -104,7 +104,10 @@ export async function notifyApplicationDecision({
           ...s,
           payment: {
             ...(s.payment || {}),
-            status: s.payment?.status === 'paid' ? 'paid' : 'pending',
+            // Never downgrade a settled vendor ('paid'/'waived'/'collected') to
+            // 'pending' on a re-approval: that would re-lock their portal and put
+            // them back in the chase queue after they had already paid.
+            status: hasPaid(s) ? (s.payment?.status ?? 'paid') : 'pending',
             due: dueDateIso,
           },
         }))

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { getExhibitorContext } from '@/lib/exhibitor'
-import { parsePortalState } from '@/lib/portal-state'
+import { parsePortalState, hasPaid } from '@/lib/portal-state'
 import { parseAllocation, tierLabel, TYPE_META, STALL_LIST, type StallType } from '@/lib/stalls'
 import { listAnnouncements } from '@/lib/announcements'
 import Link from 'next/link'
@@ -75,7 +75,9 @@ export default async function Overview() {
   const docsLabel = requiredDocs.length === 0 ? 'no docs required' : 'documents in'
   const docsTileValue = requiredDocs.length === 0 ? '—' : `${docsUploaded}/${requiredDocs.length}`
   const staffCount = (state.staff || []).length
-  const isPaid = state.payment?.status === 'paid' || app?.payment_status === 'paid'
+  // 'collected' counts: the vendor was told they are paid, so their dashboard
+  // must say so too (see hasPaid in portal-state).
+  const isPaid = hasPaid(state) || app?.payment_status === 'paid'
   const profileLive = !!(state.profile?.logo_path || state.profile?.description)
   const paymentDue = (app?.payment_due_date as string) || '1 Sep 2026'
 

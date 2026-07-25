@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
-import { updatePortalState, parsePortalState } from '@/lib/portal-state'
+import { updatePortalState, parsePortalState, hasPaid } from '@/lib/portal-state'
 import { activeProvider, paymentsEnabled, paymentReference } from '@/lib/payments'
 
 const SITE = 'https://cthalaal.co.za'
@@ -79,7 +79,9 @@ export async function POST() {
       // Already-paid vendor doing a top-up: keep them 'paid' (do not downgrade
       // to 'pending', which would re-lock the portal). Never overwrite the
       // cumulative-paid `amount`; confirmPayment accumulates that on success.
-      const settled = s.payment?.status === 'paid' || !!s.payment?.paid_at
+      // hasPaid covers 'collected' too, so an EFT-collected vendor clicking Pay
+      // again is never downgraded to 'pending' (which would re-lock their portal).
+      const settled = hasPaid(s)
       return {
         ...s,
         payment: {

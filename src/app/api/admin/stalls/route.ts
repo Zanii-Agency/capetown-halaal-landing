@@ -77,7 +77,7 @@ async function loadOccupants(admin: ReturnType<typeof createAdminClient>) {
       preferred_booth_tier: a.preferred_booth_tier as string,
       special_requirements: a.special_requirements,
     })
-    const paymentStatus = (portal.payment?.status || 'none') as string
+    const paymentStatus = visiblePaymentStatus(portal.payment?.status, viewerEmail)
     const paymentAmount =
       portal.payment?.amount && portal.payment.amount > 0 ? portal.payment.amount : pricing.total
     const row = {

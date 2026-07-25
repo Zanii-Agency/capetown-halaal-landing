@@ -12,7 +12,7 @@ import { assertRole } from '@/lib/admin-rbac'
 import { capJsonbSize } from '@/lib/audit/cap'
 import { findWaTemplate, renderWaTemplatePreview } from '@/lib/templates/wa-meta'
 import { parseAllocation } from '@/lib/stalls'
-import { parsePortalState, updatePortalState } from '@/lib/portal-state'
+import { parsePortalState, updatePortalState, hasPaid } from '@/lib/portal-state'
 
 // Validation for status updates
 const updateSchema = z.object({
@@ -216,7 +216,10 @@ export async function PATCH(
           ...s,
           payment: {
             ...(s.payment || {}),
-            status: s.payment?.status === 'paid' ? 'paid' : 'pending',
+            // Never downgrade a settled vendor ('paid'/'waived'/'collected') to
+            // 'pending' on a re-approval: that would re-lock their portal and put
+            // them back in the chase queue after they had already paid.
+            status: hasPaid(s) ? (s.payment?.status ?? 'paid') : 'pending',
             due: dueDateIso,
           },
         }))

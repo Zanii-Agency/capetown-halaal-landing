@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
+import { visiblePaymentStatus } from '@/lib/eft'
 import { parseVendorExtras } from '@/lib/vendor-extras'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { VendorsList, type VendorRow } from '@/components/admin/vendors/VendorsList'
@@ -35,7 +36,7 @@ export default async function VendorsListPage() {
     const notes = (a.admin_notes as string) || ''
     const { stall, status: stallStatus } = parseAllocation(notes)
     const portal = parsePortalState(notes)
-    const paymentStatus = portal.payment?.status || 'none'
+    const paymentStatus = visiblePaymentStatus(portal.payment?.status, user.email)
     const paymentAmount = portal.payment?.amount || null
     const docsCount = (portal.docs || []).length
     const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)

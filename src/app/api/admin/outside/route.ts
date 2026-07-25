@@ -84,7 +84,7 @@ async function loadRoster(admin: ReturnType<typeof createAdminClient>) {
 
     const za = parseZoneAssignment(a.admin_notes as string)
     const portal = parsePortalState(a.admin_notes as string)
-    const paymentStatus = (portal.payment?.status || 'none') as string
+    const paymentStatus = visiblePaymentStatus(portal.payment?.status, viewerEmail)
     const paid = paymentStatus === 'paid' || paymentStatus === 'waived'
     const status = (a.status as string) || ''
     const committed = status === 'approved' // fills a spot; pending/info_requested wait
