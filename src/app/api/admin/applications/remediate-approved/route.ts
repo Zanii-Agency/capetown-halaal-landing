@@ -161,6 +161,10 @@ export async function POST(req: NextRequest) {
     await notifyOwners({
       event: 'application_approved',
       body: `${emailOk} vendor${emailOk === 1 ? '' : 's'} approved + notified (email + WhatsApp): ${names.join(', ')}.`,
+      // CARVE-OUT: no vendorId. Batch digest spanning many vendors. This body
+      // does list vendor NAMES, some of whom may be on the EFT lane; the
+      // operator confirmed 2026-07-25 that approvals are the owner's job and
+      // names alone (no payment status, no amounts) are acceptable to her.
     }).catch((e) => console.error('[remediate] notifyOwners failed:', (e as Error).message))
   }
 

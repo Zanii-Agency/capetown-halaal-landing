@@ -247,6 +247,8 @@ export async function POST(request: NextRequest) {
       await notifyOwners({
         event: 'application_approved',
         body: `Bulk ${action.replace('_', ' ')}: ${notifiedNow} vendor${notifiedNow === 1 ? '' : 's'} notified by email + WhatsApp${deferred ? ` (${deferred} deferred — run remediation)` : ''}.`,
+        // CARVE-OUT: no vendorId. A batch digest spans many vendors, so any one
+        // row would be wrong for the rest. Counts only, no vendor identity.
       }).catch((e) => console.error('[bulk] notifyOwners failed:', (e as Error).message))
     }
 

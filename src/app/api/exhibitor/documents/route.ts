@@ -104,6 +104,7 @@ export async function POST(req: NextRequest) {
       event: 'document_uploaded',
       body: `New document uploaded by ${bizName}: ${docType}.`,
       audience: 'all',
+      vendorId: applicationId, // EFT-lane vendors' self-service stays on master
     })
   } catch (e) {
     console.error('[documents] notifyOwners failed:', (e as Error).message)

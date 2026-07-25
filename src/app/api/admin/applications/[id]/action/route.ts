@@ -221,6 +221,12 @@ export async function POST(
         await notifyOwners({
           event: eventMap[decisionStatus],
           body: `${before.business_name || 'Vendor'} (${before.contact_name || '—'}) ${decisionStatus.replace('_', ' ')}. Notified by email${waNote}. ${before.email || ''}`,
+          // CARVE-OUT: no vendorId, DELIBERATELY UNMIGRATED. `before` holds the
+          // full row, so adding one is trivial — and would make every approval,
+          // rejection and info-request master-only under global EFT mode (every
+          // unpaid vendor is on the lane), including the confirmation of the
+          // owner's own workbench action. That is a far larger reduction of her
+          // scope than the 2026-07-25 rule asked for. Separate decision.
         })
       } catch (e) {
         console.error('[action] notifyOwners failed:', (e as Error).message)

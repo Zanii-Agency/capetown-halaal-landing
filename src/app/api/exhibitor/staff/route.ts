@@ -162,7 +162,8 @@ export async function POST(req: NextRequest) {
   const [first, ...rest] = vendorContact.split(/\s+/).filter(Boolean)
   const vendorFirstName = first || 'Vendor'
   const vendorLastName = rest.join(' ') || String(application.business_name || '')
-  const businessName = String(application.business_name || 'Vendor')
+  // .trim(): a stored trailing space rendered the owner alert as "Krispy Corn Dog : Junaid"
+  const businessName = String(application.business_name || 'Vendor').trim() || 'Vendor'
   const vendorEmail = String(application.email || '')
   const vendorPhone = String(application.phone || cleaned.phoneE164)
 
@@ -245,6 +246,7 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `Staff badge added by ${businessName}: ${cleaned.name}.`,
       audience: 'all',
+      vendorId: applicationId, // EFT-lane vendors' self-service stays on master
     })
   } catch (e) {
     console.error('[staff] notifyOwners failed:', (e as Error).message)

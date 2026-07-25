@@ -194,6 +194,10 @@ export async function POST(request: NextRequest) {
         event: 'application_received',
         body: `New vendor application: ${validated.business_name} (${validated.email}). Booth chosen: ${validated.preferred_booth_tier || 'not specified'}.`,
         audience: 'all',
+        // CARVE-OUT: deliberately NO vendorId. A brand-new application has
+        // admin_notes null and paid_at null, so the lane predicate would return
+        // true under global EFT mode and mute the festival owner from EVERY new
+        // applicant, which is her core duty. Operator-confirmed 2026-07-25.
       })
     } catch (notifyError) {
       console.error('[applications] notify owner failed:', notifyError)

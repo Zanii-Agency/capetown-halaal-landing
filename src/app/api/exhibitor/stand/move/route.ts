@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `Stall position change requested by ${bizName} (currently ${currentStall}, prefers ${zoneLabel}). Details: ${details}\n\nReview at /admin/stall-changes`,
       audience: 'all',
+      vendorId: app.id as string, // EFT-lane vendors' self-service stays on master
     })
   } catch (e) {
     console.error('[exhibitor/stand/move] notifyOwners failed:', (e as Error).message)

@@ -213,6 +213,7 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `WA opt-in: ${contactName} (${app.business_name}) subscribed at ${e164}.`,
       audience: 'all',
+      vendorId: applicationId, // EFT-lane vendors' self-service stays on master
     })
   } catch (e) {
     console.error('[wa-optin] notify owners failed:', (e as Error).message)

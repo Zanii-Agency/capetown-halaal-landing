@@ -9,7 +9,7 @@ import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
-import { getEftMode, EFT_ADMIN_EMAIL, mentionsEft } from '@/lib/eft'
+import { getEftMode, EFT_ADMIN_EMAIL, mentionsEft, vendorCommsInEftLane } from '@/lib/eft'
 
 // EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
 // alerts; production regressed to 86% of owner WhatsApp sends dropped with
@@ -48,11 +48,75 @@ interface NotifyArgs {
   /** E.164 to skip — e.g. the admin who just replied shouldn't be notified of
    *  their own message (used to mirror a reply to the OTHER support agent). */
   exclude?: string
-  /** Mark this alert EFT-scoped so the festival owner (Samreen) is withheld even
-   *  when the body does not literally mention "EFT" — e.g. a support message from
-   *  an unpaid/collected master-lane vendor. Callers set this from the vendor's
-   *  lane status (vendorCommsInEftLane). Non-EFT alerts leave it unset. */
+  /** The vendor this alert is ABOUT. Pass it whenever the alert concerns ONE
+   *  identifiable vendor and the lane decides who may see it — notifyOwners looks
+   *  the row up and applies the single canonical predicate (vendorCommsInEftLane)
+   *  itself. Callers pass an id, never hand-copied lane columns: assembling
+   *  admin_notes/paid_at/email/phone by hand at each call site is exactly what
+   *  produced the two divergent checks this field replaces (registry.ts hardcoded
+   *  paidAt:null -> over-muted paid vendors; vendor-brain.ts hand-rolled a
+   *  predicate missing five conditions -> under-muted).
+   *
+   *  OMIT IT when no single vendor applies (batch digests, sponsor enquiries) or
+   *  when the alert must always reach the owner (a brand-new application, whose
+   *  null admin_notes + null paid_at would otherwise read as in-lane under global
+   *  mode). Omitting is FAIL-OPEN: the owner still sees the alert. */
+  vendorId?: string
+  /** Legacy escape hatch for callers that can only identify the vendor by PHONE
+   *  (the WhatsApp webhook, via eftScopedForPhone). Prefer vendorId: a resolved
+   *  vendor row overrides this flag in both directions, so a stale `true` can
+   *  never mute an alert about a vendor who has since been reconciled. */
   eftScoped?: boolean
+}
+
+/** The four vendor_applications columns that decide the comms lane. */
+type VendorLaneRow = { admin_notes: unknown; paid_at: unknown; email: unknown; phone: unknown }
+
+const asStr = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
+
+/** Should this alert be withheld from the festival owner (Samreen)? Pure, so the
+ *  routing rule is unit-testable without the Supabase/WhatsApp/Resend side effects.
+ *
+ *  Precedence:
+ *    1. vendor row present -> THE ROW IS THE TRUTH. Body text and eftScoped are
+ *       both ignored. This is load-bearing: confirmPayment's body reads "marked
+ *       paid via eft", and under the old body-text rule that muted the owner from
+ *       the very alert telling her a vendor had settled and become hers. It
+ *       supersedes the 2026-07-24 blanket "any EFT mention is withheld" rule,
+ *       under the 2026-07-25 rule: EFT vendors stay on master through 'collected'
+ *       and return to the owner on Yoco reconciliation (paid_at set).
+ *    2. no row -> fall back to the heuristics (body text, or an explicit flag).
+ *    3. neither -> false. She sees it. FAIL-OPEN, deliberately: an over-share is
+ *       visible and recoverable (she asks why she got it), whereas a wrong mute is
+ *       SILENT — no error, no log, the alert simply never arrives. Her job is
+ *       approving vendors, so a silent blackout is the worse failure. */
+export function isEftScopedAlert(
+  args: { body: string; eftScoped?: boolean },
+  vendor: VendorLaneRow | null,
+  globalOn: boolean,
+): boolean {
+  if (vendor) {
+    return vendorCommsInEftLane(asStr(vendor.admin_notes), asStr(vendor.paid_at), globalOn, {
+      email: asStr(vendor.email),
+      phone: asStr(vendor.phone),
+    })
+  }
+  return mentionsEft(args.body) || args.eftScoped === true
+}
+
+// Best-effort: a miss or a throw returns null, which degrades to the heuristics
+// above rather than guessing a lane from an absent row.
+async function lookupVendorLane(id: string): Promise<VendorLaneRow | null> {
+  try {
+    const { data } = await createAdminClient()
+      .from('vendor_applications')
+      .select('admin_notes, paid_at, email, phone')
+      .eq('id', id)
+      .limit(1)
+    return (data?.[0] as VendorLaneRow | undefined) ?? null
+  } catch {
+    return null
+  }
 }
 
 // Logs every send to wa_messages so the Bot Inbox surfaces it next to admin
@@ -151,10 +215,22 @@ export async function notifyOwners(args: NotifyArgs): Promise<void> {
   // the caller flags it (eftScoped) — e.g. a support message from an unpaid /
   // collected master-lane vendor, whose body carries no "EFT" text.
   const eftOn = await getEftMode()
-  const eftContent = mentionsEft(args.body) || args.eftScoped === true
+  const vendor = args.vendorId ? await lookupVendorLane(args.vendorId) : null
+  const eftContent = isEftScopedAlert(args, vendor, eftOn)
   const audience = args.audience || 'all'
   const excludeNorm = args.exclude ? toE164(args.exclude) : null
   const targets = selectNotifyTargets(BOT_ADMINS, { audience, excludeNorm, eftContent })
+  // Routing is otherwise unobservable: a wrongly-muted alert produces no error and
+  // no trace, so the only way it surfaces is an admin noticing an absence weeks
+  // later. Log the decision, and warn loudly when an alert reaches NOBODY.
+  console.log(JSON.stringify({
+    at: 'notify', event: args.event, eftContent, hadVendor: !!vendor,
+    resolvedVendor: args.vendorId ? !!vendor : undefined,
+    targets: targets.map((t) => t.role),
+  }))
+  if (targets.length === 0) {
+    console.warn(JSON.stringify({ at: 'notify', warn: 'no_targets', event: args.event, audience, eftContent }))
+  }
   // Master has no email in BOT_ADMINS; under EFT mode give its email backstop a
   // home (the EFT admin's monitored CTH inbox) so a master-only alert still lands.
   const fallbackEmail = eftOn ? EFT_ADMIN_EMAIL : undefined

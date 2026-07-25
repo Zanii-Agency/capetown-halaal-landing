@@ -136,6 +136,7 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `Contract signed: ${String(app.business_name || 'Vendor')}.`,
       audience: 'all',
+      vendorId: app.id as string, // EFT-lane vendors' self-service stays on master
     })
   } catch (e) {
     console.error('[contract-sign] notifyOwners failed:', (e as Error).message)

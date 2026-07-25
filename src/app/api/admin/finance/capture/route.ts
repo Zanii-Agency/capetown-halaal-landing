@@ -103,6 +103,9 @@ export async function POST(req: NextRequest) {
   notifyOwners({
     event: 'payment_succeeded',
     body: `${appRow.business_name || 'Vendor'} payment captured (${zoneLabel}): R${parsed.amount.toLocaleString('en-ZA')}${parsed.reference ? ` · ref ${parsed.reference}` : ''}.`,
+    // CARVE-OUT: no vendorId. A capture means the vendor is paid by definition,
+    // so the owner must see it; fail-open already gives that. Do not "fix" this
+    // by synthesising a partial row — appRow lacks the lane columns entirely.
   }).catch((e) => console.error('[capture] notifyOwners failed:', (e as Error).message))
 
   return NextResponse.json({

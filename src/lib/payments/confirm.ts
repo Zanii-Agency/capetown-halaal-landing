@@ -362,6 +362,11 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
       event: 'payment_succeeded',
       body: `${businessName} ${isTopUp ? 'paid an ADDITIONAL' : 'marked paid via ' + input.method + '. Amount'} ${formatRand(amount)}${isTopUp ? ` (total paid ${formatRand(newCumulative)})` : ''}${providerRef ? `, ref ${providerRef}` : ''}.`,
       audience: 'all',
+      // paid_at was written above, so the lane lookup returns "settled" and the
+      // festival owner is KEPT. Without this the body's literal "paid via eft"
+      // tripped the mentionsEft heuristic and muted her from the one alert that
+      // tells her a vendor has reconciled and become hers.
+      vendorId: input.applicationId,
     })
   } catch (e) {
     console.error('[confirmPayment] notify owners failed:', (e as Error).message)
