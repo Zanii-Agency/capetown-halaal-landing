@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
+import { visiblePaymentStatus } from '@/lib/eft'
 import { tierLabel } from '@/lib/stalls'
 import {
   OUTSIDE_ZONES, zoneForTier, parseZoneAssignment, withZoneAssignment,
@@ -67,7 +68,7 @@ interface OutsideVendorRow {
 
 // Pull every outside-tier vendor once, return rows + a code->occupant map keyed
 // by `${zone}:${slot}` so the slot over-confirm guard is a single lookup.
-async function loadRoster(admin: ReturnType<typeof createAdminClient>) {
+async function loadRoster(admin: ReturnType<typeof createAdminClient>, viewerEmail?: string | null) {
   const { data: apps } = await admin
     .from('vendor_applications')
     .select('id, business_name, contact_name, phone, email, preferred_booth_tier, status, admin_notes')
@@ -117,7 +118,7 @@ export async function GET() {
     const auth = await requireOperator()
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
-    const { vendors } = await loadRoster(auth.admin)
+    const { vendors } = await loadRoster(auth.admin, auth.adminUser.email || auth.userEmail)
 
     const zones = OUTSIDE_ZONES.map((z) => {
       const zoneVendors = vendors

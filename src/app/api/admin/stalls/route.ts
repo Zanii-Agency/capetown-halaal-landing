@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
+import { visiblePaymentStatus } from '@/lib/eft'
 import {
   STALL_LIST, STALL_GRID, STALL_ZONES, STALL_CAPACITY, TYPE_META,
   parseAllocation, withAllocation, removeStallCode, tierLabel, stallTypeOf,
@@ -56,7 +57,7 @@ async function requireAdmin() {
 }
 
 // Pull every application's allocation marker once, return a code -> occupant map.
-async function loadOccupants(admin: ReturnType<typeof createAdminClient>) {
+async function loadOccupants(admin: ReturnType<typeof createAdminClient>, viewerEmail?: string | null) {
   const { data: apps } = await admin
     .from('vendor_applications')
     .select('id, business_name, contact_name, phone, email, product_categories, preferred_booth_tier, status, admin_notes, special_requirements')
@@ -111,7 +112,7 @@ export async function GET() {
   try {
     const auth = await requireAdmin()
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
-    const { byCode, allocatable } = await loadOccupants(auth.admin)
+    const { byCode, allocatable } = await loadOccupants(auth.admin, auth.adminUser.email)
     const blocked = await loadBlocked(auth.admin)
 
     const stalls = STALL_LIST.map((s) => {

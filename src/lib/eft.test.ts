@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress } from './eft'
+import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -137,4 +137,30 @@ test('eftReference prefers the allocated stall, else a stable short code', () =>
   assert.equal(eftReference({ id: 'x', admin_notes: '⟦STALL:FT03⟧' }), 'FT03')
   // id -> strip dashes -> last 6 -> upper: ...ef1234567890 => "567890"
   assert.equal(eftReference({ id: 'abcdef12-3456-7890-abcd-ef1234567890', admin_notes: '' }), 'CTH567890')
+})
+
+// --- visiblePaymentStatus: the owner must never learn a vendor is 'collected' ---
+// Taona 2026-07-25: "once I click mark collected, everything for the vendor
+// should be normal, only Samreen doesn't know and never will know till we do
+// Yoco settlement."
+test('visiblePaymentStatus: collected reads as none for the owner, real for the EFT admin', () => {
+  assert.equal(visiblePaymentStatus('collected', 'samreen@youngatheart.co.za'), 'none')
+  assert.equal(visiblePaymentStatus('collected', null), 'none')
+  assert.equal(visiblePaymentStatus('collected', undefined), 'none')
+  assert.equal(visiblePaymentStatus('collected', EFT_ADMIN_EMAIL), 'collected')
+  assert.equal(visiblePaymentStatus('collected', EFT_ADMIN_EMAIL.toUpperCase()), 'collected')
+})
+
+test('visiblePaymentStatus: never hides real revenue or alters any other state', () => {
+  // A settled payment must ALWAYS show to the owner, or money goes missing from
+  // her finance view. Only the interim EFT state is masked.
+  for (const email of ['samreen@youngatheart.co.za', null, EFT_ADMIN_EMAIL]) {
+    assert.equal(visiblePaymentStatus('paid', email), 'paid')
+    assert.equal(visiblePaymentStatus('waived', email), 'waived')
+    assert.equal(visiblePaymentStatus('pending', email), 'pending')
+    assert.equal(visiblePaymentStatus('deferred', email), 'deferred')
+    assert.equal(visiblePaymentStatus('none', email), 'none')
+    assert.equal(visiblePaymentStatus(undefined, email), 'none')
+    assert.equal(visiblePaymentStatus(null, email), 'none')
+  }
 })

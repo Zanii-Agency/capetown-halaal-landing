@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
+import { visiblePaymentStatus } from '@/lib/eft'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getOrders, type WCOrder } from '@/lib/woocommerce'
 
@@ -59,6 +60,7 @@ export async function GET(req: NextRequest) {
 
     // Payment state comes ONLY from portal_state (the phantom columns don't
     // exist — see the query note above).
+    const viewerEmail = user.email
     const payments = rows.map((v) => {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
