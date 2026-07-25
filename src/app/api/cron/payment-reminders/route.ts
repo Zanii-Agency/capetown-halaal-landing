@@ -22,7 +22,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState, updatePortalState } from '@/lib/portal-state'
+import { parsePortalState, updatePortalState, isChaseSuppressed } from '@/lib/portal-state'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { sendEmail } from '@/lib/email/resend'
 import { VendorPaymentReminder } from '@/lib/email/templates/VendorPaymentReminder'
@@ -86,7 +86,12 @@ export async function GET(req: NextRequest) {
 
   for (const app of apps || []) {
     const state = parsePortalState(app.admin_notes as string)
-    if (state.payment?.status === 'paid') continue
+    // Skips the settled AND the deferred. Testing status==='paid' on its own
+    // chased vendors on 'collected' (money confirmed in, vendor already sent a
+    // payment acknowledgment) and ignored operator-agreed deferrals outright,
+    // so a vendor told "you have until 31 August" got an escalating notice a
+    // week later anyway.
+    if (isChaseSuppressed(state, today)) continue
 
     const reviewedAt = app.reviewed_at ? new Date(app.reviewed_at as string) : null
     if (!reviewedAt) continue

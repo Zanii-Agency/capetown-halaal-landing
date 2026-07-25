@@ -125,6 +125,12 @@ export interface PortalState {
      *  finance. Cleared/superseded when the payment is settled via Yoco and
      *  transitions to real `paid`/`paid_at`. Writer: /api/admin/eft/reconcile. */
     eft_collected_at?: string
+    /** An operator-agreed postponement, set alongside status='deferred'. `until`
+     *  is a plain YYYY-MM-DD date the vendor was told they have to settle by.
+     *  Read by isChaseSuppressed() so the payment cron and the manual chase
+     *  scripts stop billing a vendor we have promised more time. Writer:
+     *  scripts/confirm-arrangement.tsx. */
+    arrangement?: { until: string; agreed_at?: string; note?: string }
     /** EFT receipt / refund proof files. The file lives in the private
      *  vendor-docs bucket; only the storage path is stored here, the vendor
      *  portal mints a short-lived signed URL server-side (Law 2). kind:
@@ -248,6 +254,38 @@ export function parsePortalState(adminNotes?: string | null): PortalState {
   } catch {
     return { v: 1 }
   }
+}
+
+/** Payment states that mean the money is IN, or formally forgiven. 'collected'
+ *  belongs here: an operator confirmed the EFT money landed and the vendor was
+ *  already sent a payment acknowledgment, so from the vendor's side they HAVE
+ *  paid. `paid_at` stays null only so finance does not count the revenue twice
+ *  before Yoco settles (see the `status` doc above). */
+const PAID_STATES: ReadonlySet<string> = new Set(['paid', 'waived', 'collected'])
+
+/** True if this vendor has settled (or been waived). */
+export function hasPaid(state: PortalState): boolean {
+  return !!state.payment?.paid_at || PAID_STATES.has(state.payment?.status || '')
+}
+
+/**
+ * True if the vendor must NOT be chased for payment right now, either because
+ * they have already settled or because an operator agreed a deferral that has
+ * not yet lapsed.
+ *
+ * Exists because every chase reader used to test `status === 'paid'` on its own,
+ * which billed vendors on 'collected' (already paid, already acknowledged) and
+ * ignored 'deferred' entirely, so a vendor promised more time was chased anyway.
+ * One predicate, so a new suppression state only has to be taught once.
+ */
+export function isChaseSuppressed(state: PortalState, now: Date = new Date()): boolean {
+  if (hasPaid(state)) return true
+  if (state.payment?.status !== 'deferred') return false
+  const until = state.payment?.arrangement?.until
+  // A deferral with no end date is open-ended. One WITH an end date lapses on
+  // that date and the vendor becomes chaseable again: an unbounded skip would be
+  // a silent revenue leak, not a courtesy.
+  return !until || now <= new Date(`${until}T23:59:59.999Z`)
 }
 
 /**
