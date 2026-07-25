@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -97,6 +98,14 @@ export async function GET(req: NextRequest) {
     }
   } else {
     return NextResponse.json({ error: 'contactId or threadId required' }, { status: 400 })
+  }
+
+  // EFT lane: H3 above stops an arbitrary ?phone=, but a caller may still pass any
+  // contactId/threadId, so the resolved phone/email can still belong to a lane
+  // vendor. Check AFTER resolution, before the three history queries below.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocks({ phone: phoneRaw, email: emailRaw })) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 
   // Pagination. Default 50, max 200. Skeptic D F1: page latency was the cost

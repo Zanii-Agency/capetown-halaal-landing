@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { toE164 } from '@/lib/whatsapp'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 
@@ -20,6 +21,12 @@ export async function GET(req: NextRequest) {
   if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
   const e164 = toE164(phone)
   const waPhone = e164.replace(/^\+/, '')
+
+  // EFT lane: the phone is caller-supplied, so without this a non-EFT admin could
+  // read any lane vendor's whole thread by direct request, bypassing the unified
+  // inbox's list filter entirely.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksPhone(e164)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { data, error } = await admin
     .from('wa_messages')

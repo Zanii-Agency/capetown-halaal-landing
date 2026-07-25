@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,6 +57,11 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
       .maybeSingle()
     phone = (b?.phone as string | null) || null
   }
+
+  // EFT lane: the ticket id resolves to a phone/email, so checking after
+  // resolution covers both shapes regardless of which one the ticket carried.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocks({ phone, email })) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const comms: CommItem[] = []
 

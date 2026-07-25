@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -55,7 +56,11 @@ export async function GET() {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const sentRows = (rows ?? []) as SentRow[]
+  // EFT lane: takes no vendor identifier and returns outbound bodies for every
+  // peer, so a lane vendor's correspondence surfaced here even though the unified
+  // inbox hides their thread. Filter by recipient before anything is returned.
+  const scope = await laneScopeFor(user.email)
+  const sentRows = ((rows ?? []) as SentRow[]).filter((r) => !scope.blocksEmail(r.to_address))
   const threadIds = Array.from(new Set(sentRows.map((r) => r.thread_id)))
 
   let threadsById: Record<string, ThreadRow> = {}
