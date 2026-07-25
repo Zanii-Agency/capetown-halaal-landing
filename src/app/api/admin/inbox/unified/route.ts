@@ -42,6 +42,14 @@ interface Contact {
 }
 
 const norm = (p: string) => p.replace(/^\+/, '')
+// Canonical key for matching a WhatsApp thread's E.164 number to a vendor row.
+// vendor_applications.phone is stored in mixed formats (local "0760712578" vs
+// E.164 "+27760712578"), so stripping only "+" fails to match (0-prefix vs
+// 27-prefix). Match on the last 9 digits (the ZA subscriber number), the same
+// canonical used by isInternalAccount and the webhook. Without this, an unpaid/
+// collected vendor's thread fails to resolve to their application, is never
+// EFT-classified, and LEAKS onto the festival owner's main inbox (Taona 2026-07-25).
+const phoneKey = (p: string) => (p || '').replace(/\D/g, '').slice(-9)
 
 // Marketing / automated / newsletter senders that should NEVER count as "a human
 // is waiting" (they filled the Needs You queue with Smart Points travel deals,
@@ -124,7 +132,7 @@ export async function GET(req: NextRequest) {
   // normal for everyone else. globalOn only gates the reveal signal, never a blanket sweep.
   const globalOn = await getEftMode()
   for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null; admin_notes: string | null; paid_at: string | null }>) {
-    if (a.phone) byPhone.set(norm(a.phone), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
+    if (phoneKey(a.phone || '')) byPhone.set(phoneKey(a.phone || ''), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
     if (a.email) byEmail.set(a.email.toLowerCase(), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
     byId.set(a.id, { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
     if (vendorCommsInEftLane(a.admin_notes, a.paid_at, globalOn, { email: a.email, phone: a.phone })) eftAppIds.add(a.id)
@@ -277,7 +285,7 @@ export async function GET(req: NextRequest) {
         const stripped = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '')
         const mediaLabel = mediaPreviewLabel(m.metadata?.media?.kind)
         const body = (stripped || mediaLabel || '[no text]')
-        const vendor = byPhone.get(phone)
+        const vendor = byPhone.get(phoneKey(m.wa_phone || ''))
         const appId = vendor?.id || null
         const st = appId ? tByApp.get(appId) : undefined
         const isFirst = !seenPhone.has(phone)
