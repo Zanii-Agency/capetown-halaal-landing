@@ -32,6 +32,7 @@ import { sendTemplate, toE164 } from '../src/lib/whatsapp'
 import { sendEmail } from '../src/lib/email/resend'
 import { parsePortalState, updatePortalStateImpl } from '../src/lib/portal-state'
 import { computeVendorPricing, formatRand } from '../src/lib/payments/pricing'
+import { isTestVendor } from '../src/lib/test-vendors'
 import { EmailLayout, Heading, Paragraph, Button, Signoff, Divider } from '../src/lib/email/components'
 
 const DRY = process.env.SEND !== '1'
@@ -44,8 +45,7 @@ const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const h = { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' }
 
-// Test/demo rows to never message.
-const EXCLUDE_NAMES = new Set(['demo halal kitchen'])
+// Test/demo rows to never message: shared with the crons via lib/test-vendors.
 
 const fmtDate = (d: Date) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
 const daysBetween = (a: Date, b: Date) => Math.floor((b.getTime() - a.getTime()) / 86400000)
@@ -219,8 +219,7 @@ async function main() {
 
   // Keep approved + unpaid + not a test row.
   const unpaid = all.filter((r) => {
-    const name = (r.business_name || '').trim().toLowerCase()
-    if (EXCLUDE_NAMES.has(name)) return false
+    if (isTestVendor(r)) return false
     const st = parsePortalState(r.admin_notes)
     return !isPaid(st, r)
   })

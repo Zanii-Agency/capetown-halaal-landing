@@ -28,6 +28,7 @@ import { sendTemplate, toE164, whatsappConfigured } from '../src/lib/whatsapp'
 import { sendEmail } from '../src/lib/email/resend'
 import { parsePortalState, updatePortalStateImpl } from '../src/lib/portal-state'
 import { computeVendorPricing, formatRand } from '../src/lib/payments/pricing'
+import { isTestVendor } from '../src/lib/test-vendors'
 import { EmailLayout, Heading, Paragraph, Button, Signoff, Divider } from '../src/lib/email/components'
 
 const DRY = process.env.SEND !== '1'
@@ -119,6 +120,7 @@ async function main() {
     if (SKIP.has(c.key)) { console.log(`SKIP ${c.key}: already sent this batch`); continue }
     const rows = all.filter((r) => (r.business_name || '').trim().toLowerCase() === c.key)
     if (!rows.length) { problems.push(`NO ROW for "${c.key}"`); continue }
+    if (rows.some(isTestVendor)) { problems.push(`TEST VENDOR in batch: "${c.key}"`); continue }
     // Guard: never chase a vendor who has since paid. 'collected' counts as paid:
     // an operator confirmed the money landed and the vendor already sees PAID and
     // was acknowledged (src/lib/portal-state.ts:73); paid_at stays null only so

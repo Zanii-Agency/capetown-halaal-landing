@@ -28,6 +28,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { VendorPaymentReminder } from '@/lib/email/templates/VendorPaymentReminder'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
+import { isTestVendor } from '@/lib/test-vendors'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -85,6 +86,9 @@ export async function GET(req: NextRequest) {
   const results: Array<Record<string, unknown>> = []
 
   for (const app of apps || []) {
+    // Seed rows are never billed: a reminder to a demo vendor is a real email
+    // out of the CTH account and a real billed WhatsApp template.
+    if (isTestVendor(app)) continue
     const state = parsePortalState(app.admin_notes as string)
     // Skips the settled AND the deferred. Testing status==='paid' on its own
     // chased vendors on 'collected' (money confirmed in, vendor already sent a
