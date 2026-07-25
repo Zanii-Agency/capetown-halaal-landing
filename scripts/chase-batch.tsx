@@ -58,6 +58,9 @@ type Custom = {
 
 const BATCH: Custom[] = JSON.parse(fs.readFileSync(COPY, 'utf8'))
 
+// Payment states that mean "do not chase". See the live filter below.
+const SETTLED = new Set(['paid', 'waived', 'collected', 'deferred'])
+
 type Row = {
   id: string; business_name: string | null; contact_name: string | null; email: string | null
   phone: string | null; admin_notes: string | null; reviewed_at: string | null; created_at: string | null
@@ -116,8 +119,12 @@ async function main() {
     if (SKIP.has(c.key)) { console.log(`SKIP ${c.key}: already sent this batch`); continue }
     const rows = all.filter((r) => (r.business_name || '').trim().toLowerCase() === c.key)
     if (!rows.length) { problems.push(`NO ROW for "${c.key}"`); continue }
-    // Guard: never chase a vendor who has since paid.
-    const live = rows.filter((r) => { const s = parsePortalState(r.admin_notes).payment?.status; return !(r as unknown as { paid_at?: string }).paid_at && s !== 'paid' && s !== 'waived' })
+    // Guard: never chase a vendor who has since paid. 'collected' counts as paid:
+    // an operator confirmed the money landed and the vendor already sees PAID and
+    // was acknowledged (src/lib/portal-state.ts:73); paid_at stays null only so
+    // finance does not double-count before Yoco settles. 'deferred' is an agreed
+    // postponement. Chasing either bills someone we already told was settled.
+    const live = rows.filter((r) => { const s = parsePortalState(r.admin_notes).payment?.status || ''; return !(r as unknown as { paid_at?: string }).paid_at && !SETTLED.has(s) })
     if (!live.length) { console.log(`SKIP ${c.key}: now paid/waived`); continue }
 
     // Primary = MOST-overdue row (earliest reviewed_at => earliest due), so a
