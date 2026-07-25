@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { updatePortalState } from '@/lib/portal-state'
+import { updatePortalState, parsePortalState } from '@/lib/portal-state'
 import { getEftMode, vendorInEftLane } from '@/lib/eft'
 
 const BUCKET = 'vendor-docs'
@@ -9,13 +9,21 @@ const MAX_BYTES = 10 * 1024 * 1024 // 10MB
 const ALLOWED_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'webp']
 
 // TEMPORARY EFT lane (lib/eft.ts). The vendor uploads their OWN proof of an EFT
-// payment. This route DELIBERATELY does NOT call confirmPayment(), notifyOwners(),
-// or write a site_events row: no vendor/owner email or WhatsApp fires, and nothing
-// lands in the main admin activity feed or inbox. It only sets the PROVISIONAL
+// payment. This route DELIBERATELY does NOT call confirmPayment() or write a
+// site_events row: no vendor-facing email or WhatsApp fires, and nothing lands in
+// the main admin activity feed. It only sets the PROVISIONAL
 // payment.eft_submitted_at flag (which the vendor-side portal reads as "payment
 // received, pending confirmation" and which unlocks their portal) and stores the
 // proof file. It NEVER touches payment.status / paid_at, so every admin surface
 // still shows the vendor unpaid until an operator reconciles on /admin/eft.
+//
+// It DOES fire a MASTER-ONLY heads-up (Taona 2026-07-25: "not only notify when a
+// vendor opens eft details but also when they upload proof"). The reveal alert in
+// ../eft-intent tells him a vendor is ABOUT to pay; this one closes that loop by
+// telling him the proof has landed and is waiting to be reconciled. Otherwise a
+// proof could sit unseen indefinitely, since this route touches no admin feed.
+// audience:'master' keeps it off the festival owner even if global mode is
+// toggled off, matching the reveal alert.
 export async function POST(req: NextRequest) {
   const ctx = await getExhibitorContext()
   if (!ctx?.application) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -66,6 +74,19 @@ export async function POST(req: NextRequest) {
       ],
     },
   }))
+
+  // Best-effort: a notify failure must never cost the vendor their upload, which
+  // is already stored and stamped above.
+  const { notifyOwners } = await import('@/lib/bot/notify')
+  const { eftReference } = await import('@/lib/eft')
+  const name = String(ctx.application.business_name || 'A vendor')
+  const ref = eftReference({ id: applicationId, admin_notes: ctx.application.admin_notes as string })
+  const isFirst = !parsePortalState(ctx.application.admin_notes as string).payment?.eft_submitted_at
+  await notifyOwners({
+    event: 'system_alert',
+    audience: 'master',
+    body: `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'}. Ref ${ref}${note ? `, note: "${note.slice(0, 120)}"` : ''}. Reconcile it on /admin/eft.`,
+  }).catch(() => {})
 
   return NextResponse.json({ success: true })
 }

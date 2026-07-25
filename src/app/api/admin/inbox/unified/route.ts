@@ -125,11 +125,18 @@ export async function GET(req: NextRequest) {
   const byEmail = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
   const byId = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
   const eftAppIds = new Set<string>()
-  // Only the ACTIVE Master-lane set leaves the festival owner's inbox: vendors an
-  // operator added (⟦EFT⟧), who uploaded a proof, or who revealed the bank details
-  // while global mode is on (i.e. are actually paying by EFT). Global mode does NOT
-  // sweep ordinary unpaid vendors who never engaged, so Samreen's inbox stays
-  // normal for everyone else. globalOn only gates the reveal signal, never a blanket sweep.
+  // Which vendors leave the festival owner's inbox, via the SAME predicate the
+  // owner-alert gate uses (vendorCommsInEftLane in lib/bot/notify.ts) so the two
+  // surfaces can never disagree about who is on the lane.
+  //
+  // NOTE, corrected 2026-07-25: an earlier comment here claimed global mode "does
+  // NOT sweep ordinary unpaid vendors". That was never what the code did —
+  // vendorCommsInEftLane returns `hasEftMarker || eft_submitted_at || globalOn`,
+  // so while global mode is ON every unpaid, non-excluded vendor IS on the lane
+  // (69 of 121 approved vendors at the time of writing). ⟦NOEFT⟧, internal
+  // accounts and any vendor with paid_at set are the exclusions. Do not "fix" the
+  // code to match the old comment; the sweep is intended and self-reverts when
+  // global mode goes off.
   const globalOn = await getEftMode()
   for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null; admin_notes: string | null; paid_at: string | null }>) {
     if (phoneKey(a.phone || '')) byPhone.set(phoneKey(a.phone || ''), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })

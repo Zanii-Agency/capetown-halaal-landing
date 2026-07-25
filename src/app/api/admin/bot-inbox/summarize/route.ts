@@ -10,6 +10,8 @@ import { askDgx, dgxConfigured, DgxNotConfigured } from '@/lib/llm/dgx'
 import { toE164 } from '@/lib/whatsapp'
 import { wrapUntrusted, UNTRUSTED_CONTENT_RULE } from '@/lib/ai/prompt-safety'
 import { parsePortalState } from '@/lib/portal-state'
+import { BOT_ADMINS } from '@/lib/bot/admins'
+import { isEftAdmin, vendorCommsInEftLane, getEftMode } from '@/lib/eft'
 
 // If DGX is unset, fall back to Anthropic Haiku (already installed + used by
 // /api/admin/inbox/summarize). Never block the bot-inbox UI on DGX availability.
@@ -72,6 +74,31 @@ export async function POST(req: NextRequest) {
   const phone = String(body.phone || '').trim()
   if (!phone) return NextResponse.json({ ok: false, error: 'phone required' }, { status: 400 })
   const e164 = toE164(phone)
+
+  // LANE SEAL. This route is retired (the page redirects to /admin/customer-inbox)
+  // but the endpoint is still live, takes an ARBITRARY phone, and read wa_messages
+  // with none of the unified inbox's exclusions — so any operator could summarise
+  // the master's own thread (its number is public in admins.ts) and read the
+  // cross-vendor EFT alerts it accumulates, bypassing the isMasterThread seal
+  // entirely. Mirror the inbox's two rules here (Taona 2026-07-25).
+  if (BOT_ADMINS.some((a) => a.role === 'master' && toE164(a.phone) === e164)) {
+    return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 })
+  }
+  const { data: laneRow } = await db
+    .from('vendor_applications')
+    .select('admin_notes, paid_at, email, phone')
+    .eq('phone', e164)
+    .maybeSingle()
+  if (
+    laneRow &&
+    !isEftAdmin(gate.adminUser.email) &&
+    vendorCommsInEftLane(laneRow.admin_notes as string, laneRow.paid_at as string | null, await getEftMode(), {
+      email: laneRow.email as string | null,
+      phone: laneRow.phone as string | null,
+    })
+  ) {
+    return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 })
+  }
 
   // Pull last 20 messages on this thread
   const { data: rows } = await db
