@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount } from './eft'
+import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -113,6 +113,13 @@ test('internal/operator accounts are never in either lane, even under global mod
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', null, true, identity), false) // even an explicit ⟦EFT⟧ marker
   // Without identity, behaviour is unchanged (backward-compatible).
   assert.equal(vendorInEftLane('just a note', true, null), true)
+})
+
+test('isOperatorPreviewAddress matches the operator preview inbox (case-insensitive)', () => {
+  assert.ok(isOperatorPreviewAddress('taonac96@gmail.com'))
+  assert.ok(isOperatorPreviewAddress('TaonaC96@Gmail.com'))
+  assert.ok(!isOperatorPreviewAddress('nazleyparker3@gmail.com'))
+  assert.ok(!isOperatorPreviewAddress(null))
 })
 
 test('mentionsEft fires on EFT replies, not on unrelated ones', () => {

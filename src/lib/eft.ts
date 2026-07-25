@@ -41,6 +41,23 @@ export function isEftAdmin(email?: string | null): boolean {
   return !!email && email.toLowerCase() === EFT_ADMIN_EMAIL
 }
 
+// Operator PREVIEW addresses: emails an operator uses to preview vendor-facing
+// output (e.g. a self-sent invoice preview). Their unified-inbox threads are
+// confined to the dev-only EFT feed so a preview never surfaces in the festival
+// owner's (Samreen's) main inbox (Taona 2026-07-25). Any send through the CTH
+// Resend account is mirrored into support_inbox_messages by the resend webhook,
+// so a preview to a non-vendor address would otherwise show to her. This is an
+// inbox-VISIBILITY rule only; it does NOT touch EFT/payment routing. Env-tunable.
+const OPERATOR_PREVIEW_EMAILS = new Set<string>(
+  ((process.env.OPERATOR_PREVIEW_EMAILS || 'taonac96@gmail.com')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)),
+)
+
+/** True when the email is an operator preview address (see above). */
+export function isOperatorPreviewAddress(email?: string | null): boolean {
+  return !!email && OPERATOR_PREVIEW_EMAILS.has(email.toLowerCase().trim())
+}
+
 /** True when the vendor is in the EFT lane. */
 export function hasEftMarker(adminNotes?: string | null): boolean {
   return EFT_RE.test(adminNotes || '')

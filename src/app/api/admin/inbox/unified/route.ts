@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { vendorCommsInEftLane, isEftAdmin, getEftMode, mentionsEft } from '@/lib/eft'
+import { vendorCommsInEftLane, isEftAdmin, getEftMode, mentionsEft, isOperatorPreviewAddress } from '@/lib/eft'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 
 export const runtime = 'nodejs'
@@ -477,7 +477,8 @@ export async function GET(req: NextRequest) {
   // cross-vendor PII. Those alerts must live only on the EFT tab, never the general
   // inbox where the festival owner could open them (Taona 2026-07-24).
   const isEftContact = (c: { application_id: string | null; email: string | null }) =>
-    (!!c.application_id && eftAppIds.has(c.application_id)) || isEftAdmin(c.email)
+    (!!c.application_id && eftAppIds.has(c.application_id)) || isEftAdmin(c.email) ||
+    isOperatorPreviewAddress(c.email) // operator preview threads (e.g. taonac96@) stay off the owner's inbox
   // EFT-content guard: a non-EFT admin (Samreen) never sees a thread whose latest
   // message mentions EFT, even if the contact carries no lane marker (Taona
   // 2026-07-24: "any email or whatsapp that mentions eft must be auto excluded
