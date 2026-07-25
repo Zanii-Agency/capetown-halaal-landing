@@ -48,6 +48,11 @@ interface NotifyArgs {
   /** E.164 to skip — e.g. the admin who just replied shouldn't be notified of
    *  their own message (used to mirror a reply to the OTHER support agent). */
   exclude?: string
+  /** Mark this alert EFT-scoped so the festival owner (Samreen) is withheld even
+   *  when the body does not literally mention "EFT" — e.g. a support message from
+   *  an unpaid/collected master-lane vendor. Callers set this from the vendor's
+   *  lane status (vendorCommsInEftLane). Non-EFT alerts leave it unset. */
+  eftScoped?: boolean
 }
 
 // Logs every send to wa_messages so the Bot Inbox surfaces it next to admin
@@ -139,22 +144,19 @@ export function selectNotifyTargets(
 }
 
 export async function notifyOwners(args: NotifyArgs): Promise<void> {
-  // Global EFT mode: the festival owner (Samreen) is muted on EVERY channel.
-  // While the festival is on EFT, every inbound platform event routes to the
-  // master-only EFT tab so her numbers/data stay clean (Taona 2026-07-23). Only
-  // the master is notified; it reverts the moment EFT mode is switched off.
-  // getEftMode fails CLOSED to false (normal = both notified), so a read blip
-  // can only fall back to prior behaviour, never silently over-mute.
+  // The festival owner (Samreen) is withheld ONLY from EFT-scoped alerts, NOT
+  // blanket-muted during EFT mode (Taona 2026-07-25). She keeps every non-EFT
+  // alert (new application, contract signed, a PAID vendor needing a human, a
+  // Yoco-settled payment). An alert is EFT-scoped when its body mentions EFT OR
+  // the caller flags it (eftScoped) — e.g. a support message from an unpaid /
+  // collected master-lane vendor, whose body carries no "EFT" text.
   const eftOn = await getEftMode()
-  // EFT-content guard: independent of global mode, an alert that mentions EFT is
-  // never delivered to the festival owner. Fixes owner-alert leakage to Samreen's
-  // line when global mode is OFF but the event is EFT-related.
-  const eftContent = mentionsEft(args.body)
-  const audience = eftOn ? 'master' : (args.audience || 'all')
+  const eftContent = mentionsEft(args.body) || args.eftScoped === true
+  const audience = args.audience || 'all'
   const excludeNorm = args.exclude ? toE164(args.exclude) : null
   const targets = selectNotifyTargets(BOT_ADMINS, { audience, excludeNorm, eftContent })
-  // In EFT mode the only target is the master (no email on file), so give the
-  // email backstop a home: the EFT admin's monitored CTH inbox.
+  // Master has no email in BOT_ADMINS; under EFT mode give its email backstop a
+  // home (the EFT admin's monitored CTH inbox) so a master-only alert still lands.
   const fallbackEmail = eftOn ? EFT_ADMIN_EMAIL : undefined
   await Promise.all(targets.map((a) => deliverOne(a, args, fallbackEmail)))
 }

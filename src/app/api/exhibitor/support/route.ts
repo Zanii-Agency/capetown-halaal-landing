@@ -91,10 +91,20 @@ export async function POST(req: NextRequest) {
 
   try {
     const { notifyOwners } = await import('@/lib/bot/notify')
+    const { getEftMode, vendorCommsInEftLane } = await import('@/lib/eft')
+    // A master-lane (unpaid/collected) vendor's support message stays on the
+    // master lane, off Samreen; only a truly-paid vendor's reaches her.
+    const eftScoped = vendorCommsInEftLane(
+      ctx.application.admin_notes as string,
+      ctx.application.paid_at as string | null,
+      await getEftMode(),
+      { email: vendorEmail, phone },
+    )
     await notifyOwners({
       event: 'vendor_support_message',
       body: `${bizName} (${contact || vendorEmail}): ${text.slice(0, 240)}`,
       audience: 'all',
+      eftScoped,
     })
   } catch (e) {
     console.error('[exhibitor/support] notifyOwners failed:', (e as Error).message)

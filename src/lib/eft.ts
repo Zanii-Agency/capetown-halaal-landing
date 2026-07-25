@@ -161,24 +161,19 @@ export async function getEftMode(): Promise<boolean> {
 }
 
 /** Whose CONVERSATIONS move to the master EFT tab (and off the festival owner's
- *  main inbox). A vendor is in the comms lane when they are UNPAID and ACTUALLY
- *  ENGAGING the EFT flow, any of:
- *    - individually added to the Master lane (⟦EFT⟧)                 [always], OR
- *    - has uploaded an EFT proof (payment.eft_submitted_at)          [always], OR
- *    - has revealed the bank details (payment.eft_revealed_at) WHILE global mode
- *      is on. A vendor cannot pay by EFT without the account number, and the only
- *      place they get it is the reveal button, so revealing the details IS the act
- *      of paying by EFT. This is what seals "anyone paying by EFT never reaches
- *      Samreen" (Taona 2026-07-23) — WITHOUT the blanket sweep that a bare
- *      globalOn would cause (it stripped the owner of 496 normal conversations and
- *      flooded the master tab, the class bug reverted in b886ff5). Reveal-sealing
- *      is gated on globalOn so a curious click during the crisis does not strand a
- *      vendor on the master tab after Yoco returns and global mode is switched off;
- *      an operator-added or proof-uploaded vendor stays sealed regardless, because
- *      they are mid-transaction.
- *  A PAID vendor is never in the lane; ⟦NOEFT⟧ is an explicit exclusion. An unpaid
- *  vendor who never engaged (no marker, no proof, no reveal) is NEVER swept, so the
- *  owner's inbox stays normal for everyone except the vendors actually on EFT. */
+ *  main inbox). The rule is PAYMENT STATUS, not EFT-engagement (Taona 2026-07-25:
+ *  "every unpaid vendor's message goes to the master lane, only paid vendors stay
+ *  on the normal lane"). While global EFT mode is ON, any vendor that is not
+ *  truly PAID and not internal/⟦NOEFT⟧ is on the master lane — this includes both
+ *  UNPAID vendors and EFT-`collected` vendors (interim, paid_at still null), so
+ *  Samreen only ever sees fully Yoco-settled vendors during the outage.
+ *    - ⟦EFT⟧ marker or an uploaded EFT proof → master lane ALWAYS (survives mode
+ *      off, for a vendor mid-transaction), OR
+ *    - global EFT mode ON → every unpaid/collected non-excluded vendor.
+ *  A truly PAID vendor (paid_at set, or status 'paid' from a Yoco settlement) is
+ *  NEVER in the lane; ⟦NOEFT⟧ and internal/operator accounts are explicit
+ *  exclusions. The globalOn sweep self-reverts when EFT mode is switched off, so it
+ *  cannot permanently strand the owner's inbox (the concern behind b886ff5). */
 export function vendorCommsInEftLane(
   adminNotes: string | null | undefined,
   paidAt?: string | null,
@@ -190,7 +185,9 @@ export function vendorCommsInEftLane(
   if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins
   const p = parsePortalState(adminNotes).payment
   if (p?.status === 'paid') return false
-  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at || (globalOn && !!p?.eft_revealed_at)
+  // 'collected' (EFT interim) has no paid_at and status !== 'paid', so it falls
+  // through to globalOn below and correctly stays on the master lane.
+  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at || globalOn
 }
 
 /** True when the vendor sees EFT details on their PAYMENT view: global mode on,

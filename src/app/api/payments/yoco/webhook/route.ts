@@ -58,12 +58,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // status === 'paid'
+  // status === 'paid'.
+  // EFT→Yoco settlement: if the vendor is currently 'collected' (EFT interim,
+  // already acknowledged to them), this Yoco payment SETTLES that same payment.
+  // It is the first real paid_at transition (collected never set paid_at, so no
+  // double-count), and the OWNER is notified as a normal Yoco payment, but the
+  // VENDOR is NOT re-pinged. A fresh (non-collected) Yoco payment notifies both.
+  const admin = createAdminClient()
+  const { data: cur } = await admin
+    .from('vendor_applications')
+    .select('admin_notes')
+    .eq('id', applicationId)
+    .maybeSingle()
+  const isEftSettlement = parsePortalState(cur?.admin_notes as string).payment?.status === 'collected'
   const out = await confirmPayment({
     applicationId,
     method: 'yoco',
     amount: result.amount,
     providerRef: result.providerRef,
+    notifyVendor: !isEftSettlement,
   })
   if (!out.ok) return NextResponse.json({ ok: false, error: out.error }, { status: 500 })
 

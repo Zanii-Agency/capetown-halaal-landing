@@ -25,6 +25,11 @@ export interface ConfirmPaymentInput {
   notes?: string           // admin-only note appended to admin_notes (not state)
   /** When true, skip outbound email + WhatsApp (useful for backfill / corrections). */
   silent?: boolean
+  /** When false, skip the VENDOR email + WhatsApp but STILL notify the owner. Used
+   *  by the EFT→Yoco settlement path: the vendor was already acknowledged at the
+   *  'collected' stage, so settling via Yoco should update the owner + finance
+   *  numbers without pinging the vendor again. Defaults to true. */
+  notifyVendor?: boolean
 }
 
 export interface ConfirmPaymentResult {
@@ -97,6 +102,115 @@ export async function sendVendorPaymentEmail(args: {
     console.error('[sendVendorPaymentEmail] failed:', msg)
     return { sent: false, error: msg }
   }
+}
+
+/** Send the vendor WhatsApp payment confirmation (`vendor_payment_confirmation`),
+ *  routed through the wa-meta registry guard so a missing/invalid template fails
+ *  observably (logged + a `failed` wa_messages row) rather than silently. Extracted
+ *  so both confirmPayment() and the EFT 'collected' acknowledgment reuse ONE path.
+ *  Best-effort: never throws. */
+export async function sendVendorPaymentWa(args: {
+  admin: ReturnType<typeof createAdminClient>
+  waPhone: string
+  firstName: string
+  amount: number
+  stallLabel: string
+}): Promise<void> {
+  const TEMPLATE_KEY = 'vendor_payment_confirmation'
+  const { admin, waPhone } = args
+  if (!waPhone) return
+  const waTo = toE164(waPhone)
+  const previewBody = `[${TEMPLATE_KEY}] Payment received, ${args.firstName}. Amount: ${formatRand(args.amount)}, Stall: ${args.stallLabel}`
+  const logFail = (err: string) =>
+    admin.from('wa_messages').insert({ direction: 'out', wa_phone: waTo, body: previewBody, status: 'failed', provider_message_id: null, error: err })
+  try {
+    const spec = findWaTemplate(TEMPLATE_KEY)
+    if (!spec) {
+      const err = `wa template not registered: ${TEMPLATE_KEY}`
+      console.error(`[sendVendorPaymentWa] skipped: ${err}`)
+      await logFail(err)
+      return
+    }
+    const built = buildWaTemplateParams(spec, {
+      first_name: args.firstName,
+      amount: formatRand(args.amount),
+      stall_label: args.stallLabel,
+    })
+    if (!built.ok) {
+      const err = `wa template params invalid (${TEMPLATE_KEY}): ${built.error}`
+      console.error(`[sendVendorPaymentWa] skipped: ${err}`)
+      await logFail(err)
+      return
+    }
+    const res = await sendTemplate(waTo, TEMPLATE_KEY, built.ordered, { category: spec.category })
+    if (res.skipped) console.error(`[sendVendorPaymentWa] not sent (${TEMPLATE_KEY}): ${res.skipped}`)
+    await admin.from('wa_messages').insert({
+      direction: 'out', wa_phone: waTo, body: previewBody,
+      status: res.skipped ? 'failed' : 'sent', provider_message_id: res.messageId || null, error: res.skipped || null,
+    })
+  } catch (e) {
+    console.error('[sendVendorPaymentWa] failed:', (e as Error).message)
+  }
+}
+
+/**
+ * TEMPORARY EFT lane. Mark a vendor's EFT payment as COLLECTED (interim): the
+ * vendor sees PAID and gets an acknowledgment, but `paid_at` stays NULL and the
+ * payment is NOT counted in finance totals until it is settled through Yoco. Does
+ * NOT notify the owner (that happens at Yoco settlement). Idempotent-ish: safe to
+ * re-run; it just re-stamps collected + re-sends the acknowledgment.
+ */
+export async function markEftCollected(applicationId: string, amountOverride?: number): Promise<{ ok: boolean; amount: number; error?: string }> {
+  const admin = createAdminClient()
+  const { data: app, error } = await admin
+    .from('vendor_applications')
+    .select('id, business_name, contact_name, email, phone, admin_notes, special_requirements, preferred_booth_tier')
+    .eq('id', applicationId)
+    .maybeSingle()
+  if (error || !app) return { ok: false, amount: 0, error: error?.message || 'application not found' }
+
+  const before = parsePortalState(app.admin_notes as string)
+  if (before.payment?.status === 'paid' || before.payment?.paid_at) {
+    return { ok: false, amount: 0, error: 'already paid (settle via Yoco, not collect)' }
+  }
+  const pricing = computeVendorPricing({
+    preferred_booth_tier: app.preferred_booth_tier as string,
+    special_requirements: app.special_requirements,
+  })
+  const paidBefore = Number(before.payment?.amount) || 0
+  const amount = amountOverride ?? Math.max(0, pricing.total - paidBefore)
+  const collectedAtIso = new Date().toISOString()
+
+  await updatePortalState(applicationId, (s) => ({
+    ...s,
+    payment: {
+      ...(s.payment || {}),
+      status: 'collected',            // interim: vendor sees paid, NOT counted in finance
+      amount,
+      eft_collected_at: s.payment?.eft_collected_at || collectedAtIso,
+      // deliberately NO paid_at and NO method — settlement via Yoco sets those.
+    },
+  }))
+
+  const contactName = (app.contact_name as string) || 'there'
+  const firstName = contactName.trim().split(/\s+/)[0] || contactName
+  const businessName = (app.business_name as string) || 'your business'
+  const paidDate = new Date(collectedAtIso).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
+
+  // Vendor acknowledgment ONLY (owner is not pinged at collect). Methodless copy.
+  await sendVendorPaymentEmail({
+    to: app.email as string,
+    contactName,
+    businessName,
+    amount,
+    providerRef: '',
+    reference: before.payment?.reference || applicationId.slice(0, 8).toUpperCase(),
+    paidDate,
+    pricing,
+  })
+  await sendVendorPaymentWa({ admin, waPhone: (app.phone as string) || '', firstName, amount, stallLabel: pricing.stallLabel })
+
+  return { ok: true, amount }
 }
 
 export async function confirmPayment(input: ConfirmPaymentInput): Promise<ConfirmPaymentResult> {
@@ -227,16 +341,20 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
   const paidDate = new Date(paidIso).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'long', year: 'numeric',
   })
-  await sendVendorPaymentEmail({
-    to: app.email as string,
-    contactName,
-    businessName,
-    amount,
-    providerRef: providerRef || input.method,
-    reference: before.payment?.reference || input.applicationId.slice(0, 8).toUpperCase(),
-    paidDate,
-    pricing,
-  })
+  // Vendor email: gated on notifyVendor (settlement path skips it — the vendor was
+  // already acknowledged at the 'collected' stage).
+  if (input.notifyVendor !== false) {
+    await sendVendorPaymentEmail({
+      to: app.email as string,
+      contactName,
+      businessName,
+      amount,
+      providerRef: providerRef || input.method,
+      reference: before.payment?.reference || input.applicationId.slice(0, 8).toUpperCase(),
+      paidDate,
+      pricing,
+    })
+  }
 
   try {
     const { notifyOwners } = await import('@/lib/bot/notify')
@@ -249,78 +367,16 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
     console.error('[confirmPayment] notify owners failed:', (e as Error).message)
   }
 
-  // WhatsApp paid-confirmation is best-effort and secondary to the email above.
-  // It NEVER throws into confirmPayment(). We route through the wa-meta registry
-  // guard (mirrors notifyVendor): validate the template name + params BEFORE
-  // hitting Meta, and make every outcome OBSERVABLE. This template ('vendor_
-  // payment_confirmation') was historically NOT registered, so findWaTemplate
-  // returned undefined and the send silently skipped. Now a missing/invalid
-  // template is logged and written to wa_messages as a failed row instead of
-  // vanishing. Param order MUST stay aligned with the wa-meta spec:
-  // [first_name, amount(formatted Rand), stall_label].
-  const TEMPLATE_KEY = 'vendor_payment_confirmation'
-  const waPhone = (before.wa?.phone as string) || (app.phone as string) || ''
-  if (waPhone) {
-    const waTo = toE164(waPhone)
-    const previewBody = `[${TEMPLATE_KEY}] Payment received, ${firstName}. Amount: ${formatRand(amount)}, Stall: ${pricing.stallLabel}`
-    try {
-      const spec = findWaTemplate(TEMPLATE_KEY)
-      if (!spec) {
-        // Registry guard: template name not registered in wa-meta. This is the
-        // exact silent-skip the original bug caused. Surface it loudly + durably.
-        const err = `wa template not registered: ${TEMPLATE_KEY}`
-        console.error(`[confirmPayment] whatsapp skipped: ${err}`)
-        await admin.from('wa_messages').insert({
-          direction: 'out',
-          wa_phone: waTo,
-          body: previewBody,
-          status: 'failed',
-          provider_message_id: null,
-          error: err,
-        })
-      } else {
-        // Validate params against the spec (ordered + required checks) the same
-        // way the inbox composer does, so a malformed payload fails observably
-        // rather than rendering a broken template at Meta.
-        const built = buildWaTemplateParams(spec, {
-          first_name: firstName,
-          amount: formatRand(amount),
-          stall_label: pricing.stallLabel,
-        })
-        if (!built.ok) {
-          const err = `wa template params invalid (${TEMPLATE_KEY}): ${built.error}`
-          console.error(`[confirmPayment] whatsapp skipped: ${err}`)
-          await admin.from('wa_messages').insert({
-            direction: 'out',
-            wa_phone: waTo,
-            body: previewBody,
-            status: 'failed',
-            provider_message_id: null,
-            error: err,
-          })
-        } else {
-          const res = await sendTemplate(
-            waTo,
-            TEMPLATE_KEY,
-            built.ordered,
-            { category: spec.category }
-          )
-          if (res.skipped) {
-            console.error(`[confirmPayment] whatsapp not sent (${TEMPLATE_KEY}): ${res.skipped}`)
-          }
-          await admin.from('wa_messages').insert({
-            direction: 'out',
-            wa_phone: waTo,
-            body: previewBody,
-            status: res.skipped ? 'failed' : 'sent',
-            provider_message_id: res.messageId || null,
-            error: res.skipped || null,
-          })
-        }
-      }
-    } catch (e) {
-      console.error('[confirmPayment] whatsapp failed:', (e as Error).message)
-    }
+  // WhatsApp paid-confirmation via the shared helper (wa-meta registry guard +
+  // observable failures). Gated on notifyVendor so the settlement path skips it.
+  if (input.notifyVendor !== false) {
+    await sendVendorPaymentWa({
+      admin,
+      waPhone: (before.wa?.phone as string) || (app.phone as string) || '',
+      firstName,
+      amount,
+      stallLabel: pricing.stallLabel,
+    })
   }
 
   // Logo nudge: the moment a vendor FIRST becomes paid, ask them to upload a

@@ -38,8 +38,10 @@ export default async function DocumentsPage() {
     })
   )
 
-  // Generated documents (festival side).
-  const invoiceStatus = state.payment?.status || 'none'
+  // Generated documents (festival side). 'collected' (EFT interim) shows as paid
+  // to the vendor, same as the invoice/payments pages.
+  const rawInvoiceStatus = state.payment?.status || 'none'
+  const invoiceStatus = rawInvoiceStatus === 'collected' ? 'paid' : rawInvoiceStatus
   const invoiceRef = state.payment?.reference || paymentReference((app.id as string) || '')
   const contractSigned = Boolean(app.contract_signed_at)
   const staffBadges: StaffBadgeRef[] = (state.staff || []).map((s) => ({

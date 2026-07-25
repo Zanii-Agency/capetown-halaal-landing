@@ -55,33 +55,29 @@ test('vendorInEftLane excludes already-paid vendors even under global mode', () 
   assert.equal(vendorInEftLane('just a note', false), false)
 })
 
-test('vendorCommsInEftLane seals the ACTIVE EFT set (added, proof, or reveal-under-global), never a blanket sweep', () => {
-  // Individually added + unpaid -> sealed, regardless of global mode.
+test('vendorCommsInEftLane routes by payment status: unpaid + collected -> master while global on; only truly paid -> owner', () => {
+  // Individually added + unpaid -> master, regardless of global mode.
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', null), true)
   assert.equal(vendorCommsInEftLane('⟦EFT⟧', null, true), true)
-  // Uploaded an EFT proof + unpaid -> sealed regardless of global (mid-transaction).
+  // Uploaded an EFT proof + unpaid -> master regardless of global (mid-transaction).
   const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-23T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(submitted, null), true)
   assert.equal(vendorCommsInEftLane(submitted, null, false), true)
-  // Revealed the bank details -> sealed ONLY while global mode is on. Lifts when
-  // global is off so a curious click does not strand the vendor on the master tab
-  // after Yoco returns. A vendor cannot pay by EFT without revealing, so this is
-  // what makes "anyone paying by EFT never reaches the owner" hold during the crisis.
-  const revealed = updatePortalStateImpl('note', { v: 1, payment: { eft_revealed_at: '2026-07-23T00:00:00Z' } })
-  assert.equal(vendorCommsInEftLane(revealed, null, true), true)   // global on  -> sealed
-  assert.equal(vendorCommsInEftLane(revealed, null, false), false) // global off -> reverts
-  assert.equal(vendorCommsInEftLane(revealed, null), false)        // default global off
-  // Unpaid, not added, no proof, no reveal -> stays on the owner's inbox EVEN under
-  // global mode. Global alone NEVER sweeps an un-engaged vendor (the reverted class bug).
-  assert.equal(vendorCommsInEftLane('just a note', null, true), false)
-  // A PAID vendor is never sealed, even having revealed while global on.
-  const paidRevealed = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', eft_revealed_at: '2026-07-23T00:00:00Z' } })
-  assert.equal(vendorCommsInEftLane(paidRevealed, null, true), false)
-  assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z', true), false)
-  // ⟦NOEFT⟧ explicit exclusion wins even under global + reveal.
-  const noEftRevealed = withNoEftMarker(updatePortalStateImpl('note', { v: 1, payment: { eft_revealed_at: '2026-07-23T00:00:00Z' } }))
-  assert.equal(vendorCommsInEftLane(noEftRevealed, null, true), false)
-  assert.equal(vendorCommsInEftLane('⟦NOEFT⟧', null), false)
+  // NEW RULE: while global EFT mode is ON, ANY unpaid non-excluded vendor -> master,
+  // even with no marker/proof/reveal. Self-reverts when global is off.
+  assert.equal(vendorCommsInEftLane('just a note', null, true), true)   // global on  -> master
+  assert.equal(vendorCommsInEftLane('just a note', null, false), false) // global off -> owner
+  // 'collected' (EFT interim, paid_at null, status !== 'paid') -> master while global on.
+  const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected', eft_collected_at: '2026-07-25T00:00:00Z' } })
+  assert.equal(vendorCommsInEftLane(collected, null, true), true)
+  // A truly PAID vendor (Yoco-settled) is NEVER on the master lane.
+  const paid = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } })
+  assert.equal(vendorCommsInEftLane(paid, null, true), false)
+  assert.equal(vendorCommsInEftLane('⟦EFT⟧', '2026-07-23T00:00:00Z', true), false) // paid_at set -> owner
+  // ⟦NOEFT⟧ + internal accounts are explicit exclusions even under global mode.
+  assert.equal(vendorCommsInEftLane(withNoEftMarker('just a note'), null, true), false)
+  assert.equal(vendorCommsInEftLane('⟦NOEFT⟧', null, true), false)
+  assert.equal(vendorCommsInEftLane('just a note', null, true, { email: 'samreenkumandan1@gmail.com' }), false)
 })
 
 test('⟦NOEFT⟧ exclusion overrides global mode AND ⟦EFT⟧ in both predicates', () => {

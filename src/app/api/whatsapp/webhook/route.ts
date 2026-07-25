@@ -18,6 +18,7 @@ import {
 import { askFestivalBrain } from '@/lib/festival-brain'
 import { detectHumanIntent, escalateToHuman, isInHandover, isPendingHandover, setPendingHandover } from '@/lib/bot/handover'
 import { notifyOwners } from '@/lib/bot/notify'
+import { getEftMode } from '@/lib/eft'
 import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { findAdmin, isDevNumber } from '@/lib/bot/admins'
@@ -346,6 +347,9 @@ async function handleInbound(msg: {
               body: `${admin.name} → ${ackName}\nPhone: ${target.vendorE164}\n"${msg.text.slice(0, 240)}"\n\nSwipe-reply to continue.`,
               audience: 'all',
               exclude: e164,
+              // While EFT mode is ON, vendor-conversation relays stay on the master
+              // lane, off Samreen (handover vendors are ~always unpaid/collected).
+              eftScoped: await getEftMode(),
             })
           } catch (e) { console.error('[swipe] cross-mirror failed:', (e as Error).message) }
         }
@@ -442,7 +446,7 @@ async function handleInbound(msg: {
     const res = await sendText(e164, ack)
     await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
     try {
-      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all' })
+      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all', eftScoped: await getEftMode() })
     } catch (e) { console.error('[bot] notifyOwners on pending handover failed:', (e as Error).message) }
     return
   }
@@ -469,6 +473,7 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text),
         audience: 'all',
+        eftScoped: await getEftMode(),
       })
     } catch (e) { console.error('[bot] notifyOwners on handover failed:', (e as Error).message) }
     return
@@ -482,6 +487,7 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text, true),
         audience: 'all',
+        eftScoped: await getEftMode(),
       })
     } catch (e) { console.error('[bot] notifyOwners during handover failed:', (e as Error).message) }
     // Don't auto-reply. Samreen replies through /admin/bot-inbox.

@@ -70,7 +70,13 @@ export interface VendorProfile {
 export interface PortalState {
   v: number
   payment?: {
-    status?: 'none' | 'deferred' | 'pending' | 'paid' | 'waived'
+    /** 'collected' = TEMPORARY EFT lane interim state: an operator confirmed EFT
+     *  money landed, so the VENDOR sees PAID and gets an acknowledgment, but
+     *  `paid_at` stays NULL and it is NOT counted in finance totals. The payment
+     *  only becomes final `paid` when settled through Yoco (api/admin/eft/settle).
+     *  Because 'collected' never sets paid_at, the later Yoco settlement is the
+     *  first-and-only paid transition, so revenue can never be double-counted. */
+    status?: 'none' | 'deferred' | 'pending' | 'collected' | 'paid' | 'waived'
     /** Cumulative amount PAID so far (Rand), across the first payment plus any
      *  operator-requested top-ups. Outstanding = computeVendorPricing.total - amount. */
     amount?: number
@@ -114,6 +120,11 @@ export interface PortalState {
      *  vendor re-clicking does not buzz the operator repeatedly. Never touches
      *  status/paid_at. Writer: /api/exhibitor/eft-intent. */
     eft_revealed_at?: string
+    /** TEMPORARY EFT lane. ISO time an operator marked EFT money as COLLECTED
+     *  (status='collected'). Interim, vendor-visible-as-paid, NOT counted in
+     *  finance. Cleared/superseded when the payment is settled via Yoco and
+     *  transitions to real `paid`/`paid_at`. Writer: /api/admin/eft/reconcile. */
+    eft_collected_at?: string
     /** EFT receipt / refund proof files. The file lives in the private
      *  vendor-docs bucket; only the storage path is stored here, the vendor
      *  portal mints a short-lived signed URL server-side (Law 2). kind:

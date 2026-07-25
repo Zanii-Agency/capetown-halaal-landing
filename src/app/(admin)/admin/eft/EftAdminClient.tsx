@@ -20,6 +20,7 @@ interface Row {
   submitted: boolean
   submitted_at: string | null
   marked: boolean
+  collected: boolean       // EFT money marked collected (interim); awaiting Yoco settlement
   reconciled: boolean
   proofs: Array<{ url: string; uploaded_at: string; note?: string }>
 }
@@ -50,6 +51,22 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
       router.refresh()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Action failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Settle a collected vendor through Yoco: create a checkout, then open it so the
+  // operator can pay it with their card. Status flips to real paid via the webhook.
+  async function settle(id: string) {
+    setBusy(`set-${id}`); setErr(null)
+    try {
+      const res = await fetch('/api/admin/eft/settle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ applicationId: id }) })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j.url) throw new Error(j.error || 'Could not start settlement')
+      window.open(j.url as string, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not start settlement')
     } finally {
       setBusy(null)
     }
@@ -219,6 +236,8 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                     <td className="px-3 py-3">
                       {r.reconciled ? (
                         <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Reconciled</span>
+                      ) : r.collected ? (
+                        <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1.5" />Collected (EFT), settle via Yoco</span>
                       ) : r.submitted ? (
                         <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5" />Proof uploaded {r.submitted_at ? fmtDate(r.submitted_at) : ''}</span>
                       ) : (
@@ -240,13 +259,27 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-2">
-                        {!r.reconciled && (
+                        {/* Not yet collected + not paid: mark the EFT money collected
+                            (interim). Vendor sees paid + acknowledged; NOT counted in
+                            finance until settled via Yoco. */}
+                        {!r.reconciled && !r.collected && (
                           <button
-                            onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as PAID by EFT for ${rand(r.outstanding ?? r.amount)}? Do this only after the money has landed in the account.`)) post('/api/admin/eft/reconcile', { applicationId: r.id }, `rec-${r.id}`) }}
+                            onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as EFT COLLECTED for ${rand(r.outstanding ?? r.amount)}? They will see PAID and be acknowledged, but this is NOT final until you settle it via Yoco. Do this only after the EFT money has landed.`)) post('/api/admin/eft/reconcile', { applicationId: r.id }, `rec-${r.id}`) }}
                             disabled={busy === `rec-${r.id}`}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                          >
+                            {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark collected
+                          </button>
+                        )}
+                        {/* Collected but not yet settled: pay it through Yoco (opens a
+                            checkout the operator pays; webhook flips it to real paid). */}
+                        {!r.reconciled && r.collected && (
+                          <button
+                            onClick={() => { if (confirm(`Settle ${r.business_name || 'this vendor'} through Yoco for ${rand(r.outstanding ?? r.amount)}? This opens a Yoco checkout you pay on your card (Yoco fee applies), funded by the EFT cash. It records the real payment and notifies Samreen.`)) settle(r.id) }}
+                            disabled={busy === `set-${r.id}`}
                             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
                           >
-                            {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark paid
+                            {busy === `set-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Settle via Yoco
                           </button>
                         )}
                         {r.marked && (

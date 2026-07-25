@@ -25,12 +25,14 @@ export default async function InvoicePage() {
     special_requirements: app.special_requirements,
   })
   const status = state.payment?.status || 'none'
-  const isPaid = status === 'paid'
+  // 'collected' (EFT interim) shows as PAID to the vendor, same as a real 'paid'.
+  const isPaid = status === 'paid' || status === 'collected'
   const total = state.payment?.amount ?? pricing.total
   const reference = state.payment?.reference || paymentReference(app.id as string)
   const providerRef = state.payment?.provider_ref || ''
-  const paidAt = state.payment?.paid_at
-    ? new Date(state.payment.paid_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
+  const paidStamp = state.payment?.paid_at || state.payment?.eft_collected_at
+  const paidAt = paidStamp
+    ? new Date(paidStamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
     : null
   const issuedAt = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
 
@@ -150,7 +152,7 @@ export default async function InvoicePage() {
           <section className="mt-8 p-5 bg-green-50 border border-green-200 rounded-2xl">
             <p className="text-xs uppercase tracking-wider text-green-700 font-semibold">Payment</p>
             <p className="text-sm text-neutral-700 mt-1">
-              Paid via Yoco {paidAt && `on ${paidAt}`}. Reference <span className="font-mono">{providerRef || reference}</span>.
+              Paid {paidAt && `on ${paidAt}`}. Reference <span className="font-mono">{reference || providerRef}</span>.
             </p>
           </section>
         )}

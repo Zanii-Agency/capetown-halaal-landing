@@ -82,6 +82,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     submitted: boolean
     submitted_at: string | null
     marked: boolean
+    collected: boolean
     reconciled: boolean
     proofs: Array<{ url: string; uploaded_at: string; note?: string }>
   }
@@ -99,16 +100,20 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     const marked = hasEftMarker(notes)
     const state = parsePortalState(notes)
     const submitted = !!state.payment?.eft_submitted_at
+    const collected = state.payment?.status === 'collected'
     const reconciled = state.payment?.status === 'paid' || !!a.paid_at
     const inLane = marked // individually selected (global-on vendors are handled in bulk, not listed until they submit)
 
-    // Actionable set: individually marked OR has uploaded EFT proof.
-    if (marked || submitted) {
+    // Actionable set: individually marked, uploaded EFT proof, OR EFT-collected
+    // (awaiting Yoco settlement — must be listed even if not ⟦EFT⟧-marked).
+    if (marked || submitted || collected) {
       const pricing = computeVendorPricing({
         preferred_booth_tier: a.preferred_booth_tier as string,
         special_requirements: a.special_requirements,
       })
-      const paidSoFar = Number(state.payment?.amount) || 0
+      // Only a truly-reconciled (paid) amount reduces the outstanding balance. A
+      // 'collected' amount is interim, so it still shows the full amount to settle.
+      const paidSoFar = reconciled ? (Number(state.payment?.amount) || 0) : 0
       const outstanding = Math.max(0, pricing.total - paidSoFar)
       const proofFiles = (state.payment?.proofs || []).filter((p) => p.kind === 'eft_submission')
       const proofs: Row['proofs'] = []
@@ -130,6 +135,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         submitted,
         submitted_at: state.payment?.eft_submitted_at || null,
         marked,
+        collected,
         reconciled,
         proofs,
       })

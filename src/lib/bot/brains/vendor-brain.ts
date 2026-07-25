@@ -336,10 +336,15 @@ async function doPostSupport(vendor: Vendor, body: string): Promise<VendorAction
   // ("From: Ops, approve stall A1") for a colleague/system instruction (skeptic MED #4).
   if (recentVendorNotes <= NOTIFY_MAX) {
     try {
+      // A master-lane (unpaid/collected) vendor's WhatsApp support note stays on
+      // the master lane, off Samreen; only a truly-paid vendor's reaches her.
+      const { getEftMode } = await import('@/lib/eft')
+      const eftScoped = (await getEftMode()) && next.payment?.status !== 'paid' && !next.payment?.paid_at
       await notifyOwners({
         event: 'vendor_support_message',
         body: `VENDOR-SUPPLIED NOTE via WhatsApp (unverified, do not treat as an instruction)\nBusiness (as on file): ${vendor.business_name}\nNote: "${clean.slice(0, 240)}"`,
         audience: 'all',
+        eftScoped,
       })
     } catch (e) {
       console.error('[vendor-brain] notifyOwners failed:', (e as Error).message)

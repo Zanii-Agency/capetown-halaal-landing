@@ -22,7 +22,11 @@ export default async function PaymentsPage() {
   const ctx = await getExhibitorContext()
   const app = ctx?.application
   const state = parsePortalState(app?.admin_notes as string)
-  const status = state.payment?.status || 'none'
+  const rawStatus = state.payment?.status || 'none'
+  // 'collected' (EFT interim) renders exactly like 'paid' for the VENDOR: paid
+  // banner, invoice link, no countdown, no EFT pay panel. The real 'paid'
+  // transition happens later at Yoco settlement; this is display-only.
+  const status = rawStatus === 'collected' ? 'paid' : rawStatus
   const dueDate = app ? computePaymentDue(app as { payment_due_date?: string | null; reviewed_at?: string | null }) : null
   const due = dueDate ? fmtDate(dueDate) : (app?.payment_due_date as string) || 'TBC'
   const daysLeft = dueDate ? daysUntil(dueDate) : null

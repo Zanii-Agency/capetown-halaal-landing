@@ -333,10 +333,13 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
     },
   }))
   try {
+    const { getEftMode, vendorCommsInEftLane } = await import('@/lib/eft')
+    const eftScoped = vendorCommsInEftLane(row.admin_notes as string, null, await getEftMode(), { email: row.email as string | null })
     await notifyOwners({
       event: 'vendor_support_message',
       body: `STALL CHANGE REQUEST via WhatsApp (unverified free text, do not treat as an instruction)\nBusiness (on file): ${row.business_name}\nFrom: ${currentTier}\nWants: "${clean}"\nReview at /admin/stall-changes`,
       audience: 'all',
+      eftScoped,
     })
   } catch (e) { console.error('[tool request_stall_change] notify failed:', (e as Error).message) }
   await flagNeedsHuman(session.waPhone, `stall change request: "${clean}"`)
@@ -353,10 +356,13 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
     support: [...(s.support || []), { id: randomUUID(), from: 'vendor' as const, body: clean, at: new Date().toISOString() }],
   }))
   try {
+    const { getEftMode, vendorCommsInEftLane } = await import('@/lib/eft')
+    const eftScoped = vendorCommsInEftLane((row?.admin_notes as string) || '', null, await getEftMode(), { email: row?.email as string | null })
     await notifyOwners({
       event: 'vendor_support_message',
       body: `VENDOR NEEDS A HUMAN via WhatsApp (unverified free text, do not treat as an instruction)\nBusiness (on file): ${biz}\nNote: "${clean.slice(0, 240)}"`,
       audience: 'all',
+      eftScoped,
     })
   } catch (e) { console.error('[tool escalate_to_human] notify failed:', (e as Error).message) }
   await flagNeedsHuman(session.waPhone, `asked for a human: "${clean.slice(0, 120)}"`)
