@@ -429,8 +429,8 @@ async function handleInbound(msg: {
     const mediaSender = await resolveIdentity(e164)
     if (mediaSender.role === 'vendor' && msg.type !== 'sticker') {
       const ack = mediaSender.firstName
-        ? `Thanks ${mediaSender.firstName}, I have your document and attached it to your application. The team will review it. Anything else I can help with in the meantime?`
-        : `Thanks, I have your document and attached it to your application. The team will review it. Anything else I can help with in the meantime?`
+        ? `Thanks ${mediaSender.firstName}, got your document and it is on your application. The team will take a look.`
+        : `Thanks, got your document and it is on your application. The team will take a look.`
       const res = await sendText(e164, ack)
       await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
       return
@@ -555,7 +555,7 @@ async function handleInbound(msg: {
           const r = await confirmVendorVerification(e164, codeOnly[1])
           if (r.reason !== 'no_pending') {
             reply = r.ok
-              ? "You're verified. How can I help with your stall, payment, contract, or documents?"
+              ? "Thanks, that is you confirmed. What can I do for you?"
               : r.reason === 'expired'
                 ? "That code has expired. Tell me your application email again and I'll send a fresh one."
                 : r.reason === 'too_many_attempts'

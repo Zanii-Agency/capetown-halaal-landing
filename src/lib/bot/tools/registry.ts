@@ -365,7 +365,7 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
     })
   } catch (e) { console.error('[tool escalate_to_human] notify failed:', (e as Error).message) }
   await flagNeedsHuman(session.waPhone, `asked for a human: "${clean.slice(0, 120)}"`)
-  return `I have logged this for the festival team and notified them: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". They will follow up with you here. Anything else in the meantime?`
+  return `I have passed this to the team: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". Someone will come back to you here.`
 }
 
 /**

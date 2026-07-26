@@ -352,7 +352,7 @@ async function doPostSupport(vendor: Vendor, body: string): Promise<VendorAction
   return {
     ok: true,
     event: 'vendor_action_post_support',
-    reply: `Got it, I've logged this for the team and they'll follow up: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". Anything else?`,
+    reply: `Got it, I have passed that to the team: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". They will come back to you.`,
   }
 }
 
