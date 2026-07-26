@@ -103,9 +103,14 @@ export async function POST(req: NextRequest) {
   notifyOwners({
     event: 'payment_succeeded',
     body: `${appRow.business_name || 'Vendor'} payment captured (${zoneLabel}): R${parsed.amount.toLocaleString('en-ZA')}${parsed.reference ? ` · ref ${parsed.reference}` : ''}.`,
-    // CARVE-OUT: no vendorId. A capture means the vendor is paid by definition,
-    // so the owner must see it; fail-open already gives that. Do not "fix" this
-    // by synthesising a partial row — appRow lacks the lane columns entirely.
+    // MASTER ONLY: this route captures EFT payments specifically (method: 'eft',
+    // hardcoded above), and payment alerts route on the METHOD — Yoco always
+    // reaches the festival owner, EFT never does (Taona 2026-07-26).
+    //
+    // It needs saying explicitly because the body here never contains the word
+    // "EFT" ("… payment captured (Outside): R4,500"), so the mentionsEft
+    // heuristic would not have caught it. The alert looked owner-safe and was not.
+    audience: 'master',
   }).catch((e) => console.error('[capture] notifyOwners failed:', (e as Error).message))
 
   return NextResponse.json({

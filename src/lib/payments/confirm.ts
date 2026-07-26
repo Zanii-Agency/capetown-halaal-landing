@@ -17,6 +17,22 @@ const SITE = 'https://cthalaal.co.za'
 
 export type PaymentMethod = 'yoco' | 'eft' | 'cash' | 'manual_card' | 'waived'
 
+/** Every payment method, so a new one cannot be added without the audience test
+ *  below forcing a decision about who sees its alert. */
+export const PAYMENT_METHODS: readonly PaymentMethod[] = ['yoco', 'eft', 'cash', 'manual_card', 'waived']
+
+/** Who sees a payment alert. Routes on the METHOD, not the EFT lane (Taona
+ *  2026-07-26: "payment captured from yoco is always her but never eft").
+ *
+ *  The lane is the wrong discriminator here: confirmPayment writes paid_at before
+ *  notifying, so the vendor is out of the lane by definition by the time the alert
+ *  fires. Body text is also wrong — the top-up branch renders "paid an ADDITIONAL
+ *  R…" and never names the method, so mentionsEft would miss an EFT top-up.
+ *  The method is the fact; everything else is a proxy for it. */
+export function paymentAlertAudience(method: PaymentMethod): 'all' | 'master' {
+  return method === 'eft' ? 'master' : 'all'
+}
+
 export interface ConfirmPaymentInput {
   applicationId: string
   method: PaymentMethod
@@ -361,12 +377,7 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
     await notifyOwners({
       event: 'payment_succeeded',
       body: `${businessName} ${isTopUp ? 'paid an ADDITIONAL' : 'marked paid via ' + input.method + '. Amount'} ${formatRand(amount)}${isTopUp ? ` (total paid ${formatRand(newCumulative)})` : ''}${providerRef ? `, ref ${providerRef}` : ''}.`,
-      audience: 'all',
-      // paid_at was written above, so the lane lookup returns "settled" and the
-      // festival owner is KEPT. Without this the body's literal "paid via eft"
-      // tripped the mentionsEft heuristic and muted her from the one alert that
-      // tells her a vendor has reconciled and become hers.
-      vendorId: input.applicationId,
+      audience: paymentAlertAudience(input.method),
     })
   } catch (e) {
     console.error('[confirmPayment] notify owners failed:', (e as Error).message)
