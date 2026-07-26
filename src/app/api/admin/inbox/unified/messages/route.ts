@@ -6,6 +6,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
+import { stripRfc822Headers } from '@/lib/inbox/email-body'
+import { sanitizeEmailHtml } from '@/lib/sanitize'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
@@ -59,14 +61,14 @@ export async function GET(req: NextRequest) {
     const noPlus = phone.replace(/^\+/, '')
     const { data: msgs } = await db
       .from('wa_messages')
-      .select('id, direction, body, created_at, wa_phone, template_name, metadata')
+      .select('id, direction, body, created_at, wa_phone, template_name, metadata, status, error')
       .or(`wa_phone.eq.+${noPlus},wa_phone.eq.${noPlus}`)
       // DESC + limit, reversed below: ascending + limit returns the OLDEST 400,
       // so past 400 messages a thread froze on ancient history and new messages
       // never appeared at all. We want the newest 400.
       .order('created_at', { ascending: false })
       .limit(400)
-    for (const m of (msgs || []) as Array<{ id: string; direction: string; body: string | null; created_at: string; wa_phone: string; template_name: string | null; metadata: { sent_by?: string; via?: string; media?: { kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'; id?: string; mime_type?: string; filename?: string; caption?: string } } | null }>) {
+    for (const m of (msgs || []) as Array<{ id: string; direction: string; body: string | null; created_at: string; wa_phone: string; template_name: string | null; metadata: { sent_by?: string; via?: string; media?: { kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'; id?: string; mime_type?: string; filename?: string; caption?: string } } | null; status: string | null; error: string | null }>) {
       // Internal owner-notification pings ("🛎️ …") and bracket markers are not
       // part of the customer conversation. A real inbound with no text is media.
       const raw = (m.body || '').trim()
@@ -106,6 +108,11 @@ export async function GET(req: NextRequest) {
         at: m.created_at,
         from: !out ? `+${m.wa_phone.replace(/^\+/, '')}` : sentBy || 'Bot',
         bot: out && !sentBy,
+        // Delivery state, outbound only — the ticks. wa_messages.status has been
+        // written by the webhook all along and simply was never selected, so the
+        // inbox could not tell a delivered message from a failed one.
+        ...(out && m.status ? { status: m.status as CommItem['status'] } : {}),
+        ...(out && m.error ? { error: m.error } : {}),
         ...(media ? { media } : {}),
       })
     }
@@ -121,7 +128,7 @@ export async function GET(req: NextRequest) {
       const ids = threads.map((t) => t.id)
       const { data: msgs } = await db
         .from('support_inbox_messages')
-        .select('id, thread_id, direction, from_address, subject, body_text, received_at, created_at, sent_by')
+        .select('id, thread_id, direction, from_address, from_name, to_address, subject, body_text, body_html, mailbox, received_at, created_at, sent_by')
         .in('thread_id', ids)
         // DESC + limit for the same reason as the WhatsApp select, and ordered by
         // created_at (row insert) rather than received_at (the SENDER's Date
@@ -129,9 +136,14 @@ export async function GET(req: NextRequest) {
         .order('created_at', { ascending: false })
         .limit(500)
       const subjById = new Map(threads.map((t) => [t.id, t.subject]))
-      for (const m of (msgs || []) as Array<{ id: string; thread_id: string; direction: string; from_address: string; subject: string | null; body_text: string | null; received_at: string; created_at: string | null; sent_by: string | null }>) {
+      for (const m of (msgs || []) as Array<{ id: string; thread_id: string; direction: string; from_address: string; from_name: string | null; to_address: string | null; subject: string | null; body_text: string | null; body_html: string | null; mailbox: string | null; received_at: string; created_at: string | null; sent_by: string | null }>) {
         const { cleanBody, attachments } = parseAttachmentMarker(m.body_text)
-        const body = cleanBody || m.subject || ''
+        // stripRfc822Headers server-side: both mail fetchers fall back to slicing
+        // raw MIME when mailparser returns no text, so some rows carry
+        // `Return-Path:` / `Received:` blocks (or a base64 blob) in body_text.
+        // The OLD support inbox defended against this locally while the unified
+        // inbox rendered it verbatim. Fixing it here fixes it for every consumer.
+        const body = stripRfc822Headers(cleanBody) || m.subject || ''
         if (!body && !attachments.length) continue
         const out = m.direction !== 'in'
         const media: MediaInfo[] | undefined = attachments.length
@@ -155,8 +167,22 @@ export async function GET(req: NextRequest) {
           // after a WhatsApp that logically followed it, and the open thread
           // visibly reordered itself under the operator's cursor.
           at: m.created_at || m.received_at,
-          from: !out ? m.from_address : (local(m.sent_by ? adminEmailById.get(m.sent_by) : null) || 'Team'),
+          // Display name, falling back to the local part — the unified inbox
+          // used to show the bare address where from_name was available all along.
+          from: !out
+            ? (m.from_name?.trim() || local(m.from_address) || m.from_address)
+            : (local(m.sent_by ? adminEmailById.get(m.sent_by) : null) || 'Team'),
           subject: m.subject || subjById.get(m.thread_id) || undefined,
+          // SANITISED HERE, on the server. The renderer trusts this by contract
+          // and must not re-sanitise; any other producer of bodyHtml would skip
+          // the allowlist entirely.
+          ...(m.body_html ? { bodyHtml: sanitizeEmailHtml(m.body_html) } : {}),
+          ...(!out ? { fromAddress: m.from_address } : {}),
+          ...(m.to_address ? { to: m.to_address } : {}),
+          mailbox: m.mailbox === 'gmail' ? 'gmail' : 'youngatheart',
+          // The sender's own declared time — what a mail client shows as "sent".
+          // `at` above is arrival, which is what we sort on.
+          ...(m.received_at ? { sentAt: m.received_at } : {}),
           ...(media ? { media } : {}),
         })
       }
@@ -164,5 +190,11 @@ export async function GET(req: NextRequest) {
   }
 
   comms.sort((a, b) => +new Date(a.at) - +new Date(b.at))
-  return NextResponse.json({ messages: stripEftMessages(comms, (m) => m.body, hide) })
+  // EFT wall: the accessor MUST cover every field that can carry message text.
+  // It used to read `m.body` alone, which was complete until bodyHtml existed —
+  // an email whose plain-text part is empty but whose HTML says "I sent the EFT"
+  // would otherwise sail straight past the content filter shipped in eda870d.
+  return NextResponse.json({
+    messages: stripEftMessages(comms, (m) => [m.body, m.subject, m.bodyHtml].filter(Boolean).join(' '), hide),
+  })
 }

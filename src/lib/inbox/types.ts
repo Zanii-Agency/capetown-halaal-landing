@@ -30,6 +30,7 @@ export interface CommItem {
   /** ARRIVAL time (row insert), not the sender's declared timestamp — both
    *  channels use the same clock so a merged sort is meaningful. */
   at: string
+  /** Display name — from_name when the sender supplied one, else the local part. */
   from: string
   subject?: string
   /** An array: WhatsApp is always 0 or 1, a real email can carry several. */
@@ -37,6 +38,28 @@ export interface CommItem {
   /** Client-only. Optimistic outbound, not yet confirmed by the server.
    *  Never returned by the route. */
   pending?: boolean
+
+  // ── EMAIL ONLY ────────────────────────────────────────────────────────────
+  /** SANITISED SERVER-SIDE by sanitizeEmailHtml. Present only when the row had
+   *  body_html. The renderer passes this to dangerouslySetInnerHTML and MUST NOT
+   *  re-sanitise or bypass this route — any other producer of this field would
+   *  skip the sanitiser. */
+  bodyHtml?: string
+  /** The real address behind `from`, for the Gmail-style header line. */
+  fromAddress?: string
+  /** Recipient, so the header can read "to support@…". */
+  to?: string
+  /** Which inbox it landed in — drives the Gmail / YAH badge. */
+  mailbox?: 'gmail' | 'youngatheart'
+  /** The sender's OWN declared timestamp. `at` is arrival (what we sort on);
+   *  this is what an email client would display as "sent". */
+  sentAt?: string
+
+  // ── WHATSAPP ONLY ─────────────────────────────────────────────────────────
+  /** Outbound delivery state, for the ticks. */
+  status?: 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
+  /** Failure reason, shown on the failed-send indicator. */
+  error?: string
 }
 
 /** The contact a thread belongs to, as the renderers need it. */

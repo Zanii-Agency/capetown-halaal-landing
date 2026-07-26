@@ -137,3 +137,28 @@ test('stripEftMessages: the phrases that count, and safe handling of empty bodie
   assert.equal(stripEftMessages([{ body: null }], (m) => m.body, true).length, 1)
   assert.equal(stripEftMessages(null, (m: { body: string }) => m.body, true).length, 0)
 })
+
+test('the EFT wall must inspect every field that can carry message text', () => {
+  // Regression guard for the messages route. Its accessor read `m.body` alone,
+  // which was complete until bodyHtml existed. A real HTML email can have an
+  // empty or innocuous plain-text part while the HTML says "I sent the EFT" —
+  // that message must not reach the festival owner just because the column the
+  // filter happened to read was clean.
+  const accessor = (m: { body?: string; subject?: string; bodyHtml?: string }) =>
+    [m.body, m.subject, m.bodyHtml].filter(Boolean).join(' ')
+
+  const hidden = [
+    { body: '', subject: 'Payment', bodyHtml: '<p>I sent the EFT this morning</p>' },
+    { body: 'See attached', subject: 'proof of payment', bodyHtml: '<p>hi</p>' },
+    { body: 'done', subject: '', bodyHtml: '<div>bank transfer reference 123</div>' },
+  ]
+  for (const m of hidden) {
+    assert.equal(stripEftMessages([m], accessor, true).length, 0, `must withhold: ${JSON.stringify(m)}`)
+  }
+
+  // An ordinary email with none of it stays visible.
+  assert.equal(
+    stripEftMessages([{ body: 'What time is setup?', subject: 'Saturday', bodyHtml: '<p>Thanks</p>' }], accessor, true).length,
+    1,
+  )
+})
