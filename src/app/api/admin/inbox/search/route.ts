@@ -9,7 +9,8 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveContact } from '@/lib/contacts/resolve'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { hidesEftContent } from '@/lib/inbox-lane'
+import { mentionsEft } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -65,10 +66,10 @@ export async function GET(req: Request) {
   const like = `%${q}%`
   const hits: Hit[] = []
   const seen = new Set<string>()
-  // EFT lane: full-text search reaches message bodies directly, so without this a
-  // non-EFT admin could surface a lane vendor's content by searching for a word in
-  // it — no thread id needed. Filtered per row below, in all three blocks.
-  const scope = await laneScopeFor(viewer.email)
+  // CONTENT-level (2026-07-26): search reaches message bodies directly, so a hit
+  // whose body talks about EFT is withheld — but a lane vendor's ordinary
+  // messages are searchable like anyone else's. Same predicate as the alert side.
+  const hide = hidesEftContent(viewer.email)
 
   // wa_messages — upstream schema has no thread_id; we group by wa_phone
   // and look up the wa_threads row by (channel='wa', thread_key=wa_phone).
@@ -82,7 +83,7 @@ export async function GET(req: Request) {
       data: Array<{ id: string; body: string; wa_phone: string; created_at: string }> | null
     }
     for (const row of data ?? []) {
-      if (scope.blocksPhone(row.wa_phone)) continue
+      if (hide && mentionsEft(row.body)) continue
       const tk = `wa:${row.wa_phone}`
       if (seen.has(tk)) continue
       const { data: thread } = (await supabase
@@ -123,7 +124,7 @@ export async function GET(req: Request) {
       }> | null
     }
     for (const row of data ?? []) {
-      if (scope.blocksEmail(row.from_address)) continue
+      if (hide && (mentionsEft(row.body) || mentionsEft(row.subject))) continue
       if (!row.thread_id || seen.has(`mail:${row.thread_id}`)) continue
       seen.add(`mail:${row.thread_id}`)
       const resolved = await resolveContact({ email: row.from_address, supabase })
@@ -150,7 +151,8 @@ export async function GET(req: Request) {
       data: Array<{ id: string; business_name: string; email: string; phone: string }> | null
     }
     for (const row of data ?? []) {
-      if (scope.blocks({ applicationId: row.id, email: row.email, phone: row.phone })) continue
+      // Business-name hits carry no message body, so nothing to content-filter:
+      // a vendor's NAME is not EFT content under the 2026-07-26 rule.
       // Try wa first, then mail
       const channels: Array<{ channel: 'wa' | 'mail'; key: string }> = []
       if (row.phone) channels.push({ channel: 'wa', key: row.phone })

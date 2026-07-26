@@ -20,7 +20,6 @@ import { sendEmail } from '@/lib/email/resend'
 import { transportFor, fromAddressFor } from '@/lib/email-concierge'
 import { mirrorOutboundToSupportInbox } from '@/lib/email/support-mirror'
 import { assertRole } from '@/lib/admin-rbac'
-import { laneScopeFor } from '@/lib/inbox-lane'
 import { mentionsEft, markVendorToldEft } from '@/lib/eft'
 import { z } from 'zod'
 
@@ -105,13 +104,9 @@ export async function POST(req: NextRequest) {
   }
   const text = body.text?.trim() || ''
 
-  // EFT lane: covers BOTH branches below in one place — phone/email are
-  // caller-supplied, and a non-EFT admin must not send into a master-lane
-  // conversation. The EFT admin (dev@) is unrestricted and handles the lane.
-  const scope = await laneScopeFor(adminUser.email ?? user.email)
-  if (scope.blocks({ phone: body.phone, email: body.email })) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  }
+  // No EFT lane gate (2026-07-26): replying is ordinary support work and both
+  // admins see the alerts that prompt it. PAYMENT actions stay walled — see
+  // admin/chase.
 
   if (body.channel === 'whatsapp') {
     if (!body.phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })

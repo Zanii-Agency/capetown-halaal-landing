@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
 import { stripEmDashes } from '@/lib/festival-brain/system-prompt'
 import { getEftMode } from '@/lib/eft'
 import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
@@ -148,15 +148,12 @@ export async function POST(req: NextRequest) {
   }
   if (!body.phone && !body.email) return NextResponse.json({ error: 'phone or email required' }, { status: 400 })
 
-  // EFT lane: phone/email are caller-supplied and loadThread reads the real
-  // transcript straight into an LLM prompt, so an unguarded call would return a
-  // lane vendor's conversation as generated text. Same rule as unified/messages.
-  const scope = await laneScopeFor(gate.adminUser.email)
-  if (scope.blocks({ phone: body.phone, email: body.email })) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  }
-
-  const turns = await loadThread(db, body.phone, body.email)
+  // CONTENT-level (2026-07-26): any admin may run this on any vendor's thread,
+  // but the EFT turns are stripped BEFORE the transcript reaches the model —
+  // loadThread feeds an LLM prompt directly, so filtering the output would be
+  // too late.
+  const hide = hidesEftContent(gate.adminUser.email)
+  const turns = stripEftMessages(await loadThread(db, body.phone, body.email), (t) => t.text, hide)
   const eftOn = await getEftMode()
   const prompt = promptFor(body.action, turns, body.draft || '', eftOn)
   if ('error' in prompt) return NextResponse.json({ ok: false, message: prompt.error }, { status: 200 })

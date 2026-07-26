@@ -15,7 +15,34 @@
 // than by remembering to re-derive it. Same shape as the notifyOwners gate: the
 // predicate lives in ONE place (vendorCommsInEftLane) and callers pass identity.
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode, isEftAdmin, vendorCommsInEftLane } from '@/lib/eft'
+import { getEftMode, isEftAdmin, vendorCommsInEftLane, mentionsEft } from '@/lib/eft'
+
+// ── CONTENT-level wall (the read-side twin of notifyOwners' mentionsEft) ──────
+//
+// 2026-07-26: the rule moved from per-VENDOR to per-CONTENT. Owner alerts now
+// reach both admins and withhold only bodies that talk about EFT, so reading had
+// to match — otherwise the festival owner is pinged about a conversation and then
+// 403s trying to open it. She can now open ANY vendor's thread; the individual
+// messages that discuss EFT are what stay hidden.
+//
+// Same predicate as the alert side (mentionsEft), so the two cannot drift.
+
+/** True when this viewer must not see EFT content. Only the EFT admin may. */
+export function hidesEftContent(viewerEmail: string | null | undefined): boolean {
+  return !isEftAdmin(viewerEmail)
+}
+
+/** Drop the messages that talk about EFT. `body` extracts the text to test, so
+ *  one helper serves wa_messages, support_inbox_messages, mail_messages and the
+ *  synthesised comms rows without each caller re-deriving the rule. */
+export function stripEftMessages<T>(rows: T[] | null | undefined, body: (row: T) => unknown, hide: boolean): T[] {
+  const list = rows || []
+  if (!hide) return [...list]
+  return list.filter((r) => {
+    const t = body(r)
+    return !mentionsEft(typeof t === 'string' ? t : null)
+  })
+}
 
 /** Last 9 digits — the ZA subscriber number, stable across +27/0/local formats.
  *  Same canonical key the webhook and the unified inbox use (09ced95). */

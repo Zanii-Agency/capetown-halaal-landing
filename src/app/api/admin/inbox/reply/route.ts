@@ -44,7 +44,6 @@ import { sendEmail } from '@/lib/email/resend'
 import { findWaTemplate, buildWaTemplateParams } from '@/lib/templates/wa-meta'
 import { findMailTemplate, renderMailTemplate, validateMailTemplate } from '@/lib/mail/templates'
 import { requireOperator } from '@/lib/admin-rbac'
-import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -107,17 +106,10 @@ export async function POST(req: Request) {
     error: { message: string } | null
   }
 
-  // EFT lane: a write, not a read, but the lane is per-vendor A-Z — a non-EFT
-  // admin must not send INTO a master-lane conversation either. The EFT admin is
-  // unrestricted, so dev@ still handles the lane normally.
-  {
-    const t = threadRows?.[0]
-    if (t) {
-      const scope = await laneScopeFor(gate.adminUser.email)
-      const blocked = t.channel === 'wa' ? scope.blocksPhone(t.thread_key) : scope.blocksEmail(t.thread_key)
-      if (blocked) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-    }
-  }
+  // No EFT lane gate here (2026-07-26). Replying to a vendor is ordinary support
+  // work, and both admins now see the alerts that prompt it — blocking the reply
+  // would leave the festival owner notified of a question she cannot answer.
+  // PAYMENT actions are a different matter and stay walled: see admin/chase.
 
   if (threadErr || !threadRows || threadRows.length === 0) {
     return NextResponse.json({ error: 'thread not found' }, { status: 404 })

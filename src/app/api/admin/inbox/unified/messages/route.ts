@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -58,15 +58,11 @@ export async function GET(req: NextRequest) {
   // benign email + an EFT vendor's phone) and we block if EITHER is in the lane.
   // No .limit(1): a last-9 phone collision must not hide the lane vendor behind
   // another matching row. Seals the direct-API path completely.
-  // Folded into the shared scope 2026-07-26. This was the last hand-rolled copy of
-  // the lane predicate; every other reader now goes through laneScopeFor, so there
-  // is one place the rule can be wrong instead of two that can silently diverge.
-  // Same semantics: identifiers checked independently, ⟦WAV…⟧ alternates included,
-  // EFT admin unrestricted.
-  const scope = await laneScopeFor(user.email)
-  if (scope.blocks({ email, phone })) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  }
+  // The EFT wall is CONTENT-level, not vendor-level (2026-07-26). Any admin may
+  // open any vendor's thread; the messages that talk about EFT are what stay
+  // hidden, applied to the merged list at the bottom of this handler. Same
+  // predicate as the alert side (mentionsEft), so the two cannot drift.
+  const hide = hidesEftContent(user.email)
 
   const comms: CommItem[] = []
   const local = (e?: string | null) => (e ? e.split('@')[0] : null)
@@ -172,5 +168,5 @@ export async function GET(req: NextRequest) {
   }
 
   comms.sort((a, b) => +new Date(a.at) - +new Date(b.at))
-  return NextResponse.json({ messages: comms })
+  return NextResponse.json({ messages: stripEftMessages(comms, (m) => m.body, hide) })
 }

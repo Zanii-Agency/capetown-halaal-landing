@@ -26,7 +26,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { wrapUntrusted, UNTRUSTED_CONTENT_RULE } from '@/lib/ai/prompt-safety'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -149,17 +149,13 @@ export async function POST(req: Request) {
   }
   const thread = threadRows[0]
 
-  // EFT lane: thread_id is caller-supplied and the summary is generated FROM the
-  // real message bodies, so an unguarded call leaks a lane vendor's conversation
-  // as generated prose. Guard before the cache read too — a cached summary of a
-  // lane thread must not be served to a non-EFT admin either.
-  const scope = await laneScopeFor(session.email)
-  const blocked = thread.channel === 'wa'
-    ? scope.blocksPhone(thread.thread_key)
-    : scope.blocksEmail(thread.thread_key)
-  if (blocked) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-
-  const cacheKey = `${thread.channel}:${thread.id}`
+  // CONTENT-level (2026-07-26): any admin may summarise any vendor's thread, but
+  // the EFT messages are stripped from the transcript BEFORE it reaches the model
+  // — a summary is generated FROM the bodies, so filtering after the fact would
+  // be too late. The cache key carries the flag: a summary built from the full
+  // transcript must never be served to someone who may not see all of it.
+  const hide = hidesEftContent(session.email)
+  const cacheKey = `${thread.channel}:${thread.id}${hide ? ':redacted' : ''}`
 
   if (!body.force) {
     const hit = cache.get(cacheKey)
@@ -168,7 +164,7 @@ export async function POST(req: Request) {
     }
   }
 
-  const msgs = await loadMessages(supabase, thread)
+  const msgs = stripEftMessages(await loadMessages(supabase, thread), (m) => m.body, hide)
   if (msgs.length === 0) {
     const payload = {
       summary: 'No messages yet on this thread.',

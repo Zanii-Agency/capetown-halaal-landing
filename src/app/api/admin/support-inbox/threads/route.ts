@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -42,15 +42,11 @@ export async function GET(req: NextRequest) {
   const { data: threadRows, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // EFT lane: this route takes NO vendor identifier and returns every thread plus
-  // every message body, so it was the widest door of all — a non-EFT admin did not
-  // even need to guess an id. Drop lane vendors' threads BEFORE their messages are
-  // fetched, matching what the unified inbox shows.
-  const scope = await laneScopeFor(user.email)
-  const threads = (threadRows || []).filter(
-    (t: { peer_email: string | null; vendor_application_id: string | null }) =>
-      !scope.blocks({ email: t.peer_email, applicationId: t.vendor_application_id }),
-  )
+  // CONTENT-level (2026-07-26): this route returns every thread plus every message
+  // body. Threads themselves are ordinary work and stay visible; the individual
+  // messages that talk about EFT are stripped below, after they are fetched.
+  const hide = hidesEftContent(user.email)
+  const threads = threadRows || []
 
   const ids = (threads || []).map((t: { id: string }) => t.id)
   let messagesByThread: Record<string, unknown[]> = {}
@@ -61,7 +57,12 @@ export async function GET(req: NextRequest) {
       .in('thread_id', ids)
       .order('received_at', { ascending: true })
       .limit(2000)
-    messagesByThread = (messages || []).reduce((acc: Record<string, unknown[]>, m: { thread_id: string }) => {
+    const visible = stripEftMessages(
+      messages as Array<{ thread_id: string; subject: string | null; body_text: string | null }> | null,
+      (m) => `${m.subject || ''}\n${m.body_text || ''}`,
+      hide,
+    )
+    messagesByThread = visible.reduce((acc: Record<string, unknown[]>, m: { thread_id: string }) => {
       const tid = m.thread_id
       if (!acc[tid]) acc[tid] = []
       acc[tid].push(m)

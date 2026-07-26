@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildLaneScope, phoneKey, type LaneVendorRow } from './inbox-lane'
+import { buildLaneScope, phoneKey, hidesEftContent, stripEftMessages, type LaneVendorRow } from './inbox-lane'
 import { updatePortalStateImpl } from './portal-state'
 import { withNoEftMarker } from './eft'
 
@@ -76,4 +76,46 @@ test('unknown identifiers are never blocked (fail-open on non-vendors)', () => {
   assert.equal(s.blocks({}), false)
   assert.equal(s.blocksPhone(null), false)
   assert.equal(s.blocksEmail(''), false)
+})
+
+// ── CONTENT-level wall (2026-07-26) ─────────────────────────────────────────
+// The rule moved from per-vendor to per-content: any admin may open any vendor's
+// thread, and only the messages that talk about EFT are withheld. These assert
+// the read side matches the alert side (both use mentionsEft), because a
+// mismatch means the festival owner gets pinged about a thread she then cannot
+// open — or worse, opens one she should not see.
+
+test('hidesEftContent: only the EFT admin sees EFT messages', () => {
+  assert.equal(hidesEftContent('dev@cthalaal.co.za'), false)
+  assert.equal(hidesEftContent('capetownhalaal@gmail.com'), true)
+  assert.equal(hidesEftContent(null), true, 'unknown viewer must not see EFT content')
+})
+
+test('stripEftMessages drops only the EFT messages, keeping the rest of the thread', () => {
+  const msgs = [
+    { body: 'Hi, what time is setup on Saturday?' },
+    { body: 'I did the EFT this morning, proof attached.' },
+    { body: 'Also can I get a second staff badge?' },
+    { body: 'Please confirm the bank transfer went through' },
+    { body: 'Thanks!' },
+  ]
+  const visible = stripEftMessages(msgs, (m) => m.body, true)
+  assert.deepEqual(
+    visible.map((m) => m.body),
+    ['Hi, what time is setup on Saturday?', 'Also can I get a second staff badge?', 'Thanks!'],
+    'ordinary questions from an EFT vendor stay visible; only EFT talk is withheld',
+  )
+  // The EFT admin sees the whole conversation.
+  assert.equal(stripEftMessages(msgs, (m) => m.body, false).length, 5)
+})
+
+test('stripEftMessages: the phrases that count, and safe handling of empty bodies', () => {
+  const hidden = ['EFT sent', 'bank transfer done', 'proof of payment attached']
+  for (const body of hidden) {
+    assert.equal(stripEftMessages([{ body }], (m) => m.body, true).length, 0, `"${body}" must be withheld`)
+  }
+  // A media-only message has no text — nothing to match, so it is not withheld
+  // by this rule (the media route checks its caption and storage path instead).
+  assert.equal(stripEftMessages([{ body: null }], (m) => m.body, true).length, 1)
+  assert.equal(stripEftMessages(null, (m: { body: string }) => m.body, true).length, 0)
 })

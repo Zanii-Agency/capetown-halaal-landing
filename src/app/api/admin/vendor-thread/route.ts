@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { toE164 } from '@/lib/whatsapp'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 
@@ -22,11 +22,9 @@ export async function GET(req: NextRequest) {
   const e164 = toE164(phone)
   const waPhone = e164.replace(/^\+/, '')
 
-  // EFT lane: the phone is caller-supplied, so without this a non-EFT admin could
-  // read any lane vendor's whole thread by direct request, bypassing the unified
-  // inbox's list filter entirely.
-  const scope = await laneScopeFor(user.email)
-  if (scope.blocksPhone(e164)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // EFT wall is CONTENT-level, not vendor-level (2026-07-26): any admin may open
+  // any vendor's thread; the messages that talk about EFT are what stay hidden.
+  const hide = hidesEftContent(user.email)
 
   const { data, error } = await admin
     .from('wa_messages')
@@ -36,5 +34,6 @@ export async function GET(req: NextRequest) {
     .limit(500)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ phone: waPhone, count: (data || []).length, messages: data || [] })
+  const messages = stripEftMessages(data, (m) => m.body, hide)
+  return NextResponse.json({ phone: waPhone, count: messages.length, messages })
 }
