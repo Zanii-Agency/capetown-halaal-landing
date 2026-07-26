@@ -9,6 +9,19 @@ import { withoutMerged } from '@/lib/merge'
 import { findAdmin, type BotAdmin } from '@/lib/bot/admins'
 import { hasEftMarker } from '@/lib/eft'
 
+/**
+ * A ⟦WAV<last9>⟧ marker is an authenticated binding, not an ambient phone match:
+ * the vendor proved by email-OTP that this number belongs to that application.
+ * When exactly one candidate carries it, collapse to it so the number resolves
+ * unambiguously. Ties (0 or 2+ bound) fall through to the full candidate set,
+ * which keeps the disambiguation picker for someone genuinely running two stalls.
+ */
+export function preferWaBound<T extends { admin_notes?: string | null }>(rows: T[], last9: string): T[] {
+  if (last9.length !== 9) return rows
+  const bound = rows.filter((r) => (r.admin_notes || '').includes(`WAV${last9}`))
+  return bound.length === 1 ? bound : rows
+}
+
 export type IdentityRole = 'admin' | 'vendor' | 'ticket_buyer' | 'unknown'
 
 export interface ResolvedIdentity {
@@ -100,8 +113,20 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
   // Ordering matters: an APPROVED primary sorts ahead of an older duplicate that
   // survived unmerged, so the active identity is the real application even in a
   // cluster nobody has merged yet.
-  const vendors = withoutMerged(vendorRows as Array<{ admin_notes?: string | null; status?: string }>)
+  const deduped = withoutMerged(vendorRows as Array<{ admin_notes?: string | null; status?: string }>)
     .sort((a, b) => (a.status === 'approved' ? -1 : 0) - (b.status === 'approved' ? -1 : 0)) as typeof vendorRows
+  // A ⟦WAV<last9>⟧ marker is not an ambient phone match: the vendor proved by
+  // email-OTP that THIS number belongs to THAT application. So the binding wins
+  // over every other row this number happens to touch.
+  //
+  // Without this the step-up was a dead loop, and 23 live vendors sat in it. A
+  // second application carrying the same number kept applicationCount at 2, so
+  // resolveVendorSession returned `ambiguous` on the very next message: the bot
+  // said "You're verified", then refused every tool. On 2026-07-26 a burger
+  // vendor hit it four times in eleven seconds (three check_application_status,
+  // one escalate_to_human, all "refused: not verified") and the bot told him our
+  // tools were broken. They were not. This was.
+  const vendors = preferWaBound(deduped || [], last9) as typeof vendorRows
   const vendor = (vendors || [])[0] as {
     id: string
     business_name: string
