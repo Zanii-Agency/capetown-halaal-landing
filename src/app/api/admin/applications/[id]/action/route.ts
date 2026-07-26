@@ -221,16 +221,19 @@ export async function POST(
         await notifyOwners({
           event: eventMap[decisionStatus],
           body: `${before.business_name || 'Vendor'} (${before.contact_name || '—'}) ${decisionStatus.replace('_', ' ')}. Notified by email${waNote}. ${before.email || ''}`,
-          // RESOLVED 2026-07-26 (Taona: "finalize in favour of my objective").
-          // The rule is per-VENDOR and covers their whole A-Z, so an EFT-lane
-          // vendor's approval/rejection alert is master-only like everything else
-          // about them. Under global EFT mode that is most unpaid vendors, so the
-          // festival owner's alert volume drops sharply while the lane is on —
-          // intended, and it self-reverts the moment EFT mode is switched off.
-          // She loses only the WhatsApp/email MIRROR: /admin/applications still
-          // shows her every application, and her own workbench action still
-          // renders its result in the UI she just clicked.
-          vendorId: id,
+          // CARVE-OUT: deliberately NO vendorId. Briefly gated on 2026-07-26 and
+          // REVERTED the same day once the rule was stated as events rather than
+          // vendors (Taona: "as long as Samreen gets notified when contracts get
+          // signed, new vendors sign up, yoco paid vendors ask questions then it's
+          // fine"). Approval sits between two named carve-outs — application
+          // received and contract signed — so gating it left a silent hole in the
+          // middle of the pipeline the festival owner runs.
+          //
+          // Safe on the same test as those two: the body carries no payment
+          // information. The lane hides PAYMENT POSTURE, not a vendor's progress
+          // through the funnel. Approvals also happen while the vendor is still
+          // unpaid by definition, so under global EFT mode gating this would mute
+          // essentially ALL of them.
         })
       } catch (e) {
         console.error('[action] notifyOwners failed:', (e as Error).message)

@@ -136,7 +136,19 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `Contract signed: ${String(app.business_name || 'Vendor')}.`,
       audience: 'all',
-      vendorId: app.id as string, // EFT-lane vendors' self-service stays on master
+      // CARVE-OUT: deliberately NO vendorId (Taona 2026-07-26: "as long as Samreen
+      // gets notified when contracts get signed, new vendors sign up, yoco paid
+      // vendors ask questions then it's fine").
+      //
+      // The paygate sequence is Approved -> Sign Contract -> Pay, so a vendor is
+      // ALWAYS still unpaid when they sign. Under global EFT mode that puts nearly
+      // every signing vendor on the lane, and gating this alert blinded the
+      // festival owner to the entire contract stage of her own pipeline.
+      //
+      // Safe because the body carries no payment information: "Contract signed:
+      // <business>." says nothing about how they are paying. The lane hides
+      // PAYMENT POSTURE, not the existence of a vendor progressing through the
+      // funnel — same reasoning as the new-application carve-out.
     })
   } catch (e) {
     console.error('[contract-sign] notifyOwners failed:', (e as Error).message)
