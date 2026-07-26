@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { toE164 } from '@/lib/whatsapp'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 
@@ -22,8 +22,11 @@ export async function GET(req: NextRequest) {
   const e164 = toE164(phone)
   const waPhone = e164.replace(/^\+/, '')
 
-  // EFT wall is CONTENT-level, not vendor-level (2026-07-26): any admin may open
-  // any vendor's thread; the messages that talk about EFT are what stay hidden.
+  // TWO layers (2026-07-26). Vendor: the festival owner may only open threads of
+  // vendors she owns (paid via Yoco/cash/waived). Content: within those, any
+  // message that talks about EFT is still stripped.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksPhone(e164)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const hide = hidesEftContent(user.email)
 
   const { data, error } = await admin

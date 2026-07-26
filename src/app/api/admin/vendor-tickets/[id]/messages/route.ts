@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,6 +60,9 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
 
   // EFT lane: the ticket id resolves to a phone/email, so checking after
   // resolution covers both shapes regardless of which one the ticket carried.
+  // TWO layers (2026-07-26): vendor, then content.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocks({ phone, email })) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const hide = hidesEftContent(user.email)
 
   const comms: CommItem[] = []

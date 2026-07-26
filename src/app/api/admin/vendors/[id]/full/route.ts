@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -41,6 +41,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   // EFT lane: returns the full vendor row plus every WhatsApp and email body, keyed
   // by a path param anyone can type. The richest single payload of the lot.
+  // TWO layers (2026-07-26): vendor, then content. This returns the FULL vendor
+  // row including payment state, so the vendor gate matters most here.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const hide = hidesEftContent(user.email)
 
   const a = app as Record<string, unknown>

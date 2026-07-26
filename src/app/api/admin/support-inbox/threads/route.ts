@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -45,8 +45,14 @@ export async function GET(req: NextRequest) {
   // CONTENT-level (2026-07-26): this route returns every thread plus every message
   // body. Threads themselves are ordinary work and stay visible; the individual
   // messages that talk about EFT are stripped below, after they are fetched.
+  // TWO layers (2026-07-26): drop threads of vendors the owner does not own, then
+  // strip any remaining EFT messages inside the ones she can see.
+  const scope = await laneScopeFor(user.email)
   const hide = hidesEftContent(user.email)
-  const threads = threadRows || []
+  const threads = (threadRows || []).filter(
+    (t: { peer_email: string | null; vendor_application_id: string | null }) =>
+      !scope.blocks({ email: t.peer_email, applicationId: t.vendor_application_id }),
+  )
 
   const ids = (threads || []).map((t: { id: string }) => t.id)
   let messagesByThread: Record<string, unknown[]> = {}

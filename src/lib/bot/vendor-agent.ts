@@ -25,7 +25,10 @@ export function vendorAgentEnabled(): boolean {
 
 const client = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null
 
-export function systemPrompt(session: VendorSession): string {
+/** @param eftMode global EFT lane state (getEftMode()). The payment rules below
+ *  differ completely depending on it, and the bot used to recite the card-only
+ *  line while the whole festival was being paid by bank transfer. */
+export function systemPrompt(session: VendorSession, eftMode = false): string {
   const verified = session.status === 'verified'
   const who =
     verified
@@ -56,10 +59,24 @@ export function systemPrompt(session: VendorSession): string {
     '- Do NOT tell a vendor to "email support@youngatheart.co.za" for something you can do here. Email is a last resort, never your first answer.',
     '- Before you escalate, call check_application_status: if a request is already logged with the team, tell them it is in hand and do NOT open a duplicate. Only escalate_to_human for a genuine exception (below).',
     '',
-    // ── PAYMENT: card-only for stall fees, plus the EFT exception (Taona 2026-07-23) ──
-    'STALL FEE PAYMENT: a vendor pays their stall fee by CARD only (Visa or Mastercard) through the Yoco gateway in their exhibitor portal at cthalaal.co.za/exhibitor/login. NEVER tell a vendor "cash at the event" or list ticket payment methods, that answer is for TICKET buyers, a stall fee is card-in-the-portal only. If they have not paid, help them: send the invoice, give the portal link, offer to check their status.',
-    '',
-    'EFT / BANK TRANSFER: default is no, we take card only, and for an ordinary individual who just prefers EFT (or wants to pay a deposit, or cannot pay the full amount right now) you hold the card-only line warmly and help them pay by card in the portal. BUT there is one real exception: if the vendor is a genuine ORGANISATION, an NPO, company, school, mosque or similar, whose finance department or head office pays all suppliers by EFT and genuinely does not use credit cards at all, that is a legitimate reason and it makes sense. In that case do NOT flatly refuse and do NOT recite "card only": acknowledge warmly that you understand ("that makes sense for an organisation like yours"), then escalate_to_human with the detail, their organisation name and that they are EFT-only with no credit-card facility, so the team can arrange EFT for them. You never share banking details yourself; the team arranges EFT for these genuine organisation cases.',
+    // ── PAYMENT — the rules INVERT with the lane (Taona 2026-07-26: "the bot
+    // should be aware of master lane on or off and speak accordingly"). While the
+    // lane is on, Yoco is down and bank transfer is the normal way to pay, so the
+    // card-only script below would be actively wrong and would send vendors to a
+    // gateway that cannot take their money.
+    ...(eftMode
+      ? [
+          'STALL FEE PAYMENT: bank transfer (EFT) is the normal way to pay right now, because our card gateway is temporarily unavailable. Do NOT tell a vendor "card only" and do not send them to a card page. Point them to their exhibitor portal at cthalaal.co.za/exhibitor/login, open Payments, where they will see the exact amount and the bank details to pay into, plus a place to upload their proof of payment. If they ask why it is not card, keep it simple and calm: our card gateway is temporarily unavailable, so we are taking bank transfers, and their stall is safe.',
+          '',
+          'You NEVER type out bank account details yourself, ever, even if the vendor asks directly and even if you believe you know them. The portal shows the vendor their own details after they log in, and that is the only place they come from. If they cannot log in, help them with the login, do not read out an account number.',
+          '',
+          'Once a vendor says they have PAID by transfer, thank them and tell them to upload their proof in the portal (Payments, upload proof of payment), and that the team confirms it and their portal unlocks. Do NOT tell them they are confirmed yourself, and do not treat a proof as payment received.',
+        ]
+      : [
+          'STALL FEE PAYMENT: a vendor pays their stall fee by CARD only (Visa or Mastercard) through the Yoco gateway in their exhibitor portal at cthalaal.co.za/exhibitor/login. NEVER tell a vendor "cash at the event" or list ticket payment methods, that answer is for TICKET buyers, a stall fee is card-in-the-portal only. If they have not paid, help them: send the invoice, give the portal link, offer to check their status.',
+          '',
+          'EFT / BANK TRANSFER: default is no, we take card only, and for an ordinary individual who just prefers EFT (or wants to pay a deposit, or cannot pay the full amount right now) you hold the card-only line warmly and help them pay by card in the portal. BUT there is one real exception: if the vendor is a genuine ORGANISATION, an NPO, company, school, mosque or similar, whose finance department or head office pays all suppliers by EFT and genuinely does not use credit cards at all, that is a legitimate reason and it makes sense. In that case do NOT flatly refuse and do NOT recite "card only": acknowledge warmly that you understand ("that makes sense for an organisation like yours"), then escalate_to_human with the detail, their organisation name and that they are EFT-only with no credit-card facility, so the team can arrange EFT for them. You never share banking details yourself; the team arranges EFT for these genuine organisation cases.',
+        ]),
     '',
     // part-payment / sharing = ~90% of the human queue, firm no (Samreen 2026-07-21)
     `PART PAYMENTS, INSTALMENTS, DEPOSITS, "pay half now": a firm no that you answer yourself, do NOT escalate it (this is different from the organisation-EFT case above). ${FAQ.vendor_part_payment.answer} Our system cannot process a partial amount, it only takes the full stall fee in one payment. Say it warmly, then help them pay the full amount by card by the extended date.`,
@@ -101,7 +118,8 @@ export async function runVendorAgent(
     return { message: 'Let me get the team to help with that.', toolsUsed, deferred }
   }
 
-  const system = systemPrompt(session)
+  const { getEftMode } = await import('@/lib/eft')
+  const system = systemPrompt(session, await getEftMode())
   const messages: Anthropic.MessageParam[] = [
     ...(ctx.history ?? []).slice(-8).map((m) => ({ role: m.role, content: m.content })),
     { role: 'user' as const, content: message },

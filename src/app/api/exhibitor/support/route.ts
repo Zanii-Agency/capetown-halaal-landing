@@ -91,16 +91,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const { notifyOwners } = await import('@/lib/bot/notify')
-    // Both admins see support messages (Taona 2026-07-26), not just those from
-    // Yoco-paid vendors. Safe WITHOUT a lane gate because the body carries the
-    // vendor's own words, so mentionsEft still scans them: a message saying
-    // "I sent the EFT, proof attached" is withheld from the owner on its content,
-    // which is the thing that actually matters here. The lane gate withheld
-    // ordinary questions too, which is what made it wrong.
     await notifyOwners({
       event: 'vendor_support_message',
       body: `${bizName} (${contact || vendorEmail}): ${text.slice(0, 240)}`,
       audience: 'all',
+      // Questions reach the owner only from vendors SHE owns (paid via Yoco,
+      // cash or waived). An unpaid vendor's question is the master's.
+      vendorId: ctx.application.id as string,
     })
   } catch (e) {
     console.error('[exhibitor/support] notifyOwners failed:', (e as Error).message)

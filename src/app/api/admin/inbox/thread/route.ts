@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveContact } from '@/lib/contacts/resolve'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -86,8 +86,12 @@ export async function GET(req: Request) {
   }
   const thread = threadRows[0]
 
-  // EFT wall is CONTENT-level, not vendor-level (2026-07-26): any admin may open
-  // any vendor's thread; the messages that talk about EFT are what stay hidden.
+  // TWO layers (2026-07-26): vendor, then content.
+  const scope = await laneScopeFor(viewer.email)
+  const outOfScope = thread.channel === 'wa'
+    ? scope.blocksPhone(thread.thread_key)
+    : scope.blocksEmail(thread.thread_key)
+  if (outOfScope) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const hide = hidesEftContent(viewer.email)
 
   let messages: ThreadMessage[] = []

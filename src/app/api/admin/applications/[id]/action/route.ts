@@ -221,19 +221,13 @@ export async function POST(
         await notifyOwners({
           event: eventMap[decisionStatus],
           body: `${before.business_name || 'Vendor'} (${before.contact_name || '—'}) ${decisionStatus.replace('_', ' ')}. Notified by email${waNote}. ${before.email || ''}`,
-          // CARVE-OUT: deliberately NO vendorId. Briefly gated on 2026-07-26 and
-          // REVERTED the same day once the rule was stated as events rather than
-          // vendors (Taona: "as long as Samreen gets notified when contracts get
-          // signed, new vendors sign up, yoco paid vendors ask questions then it's
-          // fine"). Approval sits between two named carve-outs — application
-          // received and contract signed — so gating it left a silent hole in the
-          // middle of the pipeline the festival owner runs.
-          //
-          // Safe on the same test as those two: the body carries no payment
-          // information. The lane hides PAYMENT POSTURE, not a vendor's progress
-          // through the funnel. Approvals also happen while the vendor is still
-          // unpaid by definition, so under global EFT mode gating this would mute
-          // essentially ALL of them.
+          // JUDGEMENT CALL, flag it if wrong. Taona 2026-07-26 named exactly two
+          // moments an unpaid vendor is the festival owner's business — signing up
+          // and signing their contract — and approval is not one of them, so it is
+          // gated. She is normally the one CLICKING approve, so this removes a
+          // mirror of her own action rather than information she lacks, and
+          // /admin/applications still shows her every application either way.
+          vendorId: id,
         })
       } catch (e) {
         console.error('[action] notifyOwners failed:', (e as Error).message)

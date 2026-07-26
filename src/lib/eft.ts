@@ -201,6 +201,41 @@ export async function getEftMode(): Promise<boolean> {
   }
 }
 
+/** Settlement methods the festival owner does NOT handle. A vendor who paid this
+ *  way is the master's, exactly like an unpaid one. Deliberately a DENYLIST, not
+ *  an allowlist: 20 of 47 paid vendors carry no `method` at all (settled before
+ *  the field existed, all pre-dating EFT mode), and an allowlist would blank them
+ *  out of her world. Every new payment records its method, so a blank can only be
+ *  historical. */
+const MASTER_ONLY_METHODS = new Set(['eft', 'manual_card'])
+
+/** Is this vendor inside the festival owner's world at all?
+ *
+ *  Taona 2026-07-26: "samreen should never have access to unpaid vendors except
+ *  for when they sign up, sign contract... eft confirmed vendors staff badges
+ *  notifications cant go to her only yoco paid staff badges" — she deals with
+ *  vendors who have PAID through a channel she handles (Yoco, cash, waived), and
+ *  with nobody else.
+ *
+ *  This supersedes vendorCommsInEftLane as the visibility test. That one asked
+ *  "is this vendor on the EFT lane?", which let an EFT-SETTLED vendor back into
+ *  her world the moment paid_at was written. The question is not how they got
+ *  here, it is whether their money came through her channel.
+ *
+ *  The two pipeline events that reach her regardless of this (a vendor signing up
+ *  and signing their contract) are carve-outs at the call sites, not exceptions
+ *  here: they are the only moments an unpaid vendor is her business. */
+export function vendorInOwnerScope(
+  adminNotes: string | null | undefined,
+  paidAt?: string | null,
+): boolean {
+  const p = parsePortalState(adminNotes).payment
+  // 'collected' is the EFT interim state and never sets paid_at, so it correctly
+  // fails this test and stays with the master until a real settlement lands.
+  if (!paidAt && p?.status !== 'paid') return false
+  return !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+}
+
 /** Whose CONVERSATIONS move to the master EFT tab (and off the festival owner's
  *  main inbox). The rule is PAYMENT STATUS, not EFT-engagement (Taona 2026-07-25:
  *  "every unpaid vendor's message goes to the master lane, only paid vendors stay

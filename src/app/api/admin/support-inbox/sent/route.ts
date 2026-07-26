@@ -16,7 +16,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -56,10 +56,11 @@ export async function GET() {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // CONTENT-level (2026-07-26): outbound mail to a lane vendor is ordinary work
-  // and stays visible; only the messages that talk about EFT are withheld.
+  // TWO layers (2026-07-26): drop mail to vendors the owner does not own, then
+  // strip anything EFT-related still left among the ones she does.
+  const scope = await laneScopeFor(user.email)
   const sentRows = stripEftMessages(
-    (rows ?? []) as SentRow[],
+    ((rows ?? []) as SentRow[]).filter((r) => !scope.blocksEmail(r.to_address)),
     (r) => `${r.subject || ''}\n${r.body_text || ''}`,
     hidesEftContent(user.email),
   )

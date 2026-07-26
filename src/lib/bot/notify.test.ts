@@ -49,27 +49,42 @@ test('non-EFT alerts route normally', () => {
 // alerts about an ALREADY-PAID vendor being withheld from her (registry.ts's
 // hardcoded paidAt:null, and confirmPayment's "marked paid via eft" body).
 
-test('isEftScopedAlert: the vendor row decides the lane, never the body', () => {
-  // Marked + unpaid -> master only, even with global mode OFF. THE REPORTED BUG.
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: '⟦EFT⟧' }), false), true)
-  // Unmarked + unpaid: swept in while global is on, self-reverts when it is off.
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: 'just a note' }), true), true)
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: 'just a note' }), false), false)
-  // ⟦NOEFT⟧ is an explicit exclusion: the owner KEEPS these.
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: withNoEftMarker('note') }), true), false)
-  // paid_at set (Yoco reconciliation) -> back to the owner, marker notwithstanding.
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: '⟦EFT⟧', paid_at: PAID_AT }), true), false)
-  const paid = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } })
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: paid }), true), false)
-  // 'collected' is the EFT interim state: no paid_at, so it STAYS on master.
+// Rewritten 2026-07-26. The rule is no longer "is this vendor on the EFT lane?"
+// but "has this vendor paid through a channel the festival owner handles?" —
+// Taona: "samreen should never have access to unpaid vendors except for when they
+// sign up, sign contract". Those two moments pass no vendorId at all, so anything
+// naming a vendor here is gated on ownership. `true` = withheld from her.
+const paidVia = (method: string) =>
+  updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method } as never })
+
+test('alerts about an UNPAID vendor never reach the festival owner', () => {
+  const withheld = (notes: string) => isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: notes }), true)
+  assert.equal(withheld('just a note'), true, 'plain unpaid')
+  assert.equal(withheld('⟦EFT⟧'), true, 'on the EFT lane')
+  // Changed 2026-07-26: ⟦NOEFT⟧ used to hand an UNPAID vendor back to her. Being
+  // excluded from the EFT lane is not the same as having paid.
+  assert.equal(withheld(withNoEftMarker('note')), true, '⟦NOEFT⟧ but still unpaid')
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected', eft_collected_at: PAID_AT } })
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: collected }), true), true)
-  // Internal/operator accounts are never in the lane, by email or by last-9 phone.
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: '⟦EFT⟧', email: 'samreenkumandan1@gmail.com' }), true), false)
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: '⟦EFT⟧', phone: '+27 72 380 3393' }), true), false)
-  // A submitted EFT proof keeps a mid-transaction vendor on master with global off.
-  const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: PAID_AT } })
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: submitted }), false), true)
+  assert.equal(withheld(collected), true, "'collected' is interim, not paid")
+  assert.equal(withheld(updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: PAID_AT } })), true, 'proof uploaded, not yet settled')
+  // Global mode is now irrelevant to this: an unpaid vendor is the master's
+  // whether or not the lane is switched on.
+  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: 'just a note' }), false), true)
+})
+
+test('a PAID vendor reaches her only if the money came through her channel', () => {
+  const withheld = (notes: string, paid: string | null = null) =>
+    isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: notes, paid_at: paid }), true)
+  assert.equal(withheld(paidVia('yoco')), false, 'Yoco is hers')
+  assert.equal(withheld(paidVia('cash')), false, 'cash is hers')
+  assert.equal(withheld(paidVia('waived')), false, 'waived is hers')
+  // Changed 2026-07-26: settling by EFT used to hand the vendor back to her the
+  // moment paid_at was written. "eft confirmed vendors staff badges cant go to her".
+  assert.equal(withheld(paidVia('eft'), PAID_AT), true, 'EFT-settled stays the master\'s')
+  assert.equal(withheld(paidVia('manual_card'), PAID_AT), true, 'manual card stays the master\'s')
+  // Legacy paid rows carry no method at all (20 of 47 live) and must stay hers.
+  assert.equal(withheld(updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } })), false)
+  assert.equal(withheld('just a note', PAID_AT), false)
 })
 
 test('isEftScopedAlert: a resolved row overrides both the body text and eftScoped', () => {

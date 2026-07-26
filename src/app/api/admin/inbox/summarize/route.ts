@@ -26,7 +26,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { wrapUntrusted, UNTRUSTED_CONTENT_RULE } from '@/lib/ai/prompt-safety'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -154,6 +154,11 @@ export async function POST(req: Request) {
   // — a summary is generated FROM the bodies, so filtering after the fact would
   // be too late. The cache key carries the flag: a summary built from the full
   // transcript must never be served to someone who may not see all of it.
+  const scope = await laneScopeFor(session.email)
+  const outOfScope = thread.channel === 'wa'
+    ? scope.blocksPhone(thread.thread_key)
+    : scope.blocksEmail(thread.thread_key)
+  if (outOfScope) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const hide = hidesEftContent(session.email)
   const cacheKey = `${thread.channel}:${thread.id}${hide ? ':redacted' : ''}`
 

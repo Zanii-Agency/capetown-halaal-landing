@@ -40,9 +40,9 @@ export const dynamic = 'force-dynamic'
 // this only extends how long the function may keep running for the after() work.
 export const maxDuration = 60
 
-// (eftScopedForPhone removed 2026-07-26: handover and relay alerts now reach both
-// admins, so nothing withheld them by lane. mentionsEft still withholds any alert
-// whose BODY talks about EFT, which is the content that actually matters.)
+// Handover and relay alerts pass `vendorPhone` to notifyOwners, which resolves the
+// vendor by last-9 and withholds from the festival owner unless she owns them
+// (paid via Yoco/cash/waived). An unresolvable number reaches both, as before.
 
 // ---------------------------------------------------------------------------
 // N2: per-sender LLM rate limit.
@@ -350,8 +350,8 @@ async function handleInbound(msg: {
               body: `${admin.name} → ${ackName}\nPhone: ${target.vendorE164}\n"${msg.text.slice(0, 240)}"\n\nSwipe-reply to continue.`,
               audience: 'all',
               exclude: e164,
-              // Both admins see the relay (Taona 2026-07-26). The body quotes the
-              // vendor verbatim, so mentionsEft still withholds one about EFT.
+              // Owner sees the relay only for a vendor she owns (paid via Yoco/cash/waived).
+              vendorPhone: target.vendorE164,
             })
           } catch (e) { console.error('[swipe] cross-mirror failed:', (e as Error).message) }
         }
@@ -448,7 +448,7 @@ async function handleInbound(msg: {
     const res = await sendText(e164, ack)
     await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
     try {
-      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all' })
+      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all', vendorPhone: e164 })
     } catch (e) { console.error('[bot] notifyOwners on pending handover failed:', (e as Error).message) }
     return
   }
@@ -475,6 +475,7 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text),
         audience: 'all',
+        vendorPhone: e164,
       })
     } catch (e) { console.error('[bot] notifyOwners on handover failed:', (e as Error).message) }
     return
@@ -488,6 +489,7 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text, true),
         audience: 'all',
+        vendorPhone: e164,
       })
     } catch (e) { console.error('[bot] notifyOwners during handover failed:', (e as Error).message) }
     // Don't auto-reply. Samreen replies through /admin/bot-inbox.

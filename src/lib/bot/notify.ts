@@ -9,7 +9,7 @@ import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
-import { getEftMode, EFT_ADMIN_EMAIL, mentionsEft, vendorCommsInEftLane } from '@/lib/eft'
+import { getEftMode, EFT_ADMIN_EMAIL, mentionsEft, vendorInOwnerScope } from '@/lib/eft'
 
 // EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
 // alerts; production regressed to 86% of owner WhatsApp sends dropped with
@@ -62,6 +62,10 @@ interface NotifyArgs {
    *  null admin_notes + null paid_at would otherwise read as in-lane under global
    *  mode). Omitting is FAIL-OPEN: the owner still sees the alert. */
   vendorId?: string
+  /** Same purpose as vendorId for callers that only know a phone number (the
+   *  WhatsApp webhook). Resolved by last-9 subscriber key, the canonical join
+   *  since 09ced95, so +27…/0…/local formats all match. */
+  vendorPhone?: string
   /** Legacy escape hatch for callers that can only identify the vendor by PHONE
    *  (the WhatsApp webhook, via eftScopedForPhone). Prefer vendorId: a resolved
    *  vendor row overrides this flag in both directions, so a stale `true` can
@@ -93,27 +97,40 @@ const asStr = (v: unknown): string | null => (typeof v === 'string' && v ? v : n
 export function isEftScopedAlert(
   args: { body: string; eftScoped?: boolean },
   vendor: VendorLaneRow | null,
-  globalOn: boolean,
+  _globalOn: boolean,
 ): boolean {
   if (vendor) {
-    return vendorCommsInEftLane(asStr(vendor.admin_notes), asStr(vendor.paid_at), globalOn, {
-      email: asStr(vendor.email),
-      phone: asStr(vendor.phone),
-    })
+    // Withhold unless this vendor is in HER world at all. Taona 2026-07-26:
+    // "samreen should never have access to unpaid vendors except for when they
+    // sign up, sign contract". Those two moments are carve-outs at their call
+    // sites (they pass no vendorId), so anything that reaches here and names a
+    // vendor is gated on whether that vendor has paid through her channel.
+    //
+    // Note this is the INVERSE of the old test: we now ask "is this hers?" and
+    // withhold otherwise, rather than asking "is this vendor on the EFT lane?".
+    // The old shape handed an EFT-SETTLED vendor back to her the moment paid_at
+    // was written, which is exactly what she must not get.
+    return !vendorInOwnerScope(asStr(vendor.admin_notes), asStr(vendor.paid_at))
   }
   return mentionsEft(args.body) || args.eftScoped === true
 }
 
 // Best-effort: a miss or a throw returns null, which degrades to the heuristics
 // above rather than guessing a lane from an absent row.
-async function lookupVendorLane(id: string): Promise<VendorLaneRow | null> {
+async function lookupVendorLane(id?: string, phone?: string): Promise<VendorLaneRow | null> {
   try {
-    const { data } = await createAdminClient()
-      .from('vendor_applications')
-      .select('admin_notes, paid_at, email, phone')
-      .eq('id', id)
-      .limit(1)
-    return (data?.[0] as VendorLaneRow | undefined) ?? null
+    const q = createAdminClient().from('vendor_applications').select('admin_notes, paid_at, email, phone')
+    if (id) {
+      const { data } = await q.eq('id', id).limit(1)
+      return (data?.[0] as VendorLaneRow | undefined) ?? null
+    }
+    const last9 = (phone || '').replace(/\D/g, '').slice(-9)
+    if (!last9) return null
+    // No .limit(1): on a last-9 collision, take the row that is NOT hers so a
+    // master-lane vendor can never hide behind another matching number.
+    const { data } = await q.or(`phone.like.*${last9},admin_notes.like.*WAV${last9}*`)
+    const rows = (data || []) as VendorLaneRow[]
+    return rows.find((r) => !vendorInOwnerScope(asStr(r.admin_notes), asStr(r.paid_at))) ?? rows[0] ?? null
   } catch {
     return null
   }
@@ -215,7 +232,9 @@ export async function notifyOwners(args: NotifyArgs): Promise<void> {
   // the caller flags it (eftScoped) — e.g. a support message from an unpaid /
   // collected master-lane vendor, whose body carries no "EFT" text.
   const eftOn = await getEftMode()
-  const vendor = args.vendorId ? await lookupVendorLane(args.vendorId) : null
+  const vendor = args.vendorId || args.vendorPhone
+    ? await lookupVendorLane(args.vendorId, args.vendorPhone)
+    : null
   const eftContent = isEftScopedAlert(args, vendor, eftOn)
   const audience = args.audience || 'all'
   const excludeNorm = args.exclude ? toE164(args.exclude) : null

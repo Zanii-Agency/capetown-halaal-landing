@@ -15,7 +15,7 @@
 // than by remembering to re-derive it. Same shape as the notifyOwners gate: the
 // predicate lives in ONE place (vendorCommsInEftLane) and callers pass identity.
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode, isEftAdmin, vendorCommsInEftLane, mentionsEft } from '@/lib/eft'
+import { getEftMode, isEftAdmin, vendorInOwnerScope, mentionsEft } from '@/lib/eft'
 
 // ── CONTENT-level wall (the read-side twin of notifyOwners' mentionsEft) ──────
 //
@@ -88,7 +88,12 @@ export function buildLaneScope(
   const emails = new Set<string>()
   const ids = new Set<string>()
   for (const r of rows) {
-    if (!vendorCommsInEftLane(r.admin_notes, r.paid_at, globalOn, { email: r.email, phone: r.phone })) continue
+    // 2026-07-26: blocks every vendor the festival owner does NOT own, which is
+    // every unpaid one plus anyone settled by EFT or manual card — not merely the
+    // "EFT lane" cohort. Taona: "samreen should never have access to unpaid
+    // vendors except for when they sign up, sign contract". Those two moments are
+    // ALERTS, not reads, so nothing here needs to carve them out.
+    if (vendorInOwnerScope(r.admin_notes, r.paid_at)) continue
     ids.add(r.id)
     if (r.email) emails.add(r.email.toLowerCase())
     const k = phoneKey(r.phone)

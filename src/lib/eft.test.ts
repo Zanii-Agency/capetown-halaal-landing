@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL } from './eft'
+import { vendorInOwnerScope, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -163,4 +163,30 @@ test('visiblePaymentStatus: never hides real revenue or alters any other state',
     assert.equal(visiblePaymentStatus(undefined, email), 'none')
     assert.equal(visiblePaymentStatus(null, email), 'none')
   }
+})
+
+test('vendorInOwnerScope: the festival owner only ever sees vendors who paid through HER channels', () => {
+  const paidVia = (method: string) => updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method } as never })
+  // Yoco, cash and waived are hers.
+  assert.equal(vendorInOwnerScope(paidVia('yoco'), null), true)
+  assert.equal(vendorInOwnerScope(paidVia('cash'), null), true)
+  assert.equal(vendorInOwnerScope(paidVia('waived'), null), true)
+  // EFT and manual card are the master's, even once SETTLED. This is the case
+  // vendorCommsInEftLane got wrong: paid_at alone used to hand them back to her.
+  assert.equal(vendorInOwnerScope(paidVia('eft'), '2026-07-19T00:00:00Z'), false)
+  assert.equal(vendorInOwnerScope(paidVia('manual_card'), '2026-07-19T00:00:00Z'), false)
+  // Legacy paid vendors carry no method (20 of 47 live rows) — they must NOT be
+  // blanked out of her world, which is why the rule is a denylist.
+  assert.equal(vendorInOwnerScope(updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } }), null), true)
+  assert.equal(vendorInOwnerScope('just a note', '2026-07-19T00:00:00Z'), true)
+})
+
+test('vendorInOwnerScope: every unpaid state is outside her world', () => {
+  assert.equal(vendorInOwnerScope('just a note', null), false, 'plain unpaid')
+  assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, 'on the EFT lane')
+  assert.equal(vendorInOwnerScope(withNoEftMarker('note'), null), false, '⟦NOEFT⟧ but still unpaid')
+  // 'collected' is the EFT interim state and never sets paid_at: still not hers.
+  const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })
+  assert.equal(vendorInOwnerScope(collected, null), false)
+  assert.equal(vendorInOwnerScope(null, null), false)
 })

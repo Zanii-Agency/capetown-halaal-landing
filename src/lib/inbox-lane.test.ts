@@ -33,26 +33,44 @@ test('an EFT-lane vendor is blocked by phone, email AND application id', () => {
   assert.equal(s.blocks({ email: 'someone@else.com', phone: '+27760712578' }), true)
 })
 
-test('the owner KEEPS every vendor who is not on the lane', () => {
-  const rows = [
-    v({ id: 'paid', admin_notes: '⟦EFT⟧', paid_at: '2026-07-19T00:00:00Z', email: 'paid@x.co', phone: '0111111111' }),
-    v({ id: 'noeft', admin_notes: withNoEftMarker('note'), email: 'noeft@x.co', phone: '0222222222' }),
-    v({ id: 'internal', admin_notes: '⟦EFT⟧', email: 'samreenkumandan1@gmail.com', phone: '0723803393' }),
+// Rewritten 2026-07-26: the scope now blocks every vendor the festival owner does
+// NOT own, which is every unpaid one plus anyone settled by EFT or manual card.
+const paidVia = (method: string) =>
+  updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method } as never })
+
+test('the owner can only reach vendors who paid through HER channel', () => {
+  const visible = [
+    v({ id: 'yoco', admin_notes: paidVia('yoco'), email: 'yoco@x.co', phone: '0111111111' }),
+    v({ id: 'cash', admin_notes: paidVia('cash'), email: 'cash@x.co', phone: '0222222222' }),
+    // Legacy paid row: no method recorded (20 of 47 live rows), must stay reachable.
+    v({ id: 'legacy', paid_at: '2026-07-19T00:00:00Z', email: 'legacy@x.co', phone: '0333333333' }),
   ]
-  const s = buildLaneScope(rows, true, false) // global mode ON — still not blocked
-  for (const r of rows) {
-    assert.equal(s.blocksApplicationId(r.id), false, `${r.id} must stay visible`)
-    assert.equal(s.blocksEmail(r.email), false, `${r.id} email must stay visible`)
-    assert.equal(s.blocksPhone(r.phone), false, `${r.id} phone must stay visible`)
+  const s = buildLaneScope(visible, true, false)
+  for (const r of visible) {
+    assert.equal(s.blocksApplicationId(r.id), false, `${r.id} must be reachable`)
+    assert.equal(s.blocksEmail(r.email), false, `${r.id} email must be reachable`)
+    assert.equal(s.blocksPhone(r.phone), false, `${r.id} phone must be reachable`)
   }
 })
 
-test("'collected' stays hidden, and global mode sweeps unmarked unpaid vendors", () => {
-  const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })
-  assert.equal(buildLaneScope([v({ admin_notes: collected })], true, false).blocksApplicationId('id-1'), true)
-  // Unmarked + unpaid: swept while global is on, released when it goes off.
-  assert.equal(buildLaneScope([v()], true, false).blocksApplicationId('id-1'), true)
-  assert.equal(buildLaneScope([v()], false, false).blocksApplicationId('id-1'), false)
+test('everyone else is blocked — unpaid, EFT-settled, and ⟦NOEFT⟧-but-unpaid alike', () => {
+  const blocked = [
+    v({ id: 'unpaid', email: 'unpaid@x.co', phone: '0111111111' }),
+    v({ id: 'eft-lane', admin_notes: '⟦EFT⟧', email: 'lane@x.co', phone: '0222222222' }),
+    // Settled by EFT: used to become hers the moment paid_at was written.
+    v({ id: 'eft-paid', admin_notes: paidVia('eft'), paid_at: '2026-07-19T00:00:00Z', email: 'eftpaid@x.co', phone: '0333333333' }),
+    // Excluded from the EFT lane is NOT the same as having paid.
+    v({ id: 'noeft', admin_notes: withNoEftMarker('note'), email: 'noeft@x.co', phone: '0444444444' }),
+    v({ id: 'collected', admin_notes: updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }), email: 'coll@x.co', phone: '0555555555' }),
+  ]
+  const s = buildLaneScope(blocked, true, false)
+  for (const r of blocked) {
+    assert.equal(s.blocksApplicationId(r.id), true, `${r.id} must be blocked`)
+    assert.equal(s.blocksEmail(r.email), true, `${r.id} email must be blocked`)
+    assert.equal(s.blocksPhone(r.phone), true, `${r.id} phone must be blocked`)
+  }
+  // Global mode no longer changes this: unpaid is unpaid either way.
+  assert.equal(buildLaneScope([v()], false, false).blocksApplicationId('id-1'), true)
 })
 
 test('a WhatsApp-verified alternate number is blocked too', () => {

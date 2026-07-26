@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker, EMAIL_ATTACHMENTS_BUCKET } from '@/lib/email/attachments'
-import { hidesEftContent } from '@/lib/inbox-lane'
+import { hidesEftContent, laneScopeFor } from '@/lib/inbox-lane'
 import { mentionsEft } from '@/lib/eft'
 
 export const runtime = 'nodejs'
@@ -52,7 +52,12 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     // (subject or body), the file is EFT content and is withheld. That is the same
     // test the message itself gets, applied one level up — a proof of payment
     // arrives attached to a mail that says so.
-    if (hidesEftContent(user.email) && mentionsEft(`${row?.subject || ''}\n${row?.body_text || ''}`)) {
+    const scope = await laneScopeFor(user.email)
+    if (
+      scope.blocksEmail(row?.from_address) ||
+      scope.blocksEmail(row?.to_address) ||
+      (hidesEftContent(user.email) && mentionsEft(`${row?.subject || ''}\n${row?.body_text || ''}`))
+    ) {
       return NextResponse.json({ error: 'forbidden' }, { status: 403 })
     }
     const { attachments } = parseAttachmentMarker(row?.body_text)
@@ -84,11 +89,13 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   // CONTENT-level, same as the mail branch: the caption/body that came with the
   // media decides. Also withhold anything stored under an eft-proof path — a
   // vendor's uploaded proof carries no caption to test.
+  const waScope = await laneScopeFor(user.email)
   if (
-    hidesEftContent(user.email) &&
-    (mentionsEft(row?.body as string | null) ||
-      mentionsEft(media?.caption) ||
-      /eft-proof/i.test(media?.storage_path || ''))
+    waScope.blocksPhone(row?.wa_phone as string | null) ||
+    (hidesEftContent(user.email) &&
+      (mentionsEft(row?.body as string | null) ||
+        mentionsEft(media?.caption) ||
+        /eft-proof/i.test(media?.storage_path || '')))
   ) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }

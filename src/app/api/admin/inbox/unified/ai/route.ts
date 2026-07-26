@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 import { stripEmDashes } from '@/lib/festival-brain/system-prompt'
 import { getEftMode } from '@/lib/eft'
 import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
@@ -152,6 +152,10 @@ export async function POST(req: NextRequest) {
   // but the EFT turns are stripped BEFORE the transcript reaches the model —
   // loadThread feeds an LLM prompt directly, so filtering the output would be
   // too late.
+  const scope = await laneScopeFor(gate.adminUser.email)
+  if (scope.blocks({ phone: body.phone, email: body.email })) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
   const hide = hidesEftContent(gate.adminUser.email)
   const turns = stripEftMessages(await loadThread(db, body.phone, body.email), (t) => t.text, hide)
   const eftOn = await getEftMode()
