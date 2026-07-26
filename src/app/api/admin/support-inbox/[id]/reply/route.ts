@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -42,6 +43,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (tErr || !thread) return NextResponse.json({ error: tErr?.message || 'thread not found' }, { status: 404 })
 
   const peer = (thread as { peer_email: string }).peer_email
+
+  // EFT lane: a non-EFT admin must not reply INTO a master-lane vendor's thread.
+  const scope = await laneScopeFor(gate.adminUser.email)
+  if (scope.blocksEmail(peer)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+
   const currentSubject = (thread as { subject: string | null }).subject || 'Young at Heart Festival'
   const replySubject = subjectOverride
     ? subjectOverride

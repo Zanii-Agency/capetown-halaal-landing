@@ -44,6 +44,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { findWaTemplate, buildWaTemplateParams } from '@/lib/templates/wa-meta'
 import { findMailTemplate, renderMailTemplate, validateMailTemplate } from '@/lib/mail/templates'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -104,6 +105,18 @@ export async function POST(req: Request) {
       status: string
     }> | null
     error: { message: string } | null
+  }
+
+  // EFT lane: a write, not a read, but the lane is per-vendor A-Z — a non-EFT
+  // admin must not send INTO a master-lane conversation either. The EFT admin is
+  // unrestricted, so dev@ still handles the lane normally.
+  {
+    const t = threadRows?.[0]
+    if (t) {
+      const scope = await laneScopeFor(gate.adminUser.email)
+      const blocked = t.channel === 'wa' ? scope.blocksPhone(t.thread_key) : scope.blocksEmail(t.thread_key)
+      if (blocked) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
   }
 
   if (threadErr || !threadRows || threadRows.length === 0) {

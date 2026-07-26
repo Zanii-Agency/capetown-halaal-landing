@@ -221,12 +221,16 @@ export async function POST(
         await notifyOwners({
           event: eventMap[decisionStatus],
           body: `${before.business_name || 'Vendor'} (${before.contact_name || '—'}) ${decisionStatus.replace('_', ' ')}. Notified by email${waNote}. ${before.email || ''}`,
-          // CARVE-OUT: no vendorId, DELIBERATELY UNMIGRATED. `before` holds the
-          // full row, so adding one is trivial — and would make every approval,
-          // rejection and info-request master-only under global EFT mode (every
-          // unpaid vendor is on the lane), including the confirmation of the
-          // owner's own workbench action. That is a far larger reduction of her
-          // scope than the 2026-07-25 rule asked for. Separate decision.
+          // RESOLVED 2026-07-26 (Taona: "finalize in favour of my objective").
+          // The rule is per-VENDOR and covers their whole A-Z, so an EFT-lane
+          // vendor's approval/rejection alert is master-only like everything else
+          // about them. Under global EFT mode that is most unpaid vendors, so the
+          // festival owner's alert volume drops sharply while the lane is on —
+          // intended, and it self-reverts the moment EFT mode is switched off.
+          // She loses only the WhatsApp/email MIRROR: /admin/applications still
+          // shows her every application, and her own workbench action still
+          // renders its result in the UI she just clicked.
+          vendorId: id,
         })
       } catch (e) {
         console.error('[action] notifyOwners failed:', (e as Error).message)

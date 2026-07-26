@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
-import { vendorCommsInEftLane, isEftAdmin, getEftMode } from '@/lib/eft'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -58,29 +58,14 @@ export async function GET(req: NextRequest) {
   // benign email + an EFT vendor's phone) and we block if EITHER is in the lane.
   // No .limit(1): a last-9 phone collision must not hide the lane vendor behind
   // another matching row. Seals the direct-API path completely.
-  if (!isEftAdmin(user.email)) {
-    // Only a vendor actively on the Master lane (added, uploaded a proof, or
-    // revealed the bank details under global mode) is blocked from a non-EFT
-    // admin. Ordinary unpaid vendors who never engaged read normally.
-    const globalOn = await getEftMode()
-    type LaneRow = { admin_notes: string | null; paid_at: string | null }
-    const anyInLane = (rows: LaneRow[] | null, identity: { email?: string | null; phone?: string | null }) =>
-      (rows || []).some((r) => vendorCommsInEftLane(r.admin_notes, r.paid_at, globalOn, identity))
-    let blocked = false
-    if (email) {
-      const { data } = await db.from('vendor_applications').select('admin_notes, paid_at').eq('email', email)
-      blocked = anyInLane(data as LaneRow[] | null, { email })
-    }
-    if (!blocked && phone) {
-      const last9 = phone.replace(/\D/g, '').slice(-9)
-      if (last9) {
-        const { data } = await db.from('vendor_applications')
-          .select('admin_notes, paid_at')
-          .or(`phone.like.*${last9},admin_notes.like.*WAV${last9}*`)
-        blocked = anyInLane(data as LaneRow[] | null, { phone })
-      }
-    }
-    if (blocked) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  // Folded into the shared scope 2026-07-26. This was the last hand-rolled copy of
+  // the lane predicate; every other reader now goes through laneScopeFor, so there
+  // is one place the rule can be wrong instead of two that can silently diverge.
+  // Same semantics: identifiers checked independently, ⟦WAV…⟧ alternates included,
+  // EFT admin unrestricted.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocks({ email, phone })) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 
   const comms: CommItem[] = []

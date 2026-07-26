@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
 import { renderTemplate, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
@@ -154,6 +155,21 @@ export async function POST(req: NextRequest) {
   // template names a leaked session might try to misuse.
   if (body.wa_template && !ALLOWED_WA_TEMPLATES.has(body.wa_template)) {
     return NextResponse.json({ error: 'unknown wa_template' }, { status: 400 })
+  }
+
+  // EFT lane: a chase is a PAYMENT message, so sending one to a master-lane vendor
+  // actively contradicts the EFT arrangement being run for them. Reject the whole
+  // batch rather than silently dropping recipients — a partial send that reports
+  // success is how an operator concludes a vendor was chased when they were not.
+  {
+    const scope = await laneScopeFor(gate.adminUser.email)
+    const blocked = recipients.filter((r) => scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }))
+    if (blocked.length > 0) {
+      return NextResponse.json(
+        { error: 'eft_lane_recipients', blocked: blocked.length, hint: 'These vendors are on the EFT master lane. The EFT admin handles their payment comms.' },
+        { status: 403 },
+      )
+    }
   }
 
   const useTemplate = !!body.template_key

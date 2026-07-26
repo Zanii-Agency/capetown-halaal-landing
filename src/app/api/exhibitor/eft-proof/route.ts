@@ -3,6 +3,8 @@ import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
 import { getEftMode, vendorInEftLane } from '@/lib/eft'
+import { sendMedia, toE164 } from '@/lib/whatsapp'
+import { BOT_ADMINS } from '@/lib/bot/admins'
 
 const BUCKET = 'vendor-docs'
 const MAX_BYTES = 10 * 1024 * 1024 // 10MB
@@ -87,6 +89,31 @@ export async function POST(req: NextRequest) {
     audience: 'master',
     body: `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'}. Ref ${ref}${note ? `, note: "${note.slice(0, 120)}"` : ''}. Reconcile it on /admin/eft.`,
   }).catch(() => {})
+
+  // Send the PROOF ITSELF to the master's WhatsApp, not just an alert about it
+  // (Taona 2026-07-26: "I should receive the copy via WhatsApp as well"). The
+  // point of this lane is reconciling payments from a phone, so making him open
+  // an admin page to look at the slip defeats it. MASTER ONLY — a proof of
+  // payment is EFT content and never goes to the festival owner.
+  //
+  // Best-effort and non-blocking: sendMedia is gated by Meta's 24h window, so
+  // outside it this returns `skipped` and he still has the text alert above.
+  try {
+    const master = BOT_ADMINS.find((a) => a.role === 'master')
+    if (master) {
+      const isImage = ['png', 'jpg', 'jpeg', 'webp'].includes(ext)
+      const r = await sendMedia(toE164(master.phone), {
+        bytes: buffer,
+        mimeType: file.type || (isImage ? `image/${ext}` : 'application/pdf'),
+        filename: `eft-proof-${ref}.${ext}`,
+        kind: isImage ? 'image' : 'document',
+        caption: `EFT proof from ${name}. Ref ${ref}${note ? ` — "${note.slice(0, 120)}"` : ''}`,
+      })
+      if (r.skipped) console.warn(`[eft-proof] master copy skipped: ${r.skipped}`)
+    }
+  } catch (e) {
+    console.error('[eft-proof] master WhatsApp copy failed:', (e as Error).message)
+  }
 
   return NextResponse.json({ success: true })
 }
