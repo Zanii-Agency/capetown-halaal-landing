@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import type { CommItem, MediaInfo } from '@/lib/inbox/types'
+import { fmtTime, fmtDay, fmtSAST, initials } from '@/lib/inbox/format'
 import { useSearchParams } from 'next/navigation'
 import { AdminPage } from '@/components/admin/AdminPage'
 import {
@@ -38,26 +40,8 @@ interface Contact {
   needs_response: boolean
 }
 
-interface MediaInfo {
-  kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'
-  url: string | null
-  mimeType?: string
-  filename?: string
-}
-interface CommItem {
-  id: string
-  channel: 'whatsapp' | 'email'
-  direction: 'in' | 'out'
-  bot?: boolean
-  body: string
-  at: string
-  from: string
-  subject?: string
-  // An array: WhatsApp is always 0 or 1, a real email can carry several
-  // attachments at once.
-  media?: MediaInfo[]
-  pending?: boolean   // optimistic outbound, not yet confirmed by the server
-}
+// MediaInfo + CommItem now live in @/lib/inbox/types (imported above), shared
+// with the route that produces them and with NeedsYouClient.
 
 interface Operator { id: string; email: string }
 
@@ -74,55 +58,9 @@ const AI_CARDS: Array<{ action: AiAction; label: string; short: string; icon: ty
   { action: 'status_update', label: 'Automated Status Updates', short: 'Status', icon: ListChecks },
 ]
 
-const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-// SAST = Africa/Johannesburg (UTC+2, no DST). The operator wants the real
-// time-of-occurrence in SA local time, not relative "10h ago" strings. We pin
-// the timeZone on every formatter so it reads the same regardless of where the
-// server or the operator's browser sits.
-const SA_TZ = 'Africa/Johannesburg'
-const saParts = (iso: string) => {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return null
-  // en-GB + the SA tz gives 24h HH:mm and a day/month/year we can read back.
-  const p = new Intl.DateTimeFormat('en-GB', {
-    timeZone: SA_TZ, year: 'numeric', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(d)
-  const get = (t: string) => p.find((x) => x.type === t)?.value || ''
-  return { day: get('day'), month: get('month'), year: get('year'), hour: get('hour'), minute: get('minute') }
-}
-// Bubble timestamp: always the real SAST clock time, e.g. "14:32".
-function fmtTime(iso: string): string {
-  const p = saParts(iso)
-  return p ? `${p.hour}:${p.minute}` : ''
-}
-// Date separators, in SAST. Today / Yesterday relative to SA local day.
-function fmtDay(iso: string): string {
-  const p = saParts(iso)
-  if (!p) return ''
-  const todayP = saParts(new Date().toISOString())
-  const yP = saParts(new Date(Date.now() - 86_400_000).toISOString())
-  const same = (a: typeof p, b: typeof p | null) => !!b && a.day === b.day && a.month === b.month && a.year === b.year
-  if (same(p, todayP)) return 'Today'
-  if (same(p, yP)) return 'Yesterday'
-  return `${p.day} ${p.month} ${p.year}`
-}
-// Conversation-list time + notes: the real SAST time of occurrence, compact.
-// "14:32" when it happened today (SA), else "21 Jun 14:32".
-function fmtSAST(iso: string | null): string {
-  if (!iso) return ''
-  const p = saParts(iso)
-  if (!p) return ''
-  const todayP = saParts(new Date().toISOString())
-  const isToday = !!todayP && p.day === todayP.day && p.month === todayP.month && p.year === todayP.year
-  return isToday ? `${p.hour}:${p.minute}` : `${p.day} ${p.month} ${p.hour}:${p.minute}`
-}
-function initials(name: string): string {
-  const p = name.trim().split(/\s+/).filter(Boolean)
-  if (!p.length) return '?'
-  if (p.length === 1) return p[0].slice(0, 2).toUpperCase()
-  return (p[0][0] + p[p.length - 1][0]).toUpperCase()
-}
+// saParts / fmtTime / fmtDay / fmtSAST / initials now live in
+// @/lib/inbox/format (imported above), shared with NeedsYouClient — which had
+// reimplemented fmtTime and initials slightly differently. `MONTH` was dead.
 function statusChip(s: string): { label: string; cls: string } {
   if (s === 'resolved') return { label: 'Resolved', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
   if (s === 'snoozed') return { label: 'Snoozed', cls: 'bg-amber-50 text-amber-700 border-amber-200' }

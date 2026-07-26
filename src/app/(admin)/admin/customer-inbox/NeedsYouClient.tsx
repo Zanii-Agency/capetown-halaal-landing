@@ -9,6 +9,8 @@
 // its own layout. Reply and Done both advance to the next waiting conversation.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CommItem } from '@/lib/inbox/types'
+import { fmtTime, initials } from '@/lib/inbox/format'
 import { createClient } from '@/lib/supabase/client'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { Loader2, Send, Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, MessageCircle, Mail, Bell } from 'lucide-react'
@@ -45,23 +47,14 @@ function ChannelBadge({ c }: { c: Contact }) {
     </span>
   )
 }
-interface CommItem {
-  id: string
-  channel: 'whatsapp' | 'email'
-  direction: 'in' | 'out'
-  bot?: boolean
-  body: string
-  at: string
-  from: string
-  media?: Array<{ kind: string; url: string | null; filename?: string }>
-  pending?: boolean
-}
+// CommItem, initials and fmtTime now come from @/lib/inbox/* (imported above).
+// This file had its own copies of all three, and they had drifted: its CommItem
+// typed `media` loosely as `{kind: string}`, its `initials` returned one letter
+// for a single-word name where the other returned two, and its `fmtTime` used
+// toLocaleTimeString where the other used Intl.formatToParts. Same data, two
+// renderings — which is part of what reads to an operator as "out of sync".
 
 const nameOf = (c: Contact) => c.business_name || c.contact_name || c.phone || c.email || 'Unknown'
-const initials = (n: string) => {
-  const p = n.trim().split(/\s+/).filter(Boolean)
-  return p.length ? (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase() : '?'
-}
 // "2h", "5m", "just now" — how long the last message has been waiting.
 function waitLabel(iso: string | null): string {
   if (!iso) return ''
@@ -71,9 +64,6 @@ function waitLabel(iso: string | null): string {
   const h = Math.floor(mins / 60)
   if (h < 24) return `${h}h`
   return `${Math.floor(h / 24)}d`
-}
-function fmtTime(iso: string): string {
-  try { return new Date(iso).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Johannesburg' }) } catch { return '' }
 }
 
 export function NeedsYouClient() {

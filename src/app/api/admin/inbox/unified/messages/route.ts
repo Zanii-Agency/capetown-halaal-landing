@@ -11,27 +11,10 @@ import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lan
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-interface MediaInfo {
-  kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'
-  // Same-origin proxy URL the client renders (img/link). Null when the row has
-  // no resolvable media id (legacy media logged before capture existed).
-  url: string | null
-  mimeType?: string
-  filename?: string
-}
-interface CommItem {
-  id: string
-  channel: 'whatsapp' | 'email'
-  direction: 'in' | 'out'
-  body: string
-  at: string
-  from: string
-  subject?: string
-  bot?: boolean
-  // An array, not a single item: WhatsApp always sends 0 or 1 media per
-  // message, but a real email can carry several attachments at once.
-  media?: MediaInfo[]
-}
+// CommItem + MediaInfo are the shared wire type in @/lib/inbox/types — this
+// route is their producer and both inbox clients are the consumers, so the
+// shape is defined once rather than three times.
+import type { CommItem, MediaInfo } from '@/lib/inbox/types'
 
 function kindForMime(mimeType: string): MediaInfo['kind'] {
   if (mimeType.startsWith('image/')) return 'image'
