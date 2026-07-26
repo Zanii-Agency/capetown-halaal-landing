@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { CommItem, MediaInfo } from '@/lib/inbox/types'
-import { fmtTime, fmtDay, fmtSAST, initials } from '@/lib/inbox/format'
+import type { CommItem } from '@/lib/inbox/types'
+import { fmtSAST, initials } from '@/lib/inbox/format'
+import { ChannelPanes } from '@/components/admin/inbox/ChannelPanes'
 import { useSearchParams } from 'next/navigation'
 import { AdminPage } from '@/components/admin/AdminPage'
 import {
   Loader2, Mail, MessageCircle, Search, Send, ChevronDown, Star, MailOpen,
   MoreHorizontal, Check, Clock, RotateCcw, Sparkles, Wand2, MessageSquarePlus,
   FileText, Paperclip, ListChecks, X, ExternalLink, Bot, UserCheck, Tag as TagIcon, StickyNote,
-  IdCard, CreditCard, MapPin, FileCheck, ImageIcon, Film, Mic,
+  IdCard, CreditCard, MapPin, FileCheck,
   Bell, Maximize2, Minimize2, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
@@ -77,38 +78,7 @@ function tagCls(t: string): string {
   }
 }
 
-// Render an incoming/outgoing media attachment. Images render inline via the
-// same-origin admin media proxy; other kinds get a compact tappable chip. When
-// the row predates media-id capture (url === null) we still show an honest chip
-// instead of the old literal "[media message]" text. `onDark` flips the chip
-// skin so it stays legible on the magenta operator bubble.
-function MediaBubble({ media, onDark }: { media: MediaInfo; onDark?: boolean }) {
-  const { kind, url, filename } = media
-  if (kind === 'image' && url) {
-    return (
-      <a href={url} target="_blank" rel="noreferrer" className="block">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={filename || 'Image'} loading="lazy"
-          className="rounded-lg max-h-72 max-w-full w-auto object-contain border border-neutral-200 bg-white" />
-      </a>
-    )
-  }
-  const Icon = kind === 'image' ? ImageIcon : kind === 'video' ? Film : kind === 'audio' ? Mic : FileText
-  const label = filename || (kind === 'image' ? 'Image' : kind === 'video' ? 'Video' : kind === 'audio' ? 'Voice note' : 'Document')
-  const chipCls = onDark
-    ? 'bg-white/15 border-white/25 text-white hover:bg-white/25'
-    : 'bg-neutral-50 border-neutral-200 text-neutral-700 hover:bg-neutral-100'
-  const inner = (
-    <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[13px] font-medium transition ${chipCls}`}>
-      <Icon className="w-4 h-4 shrink-0" />
-      <span className="truncate max-w-[220px]">{label}</span>
-      {url && <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-60" />}
-    </span>
-  )
-  return url
-    ? <a href={url} target="_blank" rel="noreferrer">{inner}</a>
-    : <span title="Original media is no longer retrievable" className="opacity-90">{inner}</span>
-}
+// MediaBubble moved to components/admin/inbox/MediaBubble so both panes share it.
 
 interface CannedReply { slug: string; label: string; subject: string | null; body: string }
 interface Note { at: string; by: string; text: string }
@@ -632,16 +602,7 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { cur
   }, [active, noteText])
 
   // Group messages by day for date separators.
-  const grouped = useMemo(() => {
-    const out: Array<{ day: string; items: CommItem[] }> = []
-    for (const m of messages) {
-      const day = fmtDay(m.at)
-      const last = out[out.length - 1]
-      if (last && last.day === day) last.items.push(m)
-      else out.push({ day, items: [m] })
-    }
-    return out
-  }, [messages])
+  // (day grouping moved into WhatsAppStream — email does not use it)
 
   const assigneeEmail = (id: string | null) => operators.find((o) => o.id === id)?.email || null
 
@@ -800,57 +761,22 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { cur
                   <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-neutral-400" /></div>
                 ) : messages.length === 0 ? (
                   <p className="text-sm text-neutral-400 italic text-center py-8">No messages yet.</p>
-                ) : grouped.map((g) => (
-                  <div key={g.day} className="space-y-4">
-                    <div className="flex items-center justify-center"><span className="text-[10px] font-semibold text-neutral-400 bg-white border border-neutral-200 rounded-full px-2.5 py-0.5">{g.day}</span></div>
-                    {g.items.map((m) => {
-                      // Three distinct outbound roles + inbound. Email renders as a
-                      // full-width document card; WhatsApp stays a chat bubble.
-                      const isEmail = m.channel === 'email'
-                      const isBot = m.direction === 'out' && m.bot
-                      const isOperator = m.direction === 'out' && !m.bot
-                      // Bubble alignment: email always left (document); WA out = right.
-                      const alignRight = !isEmail && m.direction === 'out'
-                      // Bubble skin by role (WhatsApp only; email uses the card skin).
-                      // overflow-hidden + min-w-0 keep long/raw email bodies and
-                      // unbreakable URLs from blowing the bubble past the pane.
-                      const bubbleSkin = isEmail
-                        ? 'max-w-full w-full bg-white text-neutral-900 border border-neutral-200 rounded-lg'
-                        : isBot
-                          ? 'max-w-[78%] bg-neutral-100 text-neutral-700 border border-neutral-300 rounded-2xl rounded-tr-sm'
-                          : isOperator
-                            ? 'max-w-[78%] bg-[#cd2653] text-white rounded-2xl rounded-tr-sm'
-                            : 'max-w-[78%] bg-white text-neutral-900 border border-neutral-200 rounded-2xl rounded-tl-sm'
-                      // Email bodies are long, quoted, sometimes raw: render them a
-                      // notch smaller than WhatsApp chat text so they stay readable
-                      // and don't overflow. WhatsApp stays at a comfortable chat size.
-                      const bodyText = isEmail ? 'text-[14px]' : 'text-[15px]'
-                      return (
-                      <div key={m.id} className={`flex flex-col min-w-0 max-w-full ${alignRight ? 'items-end' : 'items-start'}`}>
-                        <div className="flex items-center gap-1.5 mb-1 px-1 text-[11px] text-neutral-400 max-w-full min-w-0">
-                          {m.channel === 'whatsapp' ? <MessageCircle className="w-3 h-3 text-emerald-600 shrink-0" /> : <Mail className="w-3 h-3 text-blue-600 shrink-0" />}
-                          {isBot && <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-neutral-200 text-neutral-600 font-semibold text-[10px] shrink-0"><Bot className="w-3 h-3" />Bot</span>}
-                          {isOperator && <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#cd2653]/10 text-[#cd2653] font-semibold text-[10px] shrink-0">You</span>}
-                          <span className="truncate min-w-0">{m.from}</span><span className="shrink-0">·</span><span className="shrink-0">{fmtTime(m.at)}</span>
-                        </div>
-                        <div className={`px-4 py-2.5 shadow-sm overflow-hidden min-w-0 ${bubbleSkin}`}>
-                          {m.subject && isEmail && <p className="text-[12px] font-semibold opacity-70 mb-1 break-words">{m.subject}</p>}
-                          {m.media && m.media.length > 0 && (
-                            <div className={`space-y-1.5 ${m.body ? 'mb-2' : ''}`}>
-                              {m.media.map((media, i) => (
-                                <MediaBubble key={i} media={media} onDark={isOperator} />
-                              ))}
-                            </div>
-                          )}
-                          {m.body && (
-                            <p className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed ${bodyText}`}>{m.body}</p>
-                          )}
-                        </div>
-                      </div>
-                      )
-                    })}
-                  </div>
-                ))}
+                ) : (
+                  // Was ~50 lines of inline renderer: one bubble, one <p>, for
+                  // BOTH channels, where channel was only a width/radius/font
+                  // tweak. Email came through a chat bubble as flattened plain
+                  // text. Both surfaces now share ONE renderer by construction,
+                  // so the divergence that existed between this file and
+                  // NeedsYouClient cannot come back. `key` resets the pane
+                  // selection on contact switch with no sync effect.
+                  <ChannelPanes
+                    key={active.id}
+                    messages={messages}
+                    contact={active}
+                    loading={msgsLoading}
+                    onPaneChange={setReplyChannel}
+                  />
+                )}
               </div>
 
               {/* AI result strip */}
@@ -893,12 +819,18 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { cur
                 <input ref={fileRef} type="file" className="hidden"
                   onChange={(e) => { onPickFile(e.target.files?.[0] || null); if (fileRef.current) fileRef.current.value = '' }} />
                 <div className="flex items-end gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 focus-within:border-[#cd2653]">
+                  {/* The channel <select> that stood here is gone: the pane
+                      switcher above IS the picker now, and it kept the two in
+                      sync only by accident — an operator could be reading email
+                      with the composer still aimed at WhatsApp. One control,
+                      one answer. The composer shows which channel it will use. */}
                   {active.phone && active.email && (
-                    <select value={replyChannel} onChange={(e) => setReplyChannel(e.target.value as 'whatsapp' | 'email')}
-                      className="h-8 text-xs rounded-lg border border-neutral-200 bg-white px-2 outline-none self-center">
-                      <option value="whatsapp">WhatsApp</option>
-                      <option value="email">Email</option>
-                    </select>
+                    <span className="self-center shrink-0 inline-flex items-center gap-1 h-8 px-2 rounded-lg bg-neutral-100 text-[11px] font-semibold text-neutral-600">
+                      {replyChannel === 'whatsapp'
+                        ? <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                        : <Mail className="w-3.5 h-3.5 text-blue-600" />}
+                      {replyChannel === 'whatsapp' ? 'WhatsApp' : 'Email'}
+                    </span>
                   )}
                   <button onClick={() => fileRef.current?.click()} title="Attach a file"
                     className="w-8 h-8 rounded-lg hover:bg-neutral-100 flex items-center justify-center self-center">
