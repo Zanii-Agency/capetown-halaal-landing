@@ -10,7 +10,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CommItem } from '@/lib/inbox/types'
-import { fmtTime, initials } from '@/lib/inbox/format'
+import { initials } from '@/lib/inbox/format'
+import { ChannelPanes } from '@/components/admin/inbox/ChannelPanes'
 import { createClient } from '@/lib/supabase/client'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { Loader2, Send, Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, MessageCircle, Mail, Bell } from 'lucide-react'
@@ -203,7 +204,13 @@ export function NeedsYouClient() {
     setActiveId(next.id)
   }, [waiting])
 
-  const replyChannel: 'whatsapp' | 'email' = active?.phone ? 'whatsapp' : 'email'
+  // The reply box follows whichever pane the operator is reading, so they can
+  // never be looking at email while the composer is aimed at WhatsApp. Stored
+  // WITH the contact id so a choice made on one conversation cannot leak into
+  // the next — the fallback (phone => WhatsApp) applies again on switch.
+  const [pane, setPane] = useState<{ id: string; ch: 'whatsapp' | 'email' } | null>(null)
+  const replyChannel: 'whatsapp' | 'email' =
+    (pane && active && pane.id === active.id ? pane.ch : null) ?? (active?.phone ? 'whatsapp' : 'email')
 
   const submitReply = useCallback(async (mode?: 'template') => {
     if (!active || !reply.trim()) return
@@ -282,22 +289,23 @@ export function NeedsYouClient() {
 
           {/* Thread */}
           <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 px-5 py-4 space-y-2 bg-neutral-50/40">
-            {msgsLoading ? (
-              <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-neutral-400" /></div>
-            ) : messages.length === 0 ? (
+            {messages.length === 0 && !msgsLoading ? (
               <p className="text-center text-xs text-neutral-400 py-8">No messages yet.</p>
-            ) : messages.map((m) => (
-              <div key={m.id} className={`flex ${m.direction === 'out' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${m.direction === 'out' ? 'bg-[#cd2653] text-white' : 'bg-white border border-neutral-200 text-neutral-800'} ${m.pending ? 'opacity-60' : ''}`}>
-                  {m.direction === 'out' && (m.bot ? <span className="block text-[10px] font-semibold opacity-80 mb-0.5">Bot</span> : null)}
-                  {(m.media || []).map((md, i) => md.url && md.kind === 'image'
-                    ? <img key={i} src={md.url} alt="" className="rounded-lg max-w-full mb-1" />
-                    : <span key={i} className="block text-[11px] opacity-80 mb-0.5">📎 {md.filename || md.kind}</span>)}
-                  <span className="whitespace-pre-wrap break-words">{m.body}</span>
-                  <span className={`block text-[10px] mt-1 ${m.direction === 'out' ? 'text-white/70' : 'text-neutral-400'}`}>{fmtTime(m.at)}</span>
-                </div>
-              </div>
-            ))}
+            ) : (
+              // Was a 12-line bubble copy that ignored channel entirely, had no
+              // day separators, rendered attachments as a 📎 emoji and a raw
+              // <img>, and used its own fmtTime. Both surfaces now share ONE
+              // renderer, so they cannot drift apart again. `key` on the contact
+              // resets the pane selection on switch with no sync effect.
+              <ChannelPanes
+                key={active.id}
+                messages={messages}
+                contact={active}
+                loading={msgsLoading}
+                dense
+                onPaneChange={(ch) => setPane({ id: active.id, ch })}
+              />
+            )}
           </div>
 
           {/* Reply */}
