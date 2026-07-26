@@ -17,6 +17,7 @@ import { NextResponse } from 'next/server'
 import { ImapFlow, type FetchMessageObject } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { captureAttachments } from '@/lib/email/attachments'
 
@@ -171,5 +172,8 @@ export async function GET(req: Request) {
 
   const durationMs = Date.now() - started
   console.log(JSON.stringify({ at: 'gmail-fetcher', event: 'run_complete', fetched, written, skipped, errorCount: errors.length, durationMs }))
+  // See the note in support-mail-fetcher: email had no realtime path at all.
+  if (written > 0) await broadcastInboxRefresh('email').catch(() => {})
+
   return NextResponse.json({ ok: errors.length === 0, account: 'gmail', fetched, written, skipped, errors, durationMs })
 }

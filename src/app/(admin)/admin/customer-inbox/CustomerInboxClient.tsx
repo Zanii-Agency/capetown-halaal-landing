@@ -291,7 +291,17 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { cur
       const j = await res.json()
       if (res.ok) setMessages((prev) => {
         const next: CommItem[] = j.messages || []
-        return next.length !== prev.length ? next : prev
+        // Compare by IDENTITY, not length. This was `next.length !== prev.length`,
+        // which silently discarded any change that kept the count the same — most
+        // importantly the swap of an optimistic `pending` bubble for the real
+        // persisted row (N+1 either way), so the send stayed greyed out while the
+        // contact list had already moved on. That divergence IS the "list and
+        // thread disagree" symptom. Keeping `prev` on a true no-op still matters:
+        // it preserves referential equality and avoids a re-render every 30s.
+        const same =
+          next.length === prev.length &&
+          next.every((m, i) => m.id === prev[i]?.id && m.at === prev[i]?.at)
+        return same ? prev : next
       })
     } catch { /* keep last good */ }
   }, [])
@@ -325,6 +335,19 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { cur
   useEffect(() => {
     const id = setInterval(() => refreshNow(), 30000)
     return () => clearInterval(id)
+  }, [refreshNow])
+
+  // Catch up the moment the tab comes back. refreshNow() early-returns while
+  // `document.hidden`, and nothing used to fire on return — so an operator
+  // switching away and back sat on stale data until the next 30s tick.
+  useEffect(() => {
+    const onVisible = () => { if (!document.hidden) refreshNow() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
   }, [refreshNow])
 
   const active = useMemo(() => contacts.find((c) => c.id === activeId) || null, [contacts, activeId])

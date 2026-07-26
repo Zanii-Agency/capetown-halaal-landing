@@ -336,17 +336,32 @@ export async function GET(req: NextRequest) {
   // channels apart, so all THREE client channels (WhatsApp / YAH email / Gmail)
   // are visible in the queue. One query; latest wins because we scan DESC.
   const mailboxByPeer = new Map<string, 'gmail' | 'youngatheart'>()
+  const lastMsgByThread = new Map<string, { direction: 'in' | 'out'; at: string; preview: string }>()
   {
+    // One pass, two maps. Ordered by created_at (ROW INSERT) descending, not
+    // received_at: received_at is the sender's own Date header, which is skewed
+    // often enough that "latest" by that column is not actually the latest thing
+    // we learned about. First row seen per key is therefore the newest.
     const { data: msgs } = await db
       .from('support_inbox_messages')
-      .select('from_address, mailbox, received_at')
-      .eq('direction', 'in')
-      .order('received_at', { ascending: false })
+      .select('thread_id, from_address, mailbox, direction, body_text, subject, received_at, created_at')
+      .order('created_at', { ascending: false })
       .limit(4000)
-    for (const m of (msgs || []) as Array<{ from_address: string | null; mailbox: string | null; received_at: string }>) {
+    for (const m of (msgs || []) as Array<{ thread_id: string | null; from_address: string | null; mailbox: string | null; direction: string | null; body_text: string | null; subject: string | null; received_at: string | null; created_at: string }>) {
       const from = (m.from_address || '').toLowerCase().trim()
-      if (!from || mailboxByPeer.has(from)) continue
-      mailboxByPeer.set(from, m.mailbox === 'gmail' ? 'gmail' : 'youngatheart')
+      if (from && m.direction === 'in' && !mailboxByPeer.has(from)) {
+        mailboxByPeer.set(from, m.mailbox === 'gmail' ? 'gmail' : 'youngatheart')
+      }
+      // The REAL last message per thread — direction and arrival time both come
+      // from a message row, never from thread bookkeeping columns. See the two
+      // bugs this closes at the call site below.
+      if (m.thread_id && !lastMsgByThread.has(m.thread_id)) {
+        lastMsgByThread.set(m.thread_id, {
+          direction: m.direction === 'in' ? 'in' : 'out',
+          at: m.created_at,
+          preview: (m.body_text || m.subject || '').trim(),
+        })
+      }
     }
   }
 
@@ -355,10 +370,14 @@ export async function GET(req: NextRequest) {
   {
     const { data: threads } = await db
       .from('support_inbox_threads')
-      .select('peer_email, peer_name, subject, status, tag, assignee_id, last_handled_at, last_inbound_at, unread_count, created_at, vendor_application_id')
-      .order('last_handled_at', { ascending: false, nullsFirst: false })
+      .select('id, peer_email, peer_name, subject, status, tag, assignee_id, last_handled_at, last_inbound_at, unread_count, created_at, vendor_application_id')
+      // Ordered by last_inbound_at, not last_handled_at: this only decides WHICH
+      // 1500 rows we fetch, and a thread waiting on us matters more than one we
+      // already answered. The list's real order is the code-side sort on
+      // last_message_at further down, which now uses a real message timestamp.
+      .order('last_inbound_at', { ascending: false, nullsFirst: false })
       .limit(1500)
-    for (const t of (threads || []) as Array<{ peer_email: string; peer_name: string | null; subject: string | null; status: string | null; tag: string | null; assignee_id: string | null; last_handled_at: string | null; last_inbound_at: string | null; unread_count: number | null; created_at: string; vendor_application_id: string | null }>) {
+    for (const t of (threads || []) as Array<{ id: string; peer_email: string; peer_name: string | null; subject: string | null; status: string | null; tag: string | null; assignee_id: string | null; last_handled_at: string | null; last_inbound_at: string | null; unread_count: number | null; created_at: string; vendor_application_id: string | null }>) {
       const email = (t.peer_email || '').toLowerCase()
       if (!email) continue
       // Resolve the vendor by the sender's registered email OR, when that misses
@@ -368,7 +387,21 @@ export async function GET(req: NextRequest) {
       const vendor = byEmail.get(email) || (t.vendor_application_id ? byId.get(t.vendor_application_id) : null)
       const appId = vendor?.id || null
       const st = appId ? tByApp.get(appId) : tByEmail.get(email)
-      const at = t.last_handled_at || t.last_inbound_at || t.created_at
+      // FIXED 2026-07-26. This was `t.last_handled_at || t.last_inbound_at ||
+      // t.created_at` — thread BOOKKEEPING columns, not message times, and it
+      // produced two of the operator's three "out of sync" symptoms:
+      //   · last_handled_at is when WE last touched the thread, and the mail
+      //     fetchers never clear it. So a vendor's reply to any thread we had
+      //     ever answered could not move the row up the list, and the row kept
+      //     showing our own reply time. The message was in the DB and visible
+      //     inside the thread while the list said nothing had happened.
+      //   · support-mirror.ts sets last_handled_at on every outbound
+      //     transactional email, so a reminder blast shuffled unrelated vendors
+      //     to the top of the inbox with no new conversation.
+      // The real last message wins; the bookkeeping columns are only a fallback
+      // for threads whose messages fell outside the 4000-row scan above.
+      const lastMsg = lastMsgByThread.get(t.id)
+      const at = lastMsg?.at || t.last_inbound_at || t.last_handled_at || t.created_at
       touch(
         {
           email,
@@ -383,9 +416,21 @@ export async function GET(req: NextRequest) {
           assignee_id: st?.assignee || t.assignee_id || null,
         },
         at,
-        t.subject || '[email]',
-        // threads don't carry per-message direction here; treat unread_count as the signal
-        (t.unread_count || 0) > 0 ? 'in' : 'out',
+        lastMsg?.preview?.slice(0, 120) || t.subject || '[email]',
+        // FIXED 2026-07-26 — this was a WORK-LOSS bug, not a cosmetic one. It read
+        // `(t.unread_count || 0) > 0 ? 'in' : 'out'`, i.e. for email, direction WAS
+        // read-state. Opening a thread zeroes unread_count (status/route.ts), which
+        // flipped last_direction to 'out', which made needs_response false — so
+        // merely OPENING an email marked it answered and evicted it from Needs You
+        // with the customer still waiting. NeedsYouClient auto-selects the top item,
+        // so landing on the queue did this to the first email every time.
+        //
+        // It also contradicted this route's own stated invariant further down:
+        // "Keyed on last_direction === 'in', NOT read state — so merely OPENING a
+        // conversation does not clear it". True for WhatsApp, false for email.
+        //
+        // Now the direction comes from the real latest message row, like WhatsApp.
+        lastMsg?.direction || ((t.unread_count || 0) > 0 ? 'in' : 'out'),
         'email',
       )
     }

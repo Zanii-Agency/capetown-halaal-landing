@@ -78,7 +78,10 @@ export async function GET(req: NextRequest) {
       .from('wa_messages')
       .select('id, direction, body, created_at, wa_phone, template_name, metadata')
       .or(`wa_phone.eq.+${noPlus},wa_phone.eq.${noPlus}`)
-      .order('created_at', { ascending: true })
+      // DESC + limit, reversed below: ascending + limit returns the OLDEST 400,
+      // so past 400 messages a thread froze on ancient history and new messages
+      // never appeared at all. We want the newest 400.
+      .order('created_at', { ascending: false })
       .limit(400)
     for (const m of (msgs || []) as Array<{ id: string; direction: string; body: string | null; created_at: string; wa_phone: string; template_name: string | null; metadata: { sent_by?: string; via?: string; media?: { kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'; id?: string; mime_type?: string; filename?: string; caption?: string } } | null }>) {
       // Internal owner-notification pings ("🛎️ …") and bracket markers are not
@@ -135,12 +138,15 @@ export async function GET(req: NextRequest) {
       const ids = threads.map((t) => t.id)
       const { data: msgs } = await db
         .from('support_inbox_messages')
-        .select('id, thread_id, direction, from_address, subject, body_text, received_at, sent_by')
+        .select('id, thread_id, direction, from_address, subject, body_text, received_at, created_at, sent_by')
         .in('thread_id', ids)
-        .order('received_at', { ascending: true })
+        // DESC + limit for the same reason as the WhatsApp select, and ordered by
+        // created_at (row insert) rather than received_at (the SENDER's Date
+        // header, which is client-controlled and frequently skewed).
+        .order('created_at', { ascending: false })
         .limit(500)
       const subjById = new Map(threads.map((t) => [t.id, t.subject]))
-      for (const m of (msgs || []) as Array<{ id: string; thread_id: string; direction: string; from_address: string; subject: string | null; body_text: string | null; received_at: string; sent_by: string | null }>) {
+      for (const m of (msgs || []) as Array<{ id: string; thread_id: string; direction: string; from_address: string; subject: string | null; body_text: string | null; received_at: string; created_at: string | null; sent_by: string | null }>) {
         const { cleanBody, attachments } = parseAttachmentMarker(m.body_text)
         const body = cleanBody || m.subject || ''
         if (!body && !attachments.length) continue
@@ -158,7 +164,14 @@ export async function GET(req: NextRequest) {
           channel: 'email',
           direction: out ? 'out' : 'in',
           body,
-          at: m.received_at,
+          // ARRIVAL time, not the sender's Date header. Both channels are now on
+          // the same clock, so the final sort below is meaningful. Previously
+          // WhatsApp carried created_at (insert) while email carried received_at
+          // (the sender's own, client-controlled, frequently skewed timestamp) —
+          // so a cron-fetched email materialised BACKWARDS into history minutes
+          // after a WhatsApp that logically followed it, and the open thread
+          // visibly reordered itself under the operator's cursor.
+          at: m.created_at || m.received_at,
           from: !out ? m.from_address : (local(m.sent_by ? adminEmailById.get(m.sent_by) : null) || 'Team'),
           subject: m.subject || subjById.get(m.thread_id) || undefined,
           ...(media ? { media } : {}),

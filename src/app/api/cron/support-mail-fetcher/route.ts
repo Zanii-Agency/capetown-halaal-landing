@@ -19,6 +19,7 @@ import { NextResponse } from 'next/server'
 import { ImapFlow, type FetchMessageObject } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { captureAttachments } from '@/lib/email/attachments'
 
@@ -330,6 +331,13 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
       metadata: { fetched, written, skipped, errors_count: errors.length, host, durationMs },
     })
   } catch { /* swallow */ }
+
+  // Live-update the open inboxes. Until 2026-07-26 the ONLY caller of this was
+  // the WhatsApp webhook, so WhatsApp felt instant while email sat behind a 30s
+  // client poll on top of this 2-minute cron — the same inbox behaving two
+  // different ways, which is most of what "feels out of sync" meant. Only ping
+  // when something actually landed. Best-effort, never throws.
+  if (written > 0) await broadcastInboxRefresh('email').catch(() => {})
 
   return NextResponse.json({ ok: errors.length === 0, fetched, written, skipped, errors, host, durationMs })
 }

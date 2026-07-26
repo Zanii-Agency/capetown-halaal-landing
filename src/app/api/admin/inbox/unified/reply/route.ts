@@ -20,6 +20,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { transportFor, fromAddressFor } from '@/lib/email-concierge'
 import { mirrorOutboundToSupportInbox } from '@/lib/email/support-mirror'
 import { assertRole } from '@/lib/admin-rbac'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { mentionsEft, markVendorToldEft } from '@/lib/eft'
 import { z } from 'zod'
 
@@ -47,6 +48,14 @@ async function mailboxForPeer(db: ReturnType<typeof createAdminClient>, peerEmai
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+/** Every successful send returns through here so other open inboxes update at
+ *  once. Until 2026-07-26 nothing broadcast on reply, so two operators working
+ *  the queue saw each other's work up to 30s late and could double-answer. */
+async function okAndRefresh<T extends object>(payload: T): Promise<NextResponse> {
+  await broadcastInboxRefresh('reply').catch(() => {})
+  return NextResponse.json(payload)
+}
 
 const bodySchema = z.object({
   channel: z.enum(['whatsapp', 'email']),
@@ -134,7 +143,7 @@ export async function POST(req: NextRequest) {
         provider_message_id: res.messageId || null,
         metadata: { sent_by: adminUser.email, attachment: body.attachment.filename },
       })
-      return NextResponse.json({ ok: true, channel: 'whatsapp', via: 'media' })
+      return okAndRefresh({ ok: true, channel: 'whatsapp', via: 'media' })
     }
 
     // Template path: reach a contact who is outside the 24h window.
@@ -153,7 +162,7 @@ export async function POST(req: NextRequest) {
         provider_message_id: res.messageId || null,
         metadata: { sent_by: adminUser.email, via: 'template' },
       })
-      return NextResponse.json({ ok: true, channel: 'whatsapp', via: 'template' })
+      return okAndRefresh({ ok: true, channel: 'whatsapp', via: 'template' })
     }
 
     const res = await sendText(e164, text)
@@ -179,7 +188,7 @@ export async function POST(req: NextRequest) {
     })
     // Told a vendor about EFT -> move their comms onto the Master lane.
     if (mentionsEft(text)) await markVendorToldEft({ phone: e164 })
-    return NextResponse.json({ ok: true, channel: 'whatsapp' })
+    return okAndRefresh({ ok: true, channel: 'whatsapp' })
   }
 
   // email — thread into the recipient's existing conversation.
@@ -232,7 +241,7 @@ export async function POST(req: NextRequest) {
       // in the thread same as a support@ reply does.
       await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ' })
       if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
-      return NextResponse.json({ ok: true, channel: 'email', via: 'gmail' })
+      return okAndRefresh({ ok: true, channel: 'email', via: 'gmail' })
     } catch (e) {
       const msg = (e as Error).message
       console.error('[unified/reply] gmail send failed:', msg)
@@ -253,5 +262,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, channel: 'email', reason: res.error, message: `Email failed: ${res.error}` }, { status: 502 })
   }
   if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
-  return NextResponse.json({ ok: true, channel: 'email', via: 'support' })
+  return okAndRefresh({ ok: true, channel: 'email', via: 'support' })
 }

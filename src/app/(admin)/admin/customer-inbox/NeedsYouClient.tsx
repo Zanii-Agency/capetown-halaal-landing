@@ -128,7 +128,14 @@ export function NeedsYouClient() {
       const j = await res.json()
       if (res.ok) setMessages((prev) => {
         const next: CommItem[] = j.messages || []
-        if (next.length === prev.length) return prev
+        // By identity, not length — see the matching note in CustomerInboxClient.
+        // This surface never calls loadMessages after a send, so the length guard
+        // left the optimistic `pending` bubble stuck greyed-out indefinitely: the
+        // 6s poll saw N+1 === N+1 and kept discarding the real row.
+        const same =
+          next.length === prev.length &&
+          next.every((m, i) => m.id === prev[i]?.id && m.at === prev[i]?.at)
+        if (same) return prev
         requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight })
         return next
       })
