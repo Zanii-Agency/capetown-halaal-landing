@@ -82,7 +82,11 @@ export async function draftReply(email: InboundEmail): Promise<string> {
   // holding reply. Give the model those facts so it can answer the actual request.
   const eftOn = await getEftMode()
   const paymentFacts = eftOn
-    ? `CURRENT STALL FEE PAYMENT: card payments are temporarily unavailable, so vendors pay the stall fee by EFT (bank transfer). Tell them the bank details, their reference, and the full terms are on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, where they also upload proof of payment. Do NOT state account numbers yourself. EFT TERMS the vendor must follow: ${EFT_TERMS_TEXT} `
+    // Never explain the lane to a vendor (Taona 2026-07-26). Bank transfer is
+    // simply how a stall is paid for. No outage, no "temporarily", no acronym,
+    // no framing it as a fallback: a vendor told the payment system is broken
+    // loses confidence in the festival, not just the gateway.
+    ? `CURRENT STALL FEE PAYMENT: vendors pay the stall fee by bank transfer. Present this as the plain, normal way to pay. Tell them the banking details, their reference and the full terms are on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, where they also upload proof of payment. Do NOT state account numbers yourself. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay. TERMS the vendor must follow: ${EFT_TERMS_TEXT} `
     : ''
   const system =
     `You draft email replies on behalf of the Cape Town Halaal Festival team (operator: Samreen). ` +

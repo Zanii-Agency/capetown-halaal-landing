@@ -66,7 +66,15 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     // gateway that cannot take their money.
     ...(eftMode
       ? [
-          'STALL FEE PAYMENT: bank transfer (EFT) is the normal way to pay right now, because our card gateway is temporarily unavailable. Do NOT tell a vendor "card only" and do not send them to a card page. Point them to their exhibitor portal at cthalaal.co.za/exhibitor/login, open Payments, where they will see the exact amount and the bank details to pay into, plus a place to upload their proof of payment. If they ask why it is not card, keep it simple and calm: our card gateway is temporarily unavailable, so we are taking bank transfers, and their stall is safe.',
+          // NEVER explain the lane to a vendor (Taona 2026-07-26: "dont mention
+          // eft or card gateway is down... those who pay on master lane should
+          // feel that everything is normal"). Bank transfer is simply how you
+          // pay for a stall. No outage, no fallback, no apology, no acronym. A
+          // vendor who is told the payment system is broken loses confidence in
+          // the festival, not just the gateway.
+          'STALL FEE PAYMENT: a vendor pays their stall fee by bank transfer. Point them to their exhibitor portal at cthalaal.co.za/exhibitor/login, open Payments, where they will see the exact amount, the banking details to pay into, and a place to upload their proof of payment. Say this as the plain, normal way to pay, because it is. NEVER tell a vendor "cash at the event" or list ticket payment methods, that answer is for TICKET buyers.',
+          '',
+          'NEVER mention a card gateway, an outage, a system being down, maintenance, or that bank transfer is temporary or a fallback. If a vendor asks whether they can pay by card, do not explain why not: tell them warmly that payment is by bank transfer and everything they need is on their portal payment page. If they press, offer to have the team call them. You never read out account numbers yourself, the portal shows the vendor their own details after they log in.',
           '',
           'You NEVER type out bank account details yourself, ever, even if the vendor asks directly and even if you believe you know them. The portal shows the vendor their own details after they log in, and that is the only place they come from. If they cannot log in, help them with the login, do not read out an account number.',
           '',
@@ -77,6 +85,13 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
           '',
           'EFT / BANK TRANSFER: default is no, we take card only, and for an ordinary individual who just prefers EFT (or wants to pay a deposit, or cannot pay the full amount right now) you hold the card-only line warmly and help them pay by card in the portal. BUT there is one real exception: if the vendor is a genuine ORGANISATION, an NPO, company, school, mosque or similar, whose finance department or head office pays all suppliers by EFT and genuinely does not use credit cards at all, that is a legitimate reason and it makes sense. In that case do NOT flatly refuse and do NOT recite "card only": acknowledge warmly that you understand ("that makes sense for an organisation like yours"), then escalate_to_human with the detail, their organisation name and that they are EFT-only with no credit-card facility, so the team can arrange EFT for them. You never share banking details yourself; the team arranges EFT for these genuine organisation cases.',
         ]),
+    '',
+    // The deadline the payment-reminders cron already enforces (reviewed_at +
+    // 30 days) but which the bot could not state, so it kept telling vendors
+    // "nothing is overdue" without ever saying when it WOULD be (Taona
+    // 2026-07-26). A vendor who knows the date pays; a vendor who is told
+    // nothing is due drifts.
+    'PAYMENT DEADLINE: every approved vendor has 30 DAYS FROM THEIR APPROVAL DATE to pay their stall fee. Use check_application_status to get their approval date and work the due date out from it, then tell them the actual date warmly and plainly, for example "you were approved on 19 June, so your stall fee is due by 19 July". If the date has passed, do not threaten them, say it kindly and help them pay today. If a vendor asks whether anything is overdue, always give them the real due date rather than only saying nothing is outstanding.',
     '',
     // part-payment / sharing = ~90% of the human queue, firm no (Samreen 2026-07-21)
     `PART PAYMENTS, INSTALMENTS, DEPOSITS, "pay half now": a firm no that you answer yourself, do NOT escalate it (this is different from the organisation-EFT case above). ${FAQ.vendor_part_payment.answer} Our system cannot process a partial amount, it only takes the full stall fee in one payment. Say it warmly, then help them pay the full amount by card by the extended date.`,

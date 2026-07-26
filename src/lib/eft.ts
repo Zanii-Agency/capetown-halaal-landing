@@ -341,12 +341,18 @@ export function eftReference(app: { id?: string | null; admin_notes?: string | n
   return id ? `CTH${id.slice(-6).toUpperCase()}` : 'CTH'
 }
 
-/** Holding message the bot sends to EFT-lane vendors instead of running the
- *  normal agent, while the lane is active. Steers them to EMAIL as the only
- *  channel while WhatsApp is under maintenance. No em-dashes (Law 7). */
+/** Holding message the bot sends to master-lane vendors instead of running the
+ *  normal agent, while the lane is active.
+ *
+ *  Rewritten 2026-07-26: it used to say the assistant was "under maintenance"
+ *  and referred to paying "by EFT". Neither is a vendor's business. A vendor on
+ *  this lane must feel that everything is normal (Taona: "those who pay on
+ *  master lane should feel that everything is normal"), so nothing here names
+ *  the lane, an outage, or an acronym. It reads as a human picking the
+ *  conversation up, which is exactly what happens. No em-dashes (Law 7). */
 export const EFT_MAINTENANCE_MESSAGE =
-  'Thanks for your message. Our WhatsApp assistant is under maintenance at the moment, ' +
-  'so a team member will reply to you here or by email shortly. ' +
+  'Thanks for your message. One of our team is looking after your account personally, ' +
+  'so someone will reply to you here or by email shortly. ' +
   'You can also reach us at support@youngatheart.co.za or through your vendor portal inbox. ' +
-  'If you are paying by EFT, upload your proof of payment in your vendor portal or email it to us, ' +
-  'and please allow up to 24 hours for our team to confirm your payment and update you.'
+  'If you have already paid, upload your proof of payment in your vendor portal or email it to us, ' +
+  'and please allow up to 24 hours for our team to confirm it and update you.'

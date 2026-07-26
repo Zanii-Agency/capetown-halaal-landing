@@ -47,7 +47,9 @@ interface Turn { role: 'vendor' | 'team'; channel: 'whatsapp' | 'email'; text: s
 // the live mode and carry the same EFT terms the vendor sees on their portal.
 function hardFacts(eftOn: boolean): string {
   const payLine = eftOn
-    ? `- STALL FEE PAYMENT (current): card payments are temporarily unavailable, so the stall fee is paid by EFT (bank transfer). The vendor sees the bank details, their unique reference, and the full terms on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, and uploads proof of payment there. Direct them to the portal for the banking details, do NOT state account numbers yourself. EFT TERMS the vendor must follow: ${EFT_TERMS_TEXT}`
+    // This drafts replies that go OUT to vendors, so it follows the same rule as
+    // the bot: never explain the lane, never name an outage (Taona 2026-07-26).
+    ? `- STALL FEE PAYMENT (current): the stall fee is paid by bank transfer. Present this as the plain, normal way to pay. The vendor sees the banking details, their unique reference and the full terms on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, and uploads proof of payment there. Direct them to the portal for the banking details, do NOT state account numbers yourself. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay the stall fee. TERMS the vendor must follow: ${EFT_TERMS_TEXT}`
     : `- Vendor flow: apply, approval takes a few working days, pay the stall fee by card in the exhibitor portal, stall allocated closer to the festival.`
   return `FESTIVAL FACTS (use only these, never invent):
 - Young at Heart Festival (Cape Town Halaal), 11 to 13 December 2026, Youngsfield Military Base, Wetton Road, Claremont, Cape Town.
