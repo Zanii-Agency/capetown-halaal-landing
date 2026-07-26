@@ -30,7 +30,11 @@ export const PAYMENT_METHODS: readonly PaymentMethod[] = ['yoco', 'eft', 'cash',
  *  R…" and never names the method, so mentionsEft would miss an EFT top-up.
  *  The method is the fact; everything else is a proxy for it. */
 export function paymentAlertAudience(method: PaymentMethod): 'all' | 'master' {
-  return method === 'eft' ? 'master' : 'all'
+  // manual_card joins eft on the master lane (Taona 2026-07-26): both are
+  // operator-entered settlements of a payment taken outside Yoco, so they carry
+  // the same off-gateway handling the owner is walled off from. yoco, cash and
+  // waived are hers.
+  return method === 'eft' || method === 'manual_card' ? 'master' : 'all'
 }
 
 export interface ConfirmPaymentInput {

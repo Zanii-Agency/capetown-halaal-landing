@@ -104,7 +104,8 @@ export async function POST(req: NextRequest) {
       event: 'document_uploaded',
       body: `New document uploaded by ${bizName}: ${docType}.`,
       audience: 'all',
-      vendorId: applicationId, // EFT-lane vendors' self-service stays on master
+      // Both admins see vendor self-service (Taona 2026-07-26). It reveals no
+      // payment posture, and mentionsEft still withholds any body that names EFT.
     })
   } catch (e) {
     console.error('[documents] notifyOwners failed:', (e as Error).message)

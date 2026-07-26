@@ -18,7 +18,6 @@ import {
 import { askFestivalBrain } from '@/lib/festival-brain'
 import { detectHumanIntent, escalateToHuman, isInHandover, isPendingHandover, setPendingHandover } from '@/lib/bot/handover'
 import { notifyOwners } from '@/lib/bot/notify'
-import { getEftMode, vendorCommsInEftLane } from '@/lib/eft'
 import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { findAdmin, isDevNumber } from '@/lib/bot/admins'
@@ -41,30 +40,9 @@ export const dynamic = 'force-dynamic'
 // this only extends how long the function may keep running for the after() work.
 export const maxDuration = 60
 
-// Should this vendor's handover/relay alert be withheld from the festival owner
-// (Samreen)? True only for an unpaid/collected master-lane vendor; a PAID vendor's
-// escalation still reaches her, and a non-vendor (unknown) contact does too. Looks
-// the vendor up by phone (last-9) so paid vendors are never over-muted.
-async function eftScopedForPhone(e164: string): Promise<boolean> {
-  const last9 = e164.replace(/\D/g, '').slice(-9)
-  if (!last9) return false
-  try {
-    const db = createAdminClient()
-    const { data } = await db
-      .from('vendor_applications')
-      .select('admin_notes, paid_at, email, phone')
-      .like('phone', `%${last9}`)
-      .limit(1)
-    const row = data?.[0]
-    if (!row) return false // not a known vendor -> reaches the owner
-    return vendorCommsInEftLane(row.admin_notes as string, row.paid_at as string | null, await getEftMode(), {
-      email: row.email as string | null,
-      phone: row.phone as string | null,
-    })
-  } catch {
-    return false
-  }
-}
+// (eftScopedForPhone removed 2026-07-26: handover and relay alerts now reach both
+// admins, so nothing withheld them by lane. mentionsEft still withholds any alert
+// whose BODY talks about EFT, which is the content that actually matters.)
 
 // ---------------------------------------------------------------------------
 // N2: per-sender LLM rate limit.
@@ -372,9 +350,8 @@ async function handleInbound(msg: {
               body: `${admin.name} → ${ackName}\nPhone: ${target.vendorE164}\n"${msg.text.slice(0, 240)}"\n\nSwipe-reply to continue.`,
               audience: 'all',
               exclude: e164,
-              // Withhold from Samreen only if the VENDOR (target) is on the master
-              // lane (unpaid/collected); a paid vendor's relay still reaches her.
-              eftScoped: await eftScopedForPhone(target.vendorE164),
+              // Both admins see the relay (Taona 2026-07-26). The body quotes the
+              // vendor verbatim, so mentionsEft still withholds one about EFT.
             })
           } catch (e) { console.error('[swipe] cross-mirror failed:', (e as Error).message) }
         }
@@ -471,7 +448,7 @@ async function handleInbound(msg: {
     const res = await sendText(e164, ack)
     await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
     try {
-      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all', eftScoped: await eftScopedForPhone(e164) })
+      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all' })
     } catch (e) { console.error('[bot] notifyOwners on pending handover failed:', (e as Error).message) }
     return
   }
@@ -498,7 +475,6 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text),
         audience: 'all',
-        eftScoped: await eftScopedForPhone(e164),
       })
     } catch (e) { console.error('[bot] notifyOwners on handover failed:', (e as Error).message) }
     return
@@ -512,7 +488,6 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text, true),
         audience: 'all',
-        eftScoped: await eftScopedForPhone(e164),
       })
     } catch (e) { console.error('[bot] notifyOwners during handover failed:', (e as Error).message) }
     // Don't auto-reply. Samreen replies through /admin/bot-inbox.

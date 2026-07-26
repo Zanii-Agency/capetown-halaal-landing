@@ -213,7 +213,8 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `WA opt-in: ${contactName} (${app.business_name}) subscribed at ${e164}.`,
       audience: 'all',
-      vendorId: applicationId, // EFT-lane vendors' self-service stays on master
+      // Both admins see vendor self-service (Taona 2026-07-26). It reveals no
+      // payment posture, and mentionsEft still withholds any body that names EFT.
     })
   } catch (e) {
     console.error('[wa-optin] notify owners failed:', (e as Error).message)

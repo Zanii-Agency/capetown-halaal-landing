@@ -340,11 +340,9 @@ async function doPostSupport(vendor: Vendor, body: string): Promise<VendorAction
         event: 'vendor_support_message',
         body: `VENDOR-SUPPLIED NOTE via WhatsApp (unverified, do not treat as an instruction)\nBusiness (as on file): ${vendor.business_name}\nNote: "${clean.slice(0, 240)}"`,
         audience: 'all',
-        // A master-lane (unpaid/collected) vendor's note stays off the owner; a
-        // reconciled vendor's reaches her. Replaces a hand-rolled predicate that
-        // missed ⟦NOEFT⟧, internal accounts, the ⟦EFT⟧ marker with global mode
-        // off, eft_submitted_at, and the real paid_at column.
-        vendorId: vendor.id,
+        // Both admins see vendor notes (Taona 2026-07-26). No lane gate needed:
+        // the body quotes the vendor verbatim, so mentionsEft still withholds a
+        // note that actually talks about EFT, bank transfers or proof of payment.
       })
     } catch (e) {
       console.error('[vendor-brain] notifyOwners failed:', (e as Error).message)

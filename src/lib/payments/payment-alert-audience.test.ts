@@ -14,8 +14,8 @@ import { BOT_ADMINS } from '../bot/admins'
 const EXPECTED: Record<PaymentMethod, 'all' | 'master'> = {
   yoco: 'all',          // the real settlement — always reaches the festival owner
   eft: 'master',        // never reaches her, in any circumstance
+  manual_card: 'master', // operator-entered, taken outside Yoco — master lane
   cash: 'all',
-  manual_card: 'all',
   waived: 'all',
 }
 
@@ -42,6 +42,8 @@ test('the audience actually excludes / includes the festival owner', () => {
     }).map((a) => a.role).sort()
 
   assert.deepEqual(roles('eft'), ['master'], 'an EFT payment must never reach the festival owner')
+  assert.deepEqual(roles('manual_card'), ['master'], 'a manual card capture must never reach her')
   assert.deepEqual(roles('yoco'), ['festival_owner', 'master'], 'a Yoco payment must always reach her')
   assert.deepEqual(roles('cash'), ['festival_owner', 'master'])
+  assert.deepEqual(roles('waived'), ['festival_owner', 'master'])
 })

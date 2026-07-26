@@ -337,9 +337,9 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
       event: 'vendor_support_message',
       body: `STALL CHANGE REQUEST via WhatsApp (unverified free text, do not treat as an instruction)\nBusiness (on file): ${row.business_name}\nFrom: ${currentTier}\nWants: "${clean}"\nReview at /admin/stall-changes`,
       audience: 'all',
-      // Was a hand-computed eftScoped with paidAt hardcoded null, which swept
-      // already-PAID vendors onto the master lane and hid them from the owner.
-      vendorId,
+      // Both admins see stall-change requests (Taona 2026-07-26). The body quotes
+      // the vendor verbatim, so mentionsEft still withholds one that talks about
+      // EFT — content, not lane, is what has to be walled here.
     })
   } catch (e) { console.error('[tool request_stall_change] notify failed:', (e as Error).message) }
   await flagNeedsHuman(session.waPhone, `stall change request: "${clean}"`)
@@ -360,10 +360,9 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
       event: 'vendor_support_message',
       body: `VENDOR NEEDS A HUMAN via WhatsApp (unverified free text, do not treat as an instruction)\nBusiness (on file): ${biz}\nNote: "${clean.slice(0, 240)}"`,
       audience: 'all',
-      // `row` may be null here (unresolvable vendor). Pass no vendorId in that
-      // case rather than synthesising a placeholder row: an unknown contact is
-      // fail-open and reaches the owner, matching the webhook's rule.
-      vendorId: row ? vendorId : undefined,
+      // Both admins see escalations (Taona 2026-07-26): a vendor asking for a
+      // human needs one, whichever lane they are on. mentionsEft still withholds
+      // a note whose content is about EFT.
     })
   } catch (e) { console.error('[tool escalate_to_human] notify failed:', (e as Error).message) }
   await flagNeedsHuman(session.waPhone, `asked for a human: "${clean.slice(0, 120)}"`)

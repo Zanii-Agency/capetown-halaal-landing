@@ -66,7 +66,8 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `Stall position change requested by ${bizName} (currently ${currentStall}, prefers ${zoneLabel}). Details: ${details}\n\nReview at /admin/stall-changes`,
       audience: 'all',
-      vendorId: app.id as string, // EFT-lane vendors' self-service stays on master
+      // Both admins see vendor self-service (Taona 2026-07-26). It reveals no
+      // payment posture, and mentionsEft still withholds any body that names EFT.
     })
   } catch (e) {
     console.error('[exhibitor/stand/move] notifyOwners failed:', (e as Error).message)
