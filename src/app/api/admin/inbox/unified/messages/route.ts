@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
 import { stripRfc822Headers } from '@/lib/inbox/email-body'
+import { splitQuotedText, splitQuotedHtml } from '@/lib/inbox/quote'
 import { sanitizeEmailHtml } from '@/lib/sanitize'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
@@ -143,7 +144,16 @@ export async function GET(req: NextRequest) {
         // `Return-Path:` / `Received:` blocks (or a base64 blob) in body_text.
         // The OLD support inbox defended against this locally while the unified
         // inbox rendered it verbatim. Fixing it here fixes it for every consumer.
-        const body = stripRfc822Headers(cleanBody) || m.subject || ''
+        // Quote splitting runs HERE, server-side: the AI endpoints and the
+        // list preview want the same trimmed text, quoted chains are the bulk of
+        // the payload bytes, and sanitising on the server keeps sanitize-html out
+        // of the browser bundle. Both halves are returned — the quote is still
+        // evidence, it just should not be the default view.
+        const textSplit = splitQuotedText(stripRfc822Headers(cleanBody))
+        const body = textSplit.visible || m.subject || ''
+        // Split BEFORE sanitising, then sanitise each half separately: the cut
+        // lands mid-DOM and sanitize-html closes the unbalanced tags for us.
+        const htmlSplit = splitQuotedHtml(m.body_html)
         if (!body && !attachments.length) continue
         const out = m.direction !== 'in'
         const media: MediaInfo[] | undefined = attachments.length
@@ -176,7 +186,9 @@ export async function GET(req: NextRequest) {
           // SANITISED HERE, on the server. The renderer trusts this by contract
           // and must not re-sanitise; any other producer of bodyHtml would skip
           // the allowlist entirely.
-          ...(m.body_html ? { bodyHtml: sanitizeEmailHtml(m.body_html) } : {}),
+          ...(m.body_html ? { bodyHtml: sanitizeEmailHtml(htmlSplit.visible) } : {}),
+          ...(htmlSplit.quoted ? { bodyHtmlQuoted: sanitizeEmailHtml(htmlSplit.quoted) } : {}),
+          ...(textSplit.quoted ? { bodyQuoted: textSplit.quoted } : {}),
           ...(!out ? { fromAddress: m.from_address } : {}),
           ...(m.to_address ? { to: m.to_address } : {}),
           mailbox: m.mailbox === 'gmail' ? 'gmail' : 'youngatheart',
@@ -195,6 +207,10 @@ export async function GET(req: NextRequest) {
   // an email whose plain-text part is empty but whose HTML says "I sent the EFT"
   // would otherwise sail straight past the content filter shipped in eda870d.
   return NextResponse.json({
-    messages: stripEftMessages(comms, (m) => [m.body, m.subject, m.bodyHtml].filter(Boolean).join(' '), hide),
+    messages: stripEftMessages(
+      comms,
+      (m) => [m.body, m.subject, m.bodyHtml, m.bodyQuoted, m.bodyHtmlQuoted].filter(Boolean).join(' '),
+      hide,
+    ),
   })
 }

@@ -731,7 +731,11 @@ export function SupportInboxClient({ currentUserId }: { currentUserId: string })
                             )}
                             {useHtml ? (
                               <div
-                                className="email-body prose prose-sm max-w-none break-words [&_a]:text-[#cd2653] [&_a]:underline [&_p]:my-1 [&_blockquote]:border-l-2 [&_blockquote]:border-neutral-300 [&_blockquote]:pl-2 [&_blockquote]:text-neutral-500 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+                                // `.email-body` now carries all of this in globals.css. The
+                                // `prose prose-sm` classes were no-ops — @tailwindcss/typography
+                                // is not installed — and the [&_x]: variants duplicated what the
+                                // stylesheet does with descendant selectors it can actually read.
+                                className="email-body max-w-none break-words"
                                 // Sanitized via sanitizeEmailHtml — allowlist excludes
                                 // script/iframe/style/img/form. See src/lib/sanitize.ts.
                                 dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(m.body_html || '') }}

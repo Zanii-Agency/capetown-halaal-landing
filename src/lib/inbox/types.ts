@@ -45,6 +45,10 @@ export interface CommItem {
    *  re-sanitise or bypass this route — any other producer of this field would
    *  skip the sanitiser. */
   bodyHtml?: string
+  /** The quoted/signature tail, plain text. Rendered behind a "···" toggle. */
+  bodyQuoted?: string
+  /** The quoted tail as SANITISED html. Same trust contract as bodyHtml. */
+  bodyHtmlQuoted?: string
   /** The real address behind `from`, for the Gmail-style header line. */
   fromAddress?: string
   /** Recipient, so the header can read "to support@…". */
