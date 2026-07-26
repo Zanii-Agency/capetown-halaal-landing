@@ -16,6 +16,7 @@
 // predicate lives in ONE place (vendorCommsInEftLane) and callers pass identity.
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getEftMode, isEftAdmin, vendorInOwnerScope, mentionsEft } from '@/lib/eft'
+import { withoutMerged } from '@/lib/merge'
 
 // ── CONTENT-level wall (the read-side twin of notifyOwners' mentionsEft) ──────
 //
@@ -139,5 +140,8 @@ export async function laneScopeFor(viewerEmail: string | null | undefined): Prom
       blocks: () => true,
     }
   }
-  return buildLaneScope((data || []) as LaneVendorRow[], globalOn, false)
+  // Merged duplicates carry the primary's identifiers but not its payment
+  // state, so a stale subordinate could otherwise block (or expose) a vendor the
+  // primary row governs. The primary decides.
+  return buildLaneScope(withoutMerged(data as LaneVendorRow[]), globalOn, false)
 }

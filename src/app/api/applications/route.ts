@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { emailKey } from '@/lib/merge'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { z } from 'zod'
@@ -97,10 +98,17 @@ export async function POST(request: NextRequest) {
     // (pending / info_requested) — that would just be a confusing double-submit.
     // Once prior applications are resolved (approved or rejected) a fresh
     // application is allowed and gets soft-linked by email at query time.
+    // ilike, not eq. THE root cause of every duplicate in this database: `.eq`
+    // is case-SENSITIVE, so when a vendor re-applied and their browser
+    // capitalised the first letter (Israarahman91@ vs israarahman91@) this check
+    // found nothing and waved a second application straight through. Six of the
+    // seven live duplicate clusters differ ONLY by case. Those pairs then made
+    // every email lookup ambiguous, which is how a paid vendor got told we could
+    // not verify them (2026-07-26).
     const { data: existingApps } = await supabase
       .from('vendor_applications')
       .select('id, status')
-      .eq('email', validated.email)
+      .ilike('email', emailKey(validated.email))
 
     const inPipeline = (existingApps || []).find(
       (a) => a.status === 'pending' || a.status === 'info_requested'
@@ -133,6 +141,9 @@ export async function POST(request: NextRequest) {
       .insert({
         ...validated,
         phone: stripPhone(validated.phone),
+        // Normalised on the way IN, so the stored row can never be the odd-case
+        // one that a later ilike lookup has to compensate for.
+        email: emailKey(validated.email),
         website: validated.website || null,
         completeness_score: completeness.score,
       })

@@ -16,6 +16,7 @@
 import { createHash, randomInt, timingSafeEqual } from 'node:crypto'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { withoutMerged } from '@/lib/merge'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
 import { sendEmail } from '@/lib/email/resend'
 
@@ -109,11 +110,21 @@ export async function startVendorVerification(
   const clean = (email || '').trim().toLowerCase()
   const { data: apps } = await db
     .from('vendor_applications')
-    .select('id, email')
+    .select('id, email, status, admin_notes')
     .ilike('email', clean)
-  const rows = (apps || []) as Array<{ id: string; email: string }>
+  // Merged duplicates are not a second application. THIS is the line that told
+  // A&H Homeware "I can't verify you" on 2026-07-26: they had applied twice, so
+  // their email matched two rows, and a fully approved and PAID vendor was sent
+  // away to prove themselves. Once the duplicate carries ⟦MERGED:..⟧ exactly one
+  // row survives and the lookup is unambiguous again.
+  const rows = withoutMerged(apps as Array<{ admin_notes?: string | null }>) as unknown as Array<{ id: string; email: string; status: string }>
   if (rows.length === 0) return { ok: false, reason: 'no_application_for_email' }
-  if (rows.length > 1) return { ok: false, reason: 'email_multiple' }
+  // Still >1 means a genuinely unmerged cluster. Prefer the APPROVED one rather
+  // than refusing outright: refusing is what cost us the vendor's trust, and an
+  // approved application is unambiguously the one they mean.
+  const approved = rows.filter((r) => r.status === 'approved')
+  if (rows.length > 1 && approved.length !== 1) return { ok: false, reason: 'email_multiple' }
+  if (rows.length > 1) rows.splice(0, rows.length, approved[0])
 
   const applicationId = rows[0].id
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0')

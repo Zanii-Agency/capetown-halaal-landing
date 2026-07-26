@@ -5,6 +5,7 @@
 // always correct — vendor data changes as Samreen processes the queue.
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { withoutMerged } from '@/lib/merge'
 import { findAdmin, type BotAdmin } from '@/lib/bot/admins'
 import { hasEftMarker } from '@/lib/eft'
 
@@ -85,11 +86,22 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
   // Multi-apply: a person can have several applications. Take the most recent
   // as the active identity and surface applicationCount so callers can offer an
   // app picker. (Was .limit(1), which silently ignored the others.)
-  const { data: vendors } = await db
+  const { data: vendorRows } = await db
     .from('vendor_applications')
     .select('id, business_name, contact_name, email, status, admin_notes, preferred_booth_tier, contract_signed_at, created_at')
     .or(phoneOr)
     .order('created_at', { ascending: false })
+  // Drop merged duplicates BEFORE anything counts them. This is the single
+  // highest-leverage place the merge applies: resolveVendorSession reads
+  // applicationCount from here, and on 2026-07-26 a second, duplicate row made
+  // a fully paid vendor's session "ambiguous", so the bot refused to verify
+  // them and asked them to prove a payment we had already banked.
+  //
+  // Ordering matters: an APPROVED primary sorts ahead of an older duplicate that
+  // survived unmerged, so the active identity is the real application even in a
+  // cluster nobody has merged yet.
+  const vendors = withoutMerged(vendorRows as Array<{ admin_notes?: string | null; status?: string }>)
+    .sort((a, b) => (a.status === 'approved' ? -1 : 0) - (b.status === 'approved' ? -1 : 0)) as typeof vendorRows
   const vendor = (vendors || [])[0] as {
     id: string
     business_name: string

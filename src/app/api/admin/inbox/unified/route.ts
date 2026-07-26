@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { withoutMerged } from '@/lib/merge'
 import { vendorCommsInEftLane, isEftAdmin, getEftMode, mentionsEft, isOperatorPreviewAddress } from '@/lib/eft'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 
@@ -117,10 +118,14 @@ export async function GET(req: NextRequest) {
   }
 
   // ---- Resolution maps: phone -> vendor, email -> vendor ----
-  const { data: apps } = await db
+  const { data: appRows } = await db
     .from('vendor_applications')
     .select('id, business_name, contact_name, phone, email, admin_notes, paid_at')
     .limit(2000)
+  // Merged duplicates must not build resolution entries: a subordinate row can
+  // otherwise win the byEmail/byPhone map and point a whole conversation at the
+  // wrong application (the rejected twin rather than the approved, paid one).
+  const apps = withoutMerged(appRows as Array<{ admin_notes?: string | null }>) as typeof appRows
   const byPhone = new Map<string, { id: string; business_name: string | null; contact_name: string | null; email: string | null }>()
   const byEmail = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
   const byId = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()

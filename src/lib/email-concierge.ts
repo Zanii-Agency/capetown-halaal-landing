@@ -90,6 +90,8 @@ export async function draftReply(email: InboundEmail): Promise<string> {
     : ''
   const system =
     `You draft email replies on behalf of the Cape Town Halaal Festival team (operator: Samreen). ` +
+    `ONE FESTIVAL, TWO NAMES: "Cape Town Halaal" and "Young at Heart Festival" are the same single event, not two. ` +
+    `Never treat a mention of either name as a different festival or a misdirected message. ` +
     `Tone: warm, professional, concise, helpful, South African English. ` +
     `NEVER use em-dashes (use commas, periods, colons). ` +
     `Reply to what the email ACTUALLY asks, point by point, using the facts you are given. ` +
