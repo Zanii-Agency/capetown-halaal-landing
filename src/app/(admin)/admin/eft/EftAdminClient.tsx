@@ -65,8 +65,13 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
 
   // Owed per state. `outstanding ?? amount` is the same value the row renders,
   // so the totals can never disagree with the column above them.
+  // Demo rows stay VISIBLE (Taona: "hide ... from this list tho keep it on the
+  // list") but are excluded from every total. R7,500 of fake vendor was sitting
+  // inside a R44,250 "Total owed" on a payments screen.
+  const isDemo = (r: Row) =>
+    /@cthalaal\.co\.za$/i.test(r.email || '') || /\bdemo\b/i.test(r.business_name || '')
   const owed = (r: Row) => r.outstanding ?? r.amount ?? 0
-  const totals = rows.reduce(
+  const totals = rows.filter((r) => !isDemo(r)).reduce(
     (acc, r) => {
       const v = owed(r)
       acc.total += v
@@ -273,17 +278,20 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Added to lane</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Date</th>
                   <th className="px-3 py-2 font-medium">Proof</th>
-                  <th className="px-5 py-2 font-medium text-right">Actions</th>
+                  <th className="px-5 py-2 font-medium text-right w-[240px]">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedRows.map((r) => (
                   <tr key={r.id} className="border-b border-[#F2EBD8] last:border-0 align-top">
                     <td className="px-5 py-3">
-                      <p className="font-medium text-[#1B1A17]">{r.business_name || 'Unnamed'}</p>
+                      <p className="font-medium text-[#1B1A17]">
+                        {r.business_name || 'Unnamed'}
+                        {isDemo(r) && <span className="ml-2 align-middle rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-neutral-100 text-[#1B1A17]/45">demo, not counted</span>}
+                      </p>
                       <p className="text-xs text-[#1B1A17]/50">{r.contact_name || ''}{r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}</p>
                     </td>
-                    <td className="px-3 py-3 whitespace-nowrap">{rand(r.outstanding ?? r.amount)}</td>
+                    <td className={`px-3 py-3 whitespace-nowrap ${isDemo(r) ? 'text-[#1B1A17]/35 line-through' : ''}`}>{rand(r.outstanding ?? r.amount)}</td>
                     <td className="px-3 py-3">
                       {r.reconciled ? (
                         <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Reconciled</span>
@@ -327,7 +335,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                       )}
                     </td>
                     <td className="px-5 py-3">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-center justify-end gap-2 whitespace-nowrap">
                         {/* Not yet collected + not paid: mark the EFT money collected
                             (interim). Vendor sees paid + acknowledged; NOT counted in
                             finance until settled via Yoco. */}
@@ -335,7 +343,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                           <button
                             onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as EFT COLLECTED for ${rand(r.outstanding ?? r.amount)}? They will see PAID and be acknowledged, but this is NOT final until you settle it via Yoco. Do this only after the EFT money has landed.`)) post('/api/admin/eft/reconcile', { applicationId: r.id }, `rec-${r.id}`) }}
                             disabled={busy === `rec-${r.id}`}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
                           >
                             {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark collected
                           </button>
@@ -346,7 +354,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                           <button
                             onClick={() => { if (confirm(`Settle ${r.business_name || 'this vendor'} through Yoco for ${rand(r.outstanding ?? r.amount)}? This opens a Yoco checkout you pay on your card (Yoco fee applies), funded by the EFT cash. It records the real payment and notifies Samreen.`)) settle(r.id) }}
                             disabled={busy === `set-${r.id}`}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
                           >
                             {busy === `set-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Settle via Yoco
                           </button>
@@ -355,7 +363,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                           <button
                             onClick={() => post('/api/admin/eft/lane', { applicationId: r.id, action: 'remove' }, `rm-${r.id}`)}
                             disabled={busy === `rm-${r.id}`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 hover:border-[#cd2653] hover:text-[#cd2653] px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 hover:border-[#cd2653] hover:text-[#cd2653] px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
                           >
                             {busy === `rm-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Remove
                           </button>
@@ -367,7 +375,10 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-[#E5DCC4] bg-[#FBF8F0]">
-                  <td className="px-5 py-3 font-semibold text-[#1B1A17]">{sortedRows.length} vendor{sortedRows.length === 1 ? '' : 's'}</td>
+                  <td className="px-5 py-3 font-semibold text-[#1B1A17]">
+                    {sortedRows.filter((r) => !isDemo(r)).length} vendor{sortedRows.filter((r) => !isDemo(r)).length === 1 ? '' : 's'}
+                    {sortedRows.some(isDemo) && <span className="ml-1 font-normal text-[#1B1A17]/40">+ demo</span>}
+                  </td>
                   <td className="px-3 py-3 font-bold text-[#1B1A17] whitespace-nowrap">{rand(totals.total)}</td>
                   <td className="px-3 py-3" colSpan={5} />
                 </tr>

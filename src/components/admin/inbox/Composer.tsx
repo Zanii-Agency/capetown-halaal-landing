@@ -58,6 +58,19 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
   const [lib, setLib] = useState<Array<{ key: string; label: string; description: string }>>([])
   const [libBusy, setLibBusy] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const box = useRef<HTMLTextAreaElement>(null)
+
+  // GROW WITH THE TEXT. The chat composer was rows={1} with a fixed max height,
+  // so a three-line reply scrolled inside a one-line window: the operator could
+  // see neither the start nor the end of what they were about to send to a
+  // vendor. Measure the real content height on every change and match it, up to
+  // a ceiling so the box can never swallow the conversation above it.
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 260)}px`
+  }, [text])
 
   // A new inbound reopens the window, so never leave the banner up across threads.
   useEffect(() => { setWindowClosed(false) }, [phone, email])
@@ -203,6 +216,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
       <div className="flex items-end gap-2">
         <div className="relative flex-1">
           <textarea
+            ref={box}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -213,9 +227,12 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
             }}
             rows={isEmail ? 4 : 1}
             placeholder={isEmail ? 'Write a reply. Cmd+Enter to send.' : 'Write a message'}
-            className={`w-full ${isEmail ? 'resize-y' : 'resize-none max-h-40'} px-3 py-2 pr-20 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-900/10`}
+            // No resize handle and no fixed max: the effect above sets the
+            // height, so it always shows everything typed up to 260px and then
+            // scrolls. Bottom padding keeps the last line clear of the icons.
+            className="w-full resize-none overflow-y-auto px-3 py-2 pr-20 pb-9 text-sm leading-relaxed rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-900/10"
           />
-          <div className="absolute right-2 bottom-2 flex items-center gap-1">
+          <div className="absolute right-2 bottom-1.5 flex items-center gap-1 bg-white/90 backdrop-blur rounded-md">
             {applicationId && (
               <button onClick={() => setLibOpen((o) => !o)} title="Send a document or link"
                 className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100">

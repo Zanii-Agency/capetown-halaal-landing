@@ -202,6 +202,23 @@ export function WhatsAppWorkspace() {
 
   function open(t: ChannelThread) {
     setActiveId(t.id)
+    // OPENING IT COUNTS AS READING IT. open() used to write nothing at all, so a
+    // conversation looked identical after you had read it, forever. Optimistic
+    // so the badge clears the instant you click, then persisted (wa_read_state
+    // for WhatsApp, unread_count for mail) so it survives a reload.
+    if (t.unread) {
+      setThreads((prev) => prev.map((x) => (x.id === t.id ? { ...x, unread: false } : x)))
+      fetch('/api/admin/inbox/unified/status', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'read',
+          ...(t.application_id ? { applicationId: t.application_id } : {}),
+          ...(t.email ? { email: t.email } : {}),
+          ...(t.phone ? { phone: t.phone } : {}),
+        }),
+      }).catch(() => { /* the optimistic clear stands; the next poll corrects it */ })
+    }
     setMessages([])
     setMsgError(null)
     setHasMore(false)

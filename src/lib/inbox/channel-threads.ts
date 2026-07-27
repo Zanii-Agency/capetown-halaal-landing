@@ -179,6 +179,21 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
   const scope = await laneScopeFor(viewerEmail)
   const { byPhone, toPrimary } = await vendorIndex(db)
   const doneMarks = await loadDoneMarks()
+  // REAL read state. `unread` was computed as "nobody has replied since they
+  // wrote", which is an ANSWERED test wearing the name of a read test, so
+  // opening a conversation could never clear it: Taona reported three times that
+  // "unread still stays unread despite being read", and he was right, it was
+  // impossible by construction. wa_read_state already exists (109 rows) and the
+  // status endpoint already writes it. Nothing here ever looked at it.
+  const readAt = new Map<string, string>()
+  {
+    const { data } = await db.from('wa_read_state').select('wa_phone, read_at')
+    for (const r of (data || []) as Array<{ wa_phone: string; read_at: string }>) {
+      const k = phoneKey(r.wa_phone)
+      const prev = readAt.get(k)
+      if (k && (!prev || new Date(r.read_at) > new Date(prev))) readAt.set(k, r.read_at)
+    }
+  }
 
   const threads = new Map<string, ChannelThread>()
   const needsHumanAt = new Map<string, string>()
@@ -287,7 +302,12 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
     const inAt = lastInboundAt.get(k)
     const anyOut = lastOutboundAt.get(k)
     const humanOut = humanReplyAt.get(k)
-    t.unread = !!inAt && (!anyOut || new Date(anyOut) < new Date(inAt))
+    // Unread = they wrote something we have not LOOKED AT. A reply also counts
+    // as having seen it, so answering without opening still clears the badge.
+    const seen = readAt.get(k)
+    t.unread = !!inAt
+      && (!seen || new Date(inAt) > new Date(seen))
+      && (!anyOut || new Date(anyOut) < new Date(inAt))
 
     // THE PIN, rewritten. It used to mean "no HUMAN has replied since they
     // wrote", and since only 28 of 1,879 outbound messages carry a human sender,
