@@ -18,7 +18,7 @@
 
 import { useState } from 'react'
 import {
-  Check, UserCog, Bot, Star, Clock, MailOpen, CircleCheck, Loader2, MoreHorizontal,
+  Check, UserCog, Bot, Star, Clock, MailOpen, CircleCheck, Loader2, MoreHorizontal, StickyNote,
 } from 'lucide-react'
 import type { ChannelThread } from '@/lib/inbox/channel-threads'
 
@@ -27,9 +27,12 @@ interface Props {
   /** Reload the list after any change. */
   onChanged: () => void
   onError: (msg: string) => void
+  /** Undefined when this thread resolves to no vendor: nothing to show. */
+  onTogglePanel?: () => void
+  panelOpen?: boolean
 }
 
-export function ThreadToolbar({ thread, onChanged, onError }: Props) {
+export function ThreadToolbar({ thread, onChanged, onError, onTogglePanel, panelOpen }: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -103,6 +106,20 @@ export function ThreadToolbar({ thread, onChanged, onError }: Props) {
         <Icon k="done" I={Check} />
         {thread.needs_response ? 'Mark done' : 'Reopen'}
       </button>
+
+      {onTogglePanel && (
+        <button
+          onClick={onTogglePanel}
+          title="Vendor details and internal notes"
+          className={`h-[30px] w-[30px] grid place-items-center rounded-lg border transition-colors ${
+            panelOpen
+              ? 'bg-neutral-900 text-white border-neutral-900'
+              : 'bg-white text-neutral-500 border-neutral-200 hover:bg-neutral-50'
+          }`}
+        >
+          <StickyNote className="h-4 w-4" />
+        </button>
+      )}
 
       <div className="relative">
         <button

@@ -1,5 +1,5 @@
 /**
- * Server-side ILIKE search across wa_messages.body, mail_messages.body, and
+ * Server-side ILIKE search across wa_messages.body, support_inbox_messages.body_text, and
  * vendor_applications.business_name. Returns up to 30 matching threads.
  *
  * GET /api/admin/inbox/search?q=...
@@ -108,22 +108,29 @@ export async function GET(req: Request) {
     /* wa_messages may not exist yet */
   }
 
-  // mail_messages
+  // support_inbox_messages.
+  //
+  // This read `mail_messages`, which holds ZERO rows on this project: the live
+  // email tables are support_inbox_threads / support_inbox_messages. So email
+  // bodies were never searchable by anything, and the silent catch below meant
+  // it never once complained. (The endpoint was also orphaned, with no caller in
+  // either inbox, so nobody found out.)
   try {
     const { data } = (await supabase
-      .from('mail_messages')
-      .select('thread_id, body, from_address, subject')
-      .ilike('body', like)
-      .order('received_at', { ascending: false })
+      .from('support_inbox_messages')
+      .select('thread_id, body_text, from_address, subject')
+      .ilike('body_text', like)
+      .order('created_at', { ascending: false })
       .limit(20)) as unknown as {
       data: Array<{
         thread_id: string
-        body: string
+        body_text: string
         from_address: string
         subject: string
       }> | null
     }
-    for (const row of data ?? []) {
+    for (const raw of data ?? []) {
+      const row = { ...raw, body: raw.body_text || '' }
       if (scope.blocksEmail(row.from_address) || (hide && (mentionsEft(row.body) || mentionsEft(row.subject)))) continue
       if (!row.thread_id || seen.has(`mail:${row.thread_id}`)) continue
       seen.add(`mail:${row.thread_id}`)
@@ -137,8 +144,10 @@ export async function GET(req: Request) {
         matched_in: 'message',
       })
     }
-  } catch {
-    /* mail_messages may not exist yet */
+  } catch (e) {
+    // Loud now. A silent catch is exactly how a search against an empty table
+    // went unnoticed.
+    console.error('[inbox/search] email search failed:', (e as Error).message)
   }
 
   // vendor_applications.business_name

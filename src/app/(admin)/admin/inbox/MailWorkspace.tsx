@@ -26,8 +26,10 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtSAST, initials } from '@/lib/inbox/format'
 import type { CommItem } from '@/lib/inbox/types'
 import type { ChannelThread, MailBox } from '@/lib/inbox/channel-threads'
-import { Search, Send, Loader2, Pin } from 'lucide-react'
+import { Search, Pin } from 'lucide-react'
 import { ThreadToolbar } from '@/components/admin/inbox/ThreadToolbar'
+import { Composer } from '@/components/admin/inbox/Composer'
+import { VendorPanel } from '@/components/admin/inbox/VendorPanel'
 
 interface Props {
   mailbox: MailBox
@@ -44,9 +46,12 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
   const [messages, setMessages] = useState<CommItem[]>([])
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<'all' | 'waiting' | 'unread'>('all')
+  /** Thread keys (phone / email) whose MESSAGE BODIES match the query. The list
+   *  filter only ever saw names, subjects and the one-line preview, so searching
+   *  for something a vendor actually said found nothing. */
+  const [bodyHits, setBodyHits] = useState<Set<string>>(new Set())
+  const [panelOpen, setPanelOpen] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
-  const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const threadsRef = useRef<ChannelThread[]>([])
@@ -82,6 +87,29 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
 
   useEffect(() => { loadThreads() }, [loadThreads])
 
+  // Debounced message-body search. /api/admin/inbox/search was orphaned (no
+  // caller anywhere) and pointed at a table with zero rows, so email bodies had
+  // never been searchable at all.
+  useEffect(() => {
+    const needleNow = q.trim()
+    if (needleNow.length < 2) { setBodyHits(new Set()); return }
+    const id = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/admin/inbox/search?q=${encodeURIComponent(needleNow)}`, { cache: 'no-store' })
+        if (!r.ok) return
+        const j = await r.json()
+        const keys = new Set<string>()
+        for (const h of (j.hits || j.results || []) as Array<{ thread_key?: string }>) {
+          const k = (h.thread_key || '').toLowerCase().replace(/\D/g, '')
+          if (h.thread_key) keys.add(h.thread_key.toLowerCase())
+          if (k.length >= 9) keys.add(k.slice(-9))
+        }
+        setBodyHits(keys)
+      } catch { /* search is an enhancement, never a blocker */ }
+    }, 300)
+    return () => clearTimeout(id)
+  }, [q])
+
   useEffect(() => {
     const supabase = createClient()
     const ch = supabase
@@ -108,41 +136,15 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
     loadMessages(t)
   }
 
-  async function send() {
-    const text = draft.trim()
-    if (!text || !active?.email || sending) return
-    setSending(true)
-    const optimistic: CommItem = {
-      id: `pending-${crypto.randomUUID()}`, channel: 'email', direction: 'out',
-      body: text, at: new Date().toISOString(), from: 'You', pending: true,
-      subject: active.subject || undefined,
-    }
-    setMessages((m) => [...m, optimistic])
-    setDraft('')
-    try {
-      const r = await fetch('/api/admin/inbox/unified/reply', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ channel: 'email', email: active.email, text }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok || j.ok === false) throw new Error(j.message || j.reason || `Send failed (${r.status})`)
-      await loadMessages(active)
-      loadThreads(true)
-    } catch (e) {
-      setError((e as Error).message)
-      setMessages((m) => m.filter((x) => x.id !== optimistic.id))
-      setDraft(text)
-    } finally {
-      setSending(false)
-    }
-  }
-
   const needle = q.trim().toLowerCase()
   const shown = needle
-    ? threads.filter((t) =>
-        [t.business_name, t.peer_name, t.email, t.subject, t.last_preview]
-          .some((f) => (f || '').toLowerCase().includes(needle)))
+    ? threads.filter((t) => {
+        const local = [t.business_name, t.peer_name, t.email, t.subject, t.last_preview]
+          .some((f) => (f || '').toLowerCase().includes(needle))
+        if (local) return true
+        const phoneKey = (t.phone || '').replace(/\D/g, '').slice(-9)
+        return (!!t.email && bodyHits.has(t.email.toLowerCase())) || (!!phoneKey && bodyHits.has(phoneKey))
+      })
     : threads
   const shownFiltered = shown.filter((t) =>
     filter === 'waiting' ? t.needs_response : filter === 'unread' ? t.unread : true)
@@ -276,6 +278,8 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                     thread={active}
                     onChanged={() => loadThreads(true)}
                     onError={(m) => setError(m)}
+                    onTogglePanel={active.application_id ? () => setPanelOpen((o) => !o) : undefined}
+                    panelOpen={panelOpen}
                   />
                 </div>
                 </div>
@@ -288,35 +292,22 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
 
               <footer className="p-3 border-t border-neutral-200">
                 {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
-                <p className="mb-1.5 text-[11px] text-neutral-500">
-                  Replying as <span className="font-medium text-neutral-700">{sendingAs}</span>
-                  {active.subject ? <> · <span className="text-neutral-600">Re: {active.subject.replace(/^re:\s*/i, '')}</span></> : null}
-                </p>
-                <div className="flex items-end gap-2">
-                  <textarea
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      // Email is long-form: Enter makes a paragraph. Cmd/Ctrl+Enter sends.
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() }
-                    }}
-                    rows={4}
-                    placeholder="Write a reply. Cmd+Enter to send."
-                    className="flex-1 resize-y px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-900/10"
-                  />
-                  <button
-                    onClick={send}
-                    disabled={!draft.trim() || sending}
-                    className="h-9 px-3 grid place-items-center rounded-lg bg-neutral-900 text-white disabled:opacity-40"
-                    aria-label="Send"
-                  >
-                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  </button>
-                </div>
+                <Composer
+                  channel="email"
+                  email={active.email}
+                  sendingAs={sendingAs}
+                  subject={active.subject}
+                  onSent={() => { if (active) loadMessages(active); loadThreads(true) }}
+                  onError={(m) => setError(m)}
+                />
               </footer>
             </>
           )}
         </section>
+
+        {panelOpen && active?.application_id && (
+          <VendorPanel applicationId={active.application_id} onClose={() => setPanelOpen(false)} />
+        )}
       </div>
     </AdminPage>
   )
