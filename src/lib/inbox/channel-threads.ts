@@ -28,6 +28,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { laneScopeFor, hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
 import { withoutMerged } from '@/lib/merge'
 import { BOT_ADMINS } from '@/lib/bot/admins'
+import { canPin } from '@/lib/inbox/automated'
 
 export type MailBox = 'support' | 'gmail'
 export type ChannelKey = 'whatsapp' | MailBox
@@ -276,7 +277,14 @@ export async function loadMailThreads(
       // HUMAN outbound. Derived from real message direction, never from
       // unread_count: reading a thread used to mark it answered and evict it
       // from the queue with the customer still waiting.
-      needs_response: t.status !== 'resolved' && !!inAt && (!outAt || new Date(outAt) < new Date(inAt)),
+      // canPin keeps newsletters and no-reply senders OUT of the pin while
+      // leaving them in the list. Without it 37 of 45 Gmail threads pinned as
+      // "waiting on a person", which is a queue nobody can read. A thread that
+      // resolves to a vendor always pins, whatever their address looks like.
+      needs_response:
+        t.status !== 'resolved' &&
+        !!inAt && (!outAt || new Date(outAt) < new Date(inAt)) &&
+        canPin({ email: t.peer_email, application_id: appId, phone: vendor?.phone ?? null }),
     })
   }
 
