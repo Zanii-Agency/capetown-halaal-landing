@@ -60,6 +60,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
   const threadsRef = useRef<ChannelThread[]>([])
   const activeIdRef = useRef<string | null>(null)
   const streamEnd = useRef<HTMLDivElement>(null)
+  const listBox = useRef<HTMLDivElement>(null)
   threadsRef.current = threads
   activeIdRef.current = activeId
 
@@ -147,6 +148,10 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
 
   useEffect(() => { streamEnd.current?.scrollIntoView({ block: 'end' }) }, [messages])
 
+  // Jump the list back to the top whenever the filter or the search changes, so
+  // a click always has a visible result.
+  useEffect(() => { listBox.current?.scrollTo({ top: 0 }) }, [filter, q])
+
   function open(t: ChannelThread) {
     setActiveId(t.id)
     setMessages([])
@@ -167,6 +172,11 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
     filter === 'waiting' ? t.needs_response : filter === 'unread' ? t.unread : true)
   const pinnedCount = threads.filter((t) => t.needs_response).length
   const unreadCount = threads.filter((t) => t.unread).length
+  // Counts for the GROUP HEADERS describe the rows actually rendered. Using the
+  // global totals meant filtering to Unread showed 50 rows beneath a header that
+  // said 65 were waiting, which is worse than no header at all.
+  const shownWaiting = shownFiltered.filter((t) => t.needs_response).length
+  const shownAnswered = shownFiltered.length - shownWaiting
 
   return (
     <AdminPage
@@ -215,7 +225,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div ref={listBox} className="flex-1 overflow-y-auto">
             {error && (
               <div className="m-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
                 <p className="text-xs font-medium text-rose-800">{error}</p>
@@ -240,13 +250,13 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
               return (
                 <div key={t.id}>
                   {startsWaiting && (
-                    <div className="sticky top-0 z-10 px-3 py-1.5 bg-rose-50/95 backdrop-blur border-y border-rose-100 text-[11px] font-semibold uppercase tracking-wide text-rose-700">
-                      Waiting on a reply · {pinnedCount}
+                    <div className="px-3 py-1.5 bg-rose-50 border-y border-rose-100 text-[11px] font-semibold uppercase tracking-wide text-rose-700">
+                      Waiting on a reply · {shownWaiting}
                     </div>
                   )}
                   {startsAnswered && (
-                    <div className="sticky top-0 z-10 px-3 py-1.5 bg-neutral-50/95 backdrop-blur border-y border-neutral-100 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-                      Answered · {threads.length - pinnedCount}
+                    <div className="px-3 py-1.5 bg-neutral-50 border-y border-neutral-100 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                      Answered · {shownAnswered}
                     </div>
                   )}
                   <button
