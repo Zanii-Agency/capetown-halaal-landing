@@ -29,6 +29,7 @@ import { laneScopeFor } from '@/lib/inbox-lane'
 import { withoutMerged } from '@/lib/merge'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 import { canPin } from '@/lib/inbox/automated'
+import { loadDoneMarks, isCleared } from '@/lib/inbox/queue-state'
 
 export type MailBox = 'support' | 'gmail'
 export type ChannelKey = 'whatsapp' | MailBox
@@ -78,6 +79,22 @@ function mediaPreviewLabel(kind: string | undefined): string | null {
     case 'video': return '🎬 Video'
     default: return null
   }
+}
+
+/** First readable line of an email, whichever part carries it. */
+function mailPreview(text: string | null | undefined, html: string | null | undefined): string {
+  const t = (text || '').trim()
+  if (t) return t.replace(/\s+/g, ' ')
+  return (html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 const norm = (p: string) => p.replace(/^\+/, '')
 
@@ -150,6 +167,7 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
   const db = createAdminClient()
   const scope = await laneScopeFor(viewerEmail)
   const { byPhone, toPrimary } = await vendorIndex(db)
+  const doneMarks = await loadDoneMarks()
 
   const threads = new Map<string, ChannelThread>()
   const needsHumanAt = new Map<string, string>()
@@ -258,15 +276,21 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
     const inAt = lastInboundAt.get(k)
     const anyOut = lastOutboundAt.get(k)
     const humanOut = humanReplyAt.get(k)
-    // unread: nothing at all has gone back since they wrote.
     t.unread = !!inAt && (!anyOut || new Date(anyOut) < new Date(inAt))
-    // needs_response (the pin): no HUMAN has answered since they wrote. The bot
-    // replying does NOT clear it, which is the point: the bot having answered is
-    // frequently the reason a person is needed.
+
+    // THE PIN, rewritten. It used to mean "no HUMAN has replied since they
+    // wrote", and since only 28 of 1,879 outbound messages carry a human sender,
+    // that was true of 82 of 84 threads. A pin on 98% of a list is not a queue.
+    //
+    // Now: nobody at all has answered them (the bot counts as an answer), OR the
+    // bot explicitly escalated and no human has picked that up yet, AND the
+    // operator has not marked it done. The manual clear is the part that
+    // matters: derived state alone can never be emptied by the person working it.
     const escalated = needsHumanAt.get(k)
     const escalationOpen = !!escalated && (!humanOut || new Date(humanOut) < new Date(escalated))
-    const inboundUnanswered = !!inAt && (!humanOut || new Date(humanOut) < new Date(inAt))
-    t.needs_response = escalationOpen || inboundUnanswered
+    const nobodyAnswered = !!inAt && (!anyOut || new Date(anyOut) < new Date(inAt))
+    t.needs_response =
+      (nobodyAnswered || escalationOpen) && !isCleared(doneMarks.get(t.id), inAt ?? null)
     t.bot_paused = botPaused.get(k) === true
   }
 
@@ -288,10 +312,11 @@ export async function loadMailThreads(
   const db = createAdminClient()
   const scope = await laneScopeFor(viewerEmail)
   const { byEmail, toPrimary } = await vendorIndex(db)
+  const doneMarks = await loadDoneMarks()
 
   const { data: msgs } = await db
     .from('support_inbox_messages')
-    .select('id, thread_id, direction, body_text, created_at, received_at, mailbox, sent_by')
+    .select('id, thread_id, direction, body_text, body_html, created_at, received_at, mailbox, sent_by')
     .order('created_at', { ascending: false })
     .limit(4000)
 
@@ -302,6 +327,7 @@ export async function loadMailThreads(
   // conversation it linked to.
   const rows = (msgs || []) as Array<{
     id: string; thread_id: string; direction: 'in' | 'out'; body_text: string | null
+    body_html: string | null
     created_at: string; received_at: string | null; mailbox: string | null; sent_by: string | null
   }>
 
@@ -348,7 +374,10 @@ export async function loadMailThreads(
       application_id: appId,
       subject: t.subject,
       last_message_at: newest?.created_at || t.last_inbound_at,
-      last_preview: (newest?.body_text || '').slice(0, 120),
+      // Outbound mail we send is HTML-only, so body_text is empty and the row
+      // read as a bare "You:" with nothing after it. Fall back to the HTML with
+      // tags stripped, then to the subject, so a preview is never blank.
+      last_preview: (mailPreview(newest?.body_text, newest?.body_html) || t.subject || '').slice(0, 120),
       last_direction: newest?.direction ?? null,
       unread: (t.unread_count ?? 0) > 0,
       // A human owes a reply when the newest inbound is newer than the newest
@@ -363,7 +392,8 @@ export async function loadMailThreads(
       needs_response:
         t.status !== 'resolved' &&
         !!inAt && (!outAt || new Date(outAt) < new Date(inAt)) &&
-        canPin({ email: t.peer_email, application_id: appId, phone: vendor?.phone ?? null }),
+        canPin({ email: t.peer_email, application_id: appId, phone: vendor?.phone ?? null }) &&
+        !isCleared(doneMarks.get(`mail:${t.id}`), inAt),
     })
   }
 

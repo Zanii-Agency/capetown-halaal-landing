@@ -26,7 +26,7 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtSAST, initials } from '@/lib/inbox/format'
 import type { CommItem } from '@/lib/inbox/types'
 import type { ChannelThread, MailBox } from '@/lib/inbox/channel-threads'
-import { Search, Send, Loader2, Pin } from 'lucide-react'
+import { Search, Send, Loader2, Pin, Check } from 'lucide-react'
 
 interface Props {
   mailbox: MailBox
@@ -104,6 +104,24 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
     setActiveId(t.id)
     setMessages([])
     loadMessages(t)
+  }
+
+  /** Clear a conversation out of the queue, or put it back. Optimistic, because
+   *  the whole complaint was that the list could not be emptied. */
+  async function setDone(t: ChannelThread, done: boolean) {
+    setThreads((prev) => prev.map((x) => (x.id === t.id ? { ...x, needs_response: !done } : x)))
+    try {
+      const r = await fetch('/api/admin/inbox/channel/done', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ threadId: t.id, done }),
+      })
+      if (!r.ok) throw new Error(`Could not update (${r.status})`)
+      loadThreads(true)
+    } catch (e) {
+      setError((e as Error).message)
+      loadThreads(true)   // roll back to whatever the server actually thinks
+    }
   }
 
   async function send() {
@@ -237,11 +255,24 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                       {active.business_name || active.peer_name || ''}{active.business_name || active.peer_name ? ' · ' : ''}{active.email}
                     </p>
                   </div>
+                <div className="ml-auto shrink-0 flex items-center gap-2">
                   {active.needs_response && (
-                    <span className="ml-auto shrink-0 text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5">
+                    <span className="text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5">
                       Waiting on a reply
                     </span>
                   )}
+                  <button
+                    onClick={() => setDone(active, active.needs_response)}
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5 border transition-colors ${
+                      active.needs_response
+                        ? 'bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800'
+                        : 'bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50'
+                    }`}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    {active.needs_response ? 'Mark done' : 'Reopen'}
+                  </button>
+                </div>
                 </div>
               </header>
 

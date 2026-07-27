@@ -100,9 +100,16 @@ export default function EftPanel({
       {/* Channel notice: which channels we actually receive. */}
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 text-amber-800">
         <Info className="w-4 h-4 shrink-0 mt-0.5" />
+        {/* Vendors were WhatsApping organisers they happen to know personally and
+            then waiting on a reply that was never coming, because only the
+            official line is monitored and logged. Naming the number, and saying
+            plainly that a personal chat will not be answered, is the whole point
+            of this notice (Taona, 2026-07-27). */}
         <p className="text-sm">
-          Please pay your stall fee by EFT using the details below and upload your proof of payment. To reach us, use your portal inbox, email at{' '}
-          <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>, or WhatsApp. We cannot see or reply to messages on any other channel, including social media. Your payment status updates here on your portal.
+          Please pay your stall fee by EFT using the details below and upload your proof of payment. To reach us, use your portal inbox, email{' '}
+          <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>, or WhatsApp our official number{' '}
+          <a href="https://wa.me/27659435012" className="font-semibold underline whitespace-nowrap">065 943 5012</a>.{' '}
+          <span className="font-semibold">Please WhatsApp that number only.</span> Messages sent to any other number, including someone from the team you know personally, will not be answered and will not reach us. We also cannot see or reply to messages on social media. Your payment status updates here on your portal.
         </p>
       </div>
 
