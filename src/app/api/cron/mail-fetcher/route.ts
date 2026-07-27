@@ -64,6 +64,12 @@ export async function GET(req: Request) {
   const started = Date.now()
   const errors: string[] = []
   let fetched = 0, written = 0, skipped = 0
+  // Stage tracing. The 60s timeout produced NO output at all, not even from the
+  // deadline that was supposed to abort connect at 15s, so the stall is not
+  // where reasoning said it was. Log each stage as it is entered: the last line
+  // printed before the timeout names the stage that hangs.
+  const stage = (s: string) => console.log(JSON.stringify({ at: 'gmail-fetcher', stage: s, ms: Date.now() - started }))
+  stage('entered')
 
   if (!verifyCronAuth(req.headers.get('authorization'))) {
     return NextResponse.json({ ok: false, errors: ['unauthorized'], durationMs: 0 }, { status: 401 })
@@ -84,7 +90,9 @@ export async function GET(req: Request) {
     )
   }
 
+  stage('creds_present')
   const supabase = createAdminClient()
+  stage('db_client_ready')
   const client = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user, pass }, logger: false, socketTimeout: 30_000 })
 
   try {
@@ -95,9 +103,12 @@ export async function GET(req: Request) {
     // rather than throwing: the function is killed at maxDuration with no error,
     // no log, and no heartbeat. That is the exact shape of this outage, and it is
     // why the heartbeat added minutes earlier recorded nothing at all.
+    stage('connecting')
     await withDeadline(client.connect(), 15_000, 'imap connect timed out after 15s')
+    stage('connected')
   } catch (e) {
-    try { await client.close() } catch { /* swallow */ }
+    stage('connect_failed:'+(e as Error).message)
+    try { client.close() } catch { /* swallow */ }
     // The other silent death: a rejected app password fails HERE, and without a
     // heartbeat the outage is invisible for exactly as long as nobody looks.
     await heartbeat({ skipped: 'imap_connect_failed', error: (e as Error).message, errors_count: 1, durationMs: Date.now() - started })
@@ -106,10 +117,12 @@ export async function GET(req: Request) {
 
   let lock: Awaited<ReturnType<typeof client.getMailboxLock>> | null = null
   try {
+    stage('locking_inbox')
     lock = await withDeadline(client.getMailboxLock('INBOX'), 15_000, 'INBOX lock timed out after 15s')
     // NON-DESTRUCTIVE: read RECENT (last 3 days), never mark seen. Dedup via the
     // message-existence check below so re-reads are cheap no-ops.
     const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+    stage('searching')
     const uidsRaw = await withDeadline(client.search({ since }, { uid: true }), 20_000, 'IMAP search timed out after 20s')
     const uids: number[] = Array.isArray(uidsRaw) ? uidsRaw : []
     const toFetch = uids.slice(-50)
