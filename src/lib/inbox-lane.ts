@@ -100,6 +100,28 @@ export function buildLaneScope(
     // see all emails and messages from unapproved vendors"). They have no
     // payment lane yet, so there is nothing about the EFT arrangement to leak,
     // and they are exactly the people asking the questions she answers.
+    // `r.status &&` IS DELIBERATE. DO NOT "FIX" IT TO `(r.status || 'pending')`.
+    //
+    // It reads like an oversight — a NULL status skips the check, falls through
+    // to the payment test, and gets blocked, so an unapproved applicant with no
+    // status is hidden from Samreen rather than shown. A reviewer (and, on
+    // 2026-07-28, an analysis agent) will call that the opposite of this line's
+    // purpose and propose defaulting the status to 'pending'.
+    //
+    // That change BREACHES THE SEAL. This same line is the wall in front of
+    // EFT-lane vendors. Default an absent status to 'pending' and every vendor
+    // whose status is NULL — including one carrying ⟦EFT⟧ — takes the `continue`
+    // and never enters the blocked set, so the festival owner can reach their
+    // messages by phone, email or application id. Three tests in
+    // inbox-lane.test.ts fail the moment you try it; that is them working.
+    //
+    // The widening this line exists for is for REAL applicants, who have a real
+    // status: the schema defaults it to 'pending' and the public insert omits
+    // it, so 'pending' is what they actually carry. NULL is not a pending
+    // applicant, it is a row nobody can classify — and an unclassifiable row
+    // must fail CLOSED, because the cost of being wrong is asymmetric: hiding a
+    // generic sender is an inconvenience, exposing an EFT vendor's payment
+    // conversation is the breach this whole module was built to prevent.
     if (r.status && r.status !== 'approved') continue
     if (vendorInOwnerScope(r.admin_notes, r.paid_at)) continue
     ids.add(r.id)

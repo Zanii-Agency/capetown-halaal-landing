@@ -1,7 +1,11 @@
+'use client'
+
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { Instagram, Facebook, Mail, Phone, Calendar, MapPin } from 'lucide-react'
 import { Logo } from '@/components/logo'
 import { ZaniiCredit } from '@/components/zanii-credit'
+import { showsSiteFooter } from '@/lib/site-chrome'
 
 /**
  * The site footer. ONE of them.
@@ -57,6 +61,11 @@ const SOCIALS = [
 ]
 
 export function SiteFooter() {
+  // Mounted in the root layout, so it would otherwise render inside the admin
+  // console and the exhibitor portal, both fixed-height app shells. See
+  // lib/site-chrome.ts for why the rule lives there rather than inline.
+  if (!showsSiteFooter(usePathname())) return null
+
   return (
     <footer id="contact" className="border-t border-neutral-200 bg-neutral-50">
       <div className="mx-auto max-w-6xl px-6">

@@ -345,46 +345,77 @@ export async function loadMailThreads(
   const { byEmail, toPrimary } = await vendorIndex(db)
   const doneMarks = await loadDoneMarks()
 
-  const { data: msgs } = await db
-    .from('support_inbox_messages')
-    // NO body_html. Selecting it pulled 7.1 MB for 1000 rows and cost 3.3 of the
-    // 4.2 seconds this loader took, because a single marketing email's HTML runs
-    // to 32,000 characters. It was added ONLY to build a one-line preview when
-    // body_text is empty, which the subject does just as well for free.
-    // Without it the same query is 0.7 MB and 507ms.
-    .select('id, thread_id, direction, body_text, created_at, received_at, mailbox, sent_by')
-    .order('created_at', { ascending: false })
-    .limit(4000)
-
-  // No content strip here either, for the same reason as the WhatsApp loader:
-  // once a thread has passed the VENDOR-level gate below, the viewer sees all of
-  // it. Stripping mid-thread previously rewrote last_preview and
-  // last_message_at to an older message, so the list quietly disagreed with the
-  // conversation it linked to.
-  const rows = (msgs || []) as Array<{
+  type MailRow = {
     id: string; thread_id: string; direction: 'in' | 'out'; body_text: string | null
     created_at: string; received_at: string | null; mailbox: string | null; sent_by: string | null
-  }>
+  }
 
   // Newest-first, so the first message seen for a thread decides its mailbox.
   const owner = new Map<string, MailBox>()
-  const latest = new Map<string, typeof rows[number]>()
+  const latest = new Map<string, MailRow>()
   const lastInbound = new Map<string, string>()
   const lastHumanOut = new Map<string, string>()
-  for (const m of rows) {
-    const box: MailBox = m.mailbox === 'gmail' ? 'gmail' : 'support'
-    if (!owner.has(m.thread_id)) { owner.set(m.thread_id, box); latest.set(m.thread_id, m) }
-    if (m.direction === 'in' && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at)
-    if (m.direction === 'out' && m.sent_by && !lastHumanOut.has(m.thread_id)) lastHumanOut.set(m.thread_id, m.created_at)
+
+  // PAGE, do not cap. This loader carried `.limit(4000)`, which PostgREST
+  // silently truncates to 1000 (db-max-rows on this project) — the exact bug the
+  // WhatsApp loader above was rewritten to kill, left un-fixed here because the
+  // two loaders were fixed on different days. The symptom is identical and just
+  // as invisible: a mail thread whose newest message falls outside the newest
+  // 1000 rows never enters `owner`, so it vanishes from the list for EVERYONE,
+  // master included, with no error and no "load more". That looks exactly like a
+  // lane block, which is how it hid: the natural reading is "the seal did it".
+  //
+  // Same stop rule as WhatsApp: two consecutive pages with no new thread means
+  // every live conversation is covered, MAX_PAGES is the hard ceiling.
+  const PAGE_SIZE = 1000
+  const MAX_PAGES = 10
+  let emptyPages = 0
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE_SIZE
+    const { data: msgs } = await db
+      .from('support_inbox_messages')
+      // NO body_html. Selecting it pulled 7.1 MB for 1000 rows and cost 3.3 of
+      // the 4.2 seconds this loader took, because a single marketing email's
+      // HTML runs to 32,000 characters. It was added ONLY to build a one-line
+      // preview when body_text is empty, which the subject does just as well for
+      // free. Without it the same query is 0.7 MB and 507ms.
+      .select('id, thread_id, direction, body_text, created_at, received_at, mailbox, sent_by')
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1)
+    if (!msgs || msgs.length === 0) break
+
+    const before = owner.size
+    // No content strip here either, for the same reason as the WhatsApp loader:
+    // once a thread has passed the VENDOR-level gate below, the viewer sees all
+    // of it. Stripping mid-thread previously rewrote last_preview and
+    // last_message_at to an older message, so the list quietly disagreed with
+    // the conversation it linked to.
+    for (const m of msgs as MailRow[]) {
+      const box: MailBox = m.mailbox === 'gmail' ? 'gmail' : 'support'
+      if (!owner.has(m.thread_id)) { owner.set(m.thread_id, box); latest.set(m.thread_id, m) }
+      if (m.direction === 'in' && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at)
+      if (m.direction === 'out' && m.sent_by && !lastHumanOut.has(m.thread_id)) lastHumanOut.set(m.thread_id, m.created_at)
+    }
+
+    emptyPages = owner.size === before ? emptyPages + 1 : 0
+    if (emptyPages >= 2 || msgs.length < PAGE_SIZE) break
   }
 
   const wanted = [...owner.entries()].filter(([, b]) => b === mailbox).map(([id]) => id)
   if (!wanted.length) return []
 
-  const { data: threadRows } = await db
-    .from('support_inbox_threads')
-    .select('id, peer_email, peer_name, subject, status, unread_count, last_inbound_at, last_handled_at, vendor_application_id')
-    .in('id', wanted.slice(0, 1000))
+  // CHUNK, do not slice. `.in('id', wanted.slice(0, 1000))` was a second silent
+  // cap sitting behind the first: once the paging above stopped hiding threads,
+  // this would have started hiding them instead, and only past the 1000th.
+  const threadRows: Array<Record<string, unknown>> = []
+  for (let i = 0; i < wanted.length; i += 1000) {
+    const { data } = await db
+      .from('support_inbox_threads')
+      .select('id, peer_email, peer_name, subject, status, unread_count, last_inbound_at, last_handled_at, vendor_application_id')
+      .in('id', wanted.slice(i, i + 1000))
+    if (data) threadRows.push(...data)
+  }
 
   const out: ChannelThread[] = []
   for (const t of (threadRows || []) as Array<{

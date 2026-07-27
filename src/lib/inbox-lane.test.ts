@@ -162,3 +162,40 @@ test('the EFT wall must inspect every field that can carry message text', () => 
     1,
   )
 })
+
+// ---------------------------------------------------------------------------
+// The status rule, pinned in BOTH directions.
+//
+// buildLaneScope's `if (r.status && r.status !== 'approved') continue` looks
+// like a missing-null-check, and on 2026-07-28 an analysis agent recommended
+// rewriting it to `(r.status || 'pending')`. That opens the wall: a NULL-status
+// ⟦EFT⟧ vendor would take the `continue` and never be blocked. These two tests
+// exist so that proposal fails by NAME rather than by a puzzling assertion in
+// an unrelated test.
+// ---------------------------------------------------------------------------
+
+test('a REAL unapproved applicant is visible to the owner (the intended widening)', () => {
+  // Schema default, and what the public insert actually produces.
+  for (const status of ['pending', 'info_requested', 'rejected']) {
+    const s = buildLaneScope([v({ id: `app-${status}`, status })], true, false)
+    assert.equal(s.blocksApplicationId(`app-${status}`), false, `${status} must reach her`)
+    assert.equal(s.blocksEmail('chef@vendor.co.za'), false, `${status} email must reach her`)
+  }
+})
+
+test('an UNCLASSIFIABLE row fails CLOSED, even carrying ⟦EFT⟧', () => {
+  // status NULL is not "a pending applicant", it is a row nobody can classify.
+  // Defaulting it to 'pending' would hand this vendor's payment thread to the
+  // festival owner, which is the exact breach this module prevents.
+  for (const status of [null, undefined]) {
+    const s = buildLaneScope([v({ id: 'unknown', status: status as never, admin_notes: '⟦EFT⟧' })], true, false)
+    assert.equal(s.blocksApplicationId('unknown'), true, `status=${status} must stay blocked`)
+    assert.equal(s.blocksEmail('chef@vendor.co.za'), true, `status=${status} email must stay blocked`)
+    assert.equal(s.blocksPhone('0760712578'), true, `status=${status} phone must stay blocked`)
+  }
+})
+
+test('an APPROVED unpaid vendor stays blocked regardless of status widening', () => {
+  const s = buildLaneScope([v({ id: 'appr', status: 'approved' })], true, false)
+  assert.equal(s.blocksApplicationId('appr'), true)
+})
