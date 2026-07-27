@@ -6,6 +6,7 @@ import { parsePortalState, hasPaid } from '@/lib/portal-state'
 import { WaOptInBanner } from '@/components/exhibitor/WaOptInBanner'
 import { LogoReminderBanner } from '@/components/exhibitor/LogoReminderBanner'
 import { hasUnreadAdminReply } from '@/components/exhibitor/InboxCard'
+import { ZaniiCredit } from '@/components/zanii-credit'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,7 +58,15 @@ export default async function PortalLayout({ children }: { children: React.React
         {showWaBanner && <WaOptInBanner prefillPhone={prefillPhone} firstName={firstName} />}
         {needsLogo && <LogoReminderBanner firstName={firstName} />}
       </div>
-      <main className="flex-1 pb-8 lg:overflow-y-auto lg:min-h-0">{children}</main>
+      <main className="flex-1 pb-8 lg:overflow-y-auto lg:min-h-0">
+        {children}
+        {/* Attribution sits INSIDE the scrolling main, not under it: on desktop
+            this shell is a fixed-height app frame, so anything placed outside
+            <main> would be pinned to the viewport bottom like a status bar. */}
+        <div className="mt-10 border-t border-[#E5DCC4] pt-5 text-center">
+          <ZaniiCredit surface="portal" />
+        </div>
+      </main>
     </div>
   )
 }

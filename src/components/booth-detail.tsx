@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { X, ShoppingCart, MapPin, Ruler, Zap, Check, AlertCircle, Sparkles } from 'lucide-react'
+import { X, ShoppingCart, MapPin, Ruler, Zap, Check, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { fireSmallConfetti } from '@/lib/confetti'
 
@@ -148,7 +148,7 @@ export function BoothDetail() {
                     fireSmallConfetti(e.clientX, e.clientY)
                   }}
                 >
-                  <Sparkles className="w-4 h-4 mr-2" />
+                  <ShoppingCart className="w-4 h-4 mr-2" />
                   Add to Cart
                 </Button>
               </motion.div>

@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react'
 import { motion, useInView, AnimatePresence } from 'framer-motion'
 import Image from 'next/image'
-import { Crown, Star, Award, ExternalLink, X, Mail, Phone, Send, Sparkles } from 'lucide-react'
+import { Crown, Star, Award, ExternalLink, X, Mail, Phone, Send, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -337,7 +337,7 @@ function SponsorCard({ tier, index, onEnquire }: { tier: SponsorTier; index: num
         {tier.featured && !tier.isPartner && (
           <div className="absolute -top-3 left-8">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-slate-200 to-white text-neutral-900 text-xs font-bold rounded-full shadow-lg">
-              <Sparkles className="w-3 h-3" />
+              <Star className="w-3 h-3" />
               MOST POPULAR
             </span>
           </div>
@@ -345,7 +345,7 @@ function SponsorCard({ tier, index, onEnquire }: { tier: SponsorTier; index: num
         {tier.isPartner && (
           <div className="absolute -top-3 left-8">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-[#1AA3E8] to-[#0E7BB8] text-white text-xs font-bold rounded-full shadow-lg">
-              <Sparkles className="w-3 h-3" />
+              <Award className="w-3 h-3" />
               OFFICIAL MEDIA PARTNER
             </span>
           </div>
@@ -401,7 +401,7 @@ function SponsorCard({ tier, index, onEnquire }: { tier: SponsorTier; index: num
         <ul className="space-y-3 flex-1">
           {tier.benefits.map((benefit, i) => (
             <li key={i} className="flex items-start gap-3">
-              <Sparkles className={cn(
+              <Check className={cn(
                 'w-4 h-4 mt-1 flex-shrink-0',
                 tier.isPartner ? 'text-[#1AA3E8]' : 'text-[#cd2653]'
               )} />

@@ -3,7 +3,7 @@
 import { useRef } from 'react'
 import Image from 'next/image'
 import { motion, useScroll, useTransform } from 'framer-motion'
-import { ArrowRight, Calendar, MapPin, Users, Sparkles, Play, ChevronDown } from 'lucide-react'
+import { ArrowRight, Calendar, MapPin, Users, Play, ChevronDown } from 'lucide-react'
 import { GradientText } from '@/components/ui/animated-text'
 import { SpotlightCard } from '@/components/ui/spotlight'
 
@@ -88,16 +88,24 @@ export function HeroSection() {
             transition={{ duration: 0.6 }}
             className="flex justify-center mb-6 md:mb-8"
           >
-            <a href="https://tickets.youngatheart.co.za" target="_blank" rel="noopener noreferrer">
-              <SpotlightCard className="inline-flex items-center gap-3 px-5 py-2.5 bg-neutral-900 backdrop-blur-xl border border-neutral-800 rounded-full hover:bg-neutral-800 transition-colors cursor-pointer">
-                <motion.span
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                >
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                </motion.span>
-                <span className="text-sm font-medium text-white">Tickets Selling Now</span>
-                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            {/* A live-status pill, not a decoration. The sparkle that used to
+                lead this badge is the icon every AI tool ships with, so it read
+                as "generated" rather than "on sale" (Taona, 2026-07-28). The
+                pulsing dot already carries "now", so it leads; the arrow is the
+                click affordance the badge never had despite being a link. */}
+            <a
+              href="https://tickets.youngatheart.co.za"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group"
+            >
+              <SpotlightCard className="inline-flex items-center gap-2.5 px-5 py-2.5 bg-neutral-900 backdrop-blur-xl border border-neutral-800 rounded-full hover:bg-neutral-800 transition-colors cursor-pointer">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                </span>
+                <span className="text-sm font-medium text-white">Tickets selling now</span>
+                <ArrowRight className="w-4 h-4 text-white/50 transition-transform group-hover:translate-x-0.5" />
               </SpotlightCard>
             </a>
           </motion.div>
