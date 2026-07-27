@@ -295,6 +295,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                 <Composer
                   channel="email"
                   email={active.email}
+                  applicationId={active.application_id}
                   sendingAs={sendingAs}
                   subject={active.subject}
                   onSent={() => { if (active) loadMessages(active); loadThreads(true) }}

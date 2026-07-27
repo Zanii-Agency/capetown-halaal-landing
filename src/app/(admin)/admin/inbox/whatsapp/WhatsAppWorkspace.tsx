@@ -388,6 +388,7 @@ export function WhatsAppWorkspace() {
                 <Composer
                   channel="whatsapp"
                   phone={active.phone}
+                  applicationId={active.application_id}
                   onSent={() => { if (active) loadMessages(active); loadThreads(true) }}
                   onError={(m) => setError(m)}
                 />

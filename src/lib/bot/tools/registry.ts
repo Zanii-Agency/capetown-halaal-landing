@@ -19,11 +19,12 @@ import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
-import { sendMedia } from '@/lib/whatsapp'
+import { sendMedia, sendText } from '@/lib/whatsapp'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { paymentReference } from '@/lib/payments'
 import { startVendorVerification } from '@/lib/bot/vendor-session'
+import { buildSendable } from '@/lib/inbox/send-library'
 
 const PORTAL_LOGIN = 'cthalaal.co.za/exhibitor/login'
 
@@ -215,15 +216,45 @@ async function getBadgeAllocation(vendorId: string): Promise<string> {
   return `You have ${active} staff badge${active === 1 ? '' : 's'} registered${allowed}. Manage them in the portal at ${PORTAL_LOGIN}.`
 }
 
-async function sendContract(vendorId: string): Promise<string> {
+/**
+ * SEND the contract, as a file, rather than describing one.
+ *
+ * This used to return a STRING and nothing else, so "I'll send you your
+ * contract" was unfulfillable on the happy path: the vendor got a sentence, not
+ * a document. Both halves now come from the send library, so what the bot can
+ * offer and what it can deliver are the same list by construction.
+ */
+function sendContractDeferred(session: VendorSession): () => Promise<void> {
+  const vendorId = session.vendorId!
+  const waPhone = session.waPhone
+  return async () => {
+    try {
+      const built = await buildSendable(vendorId, 'contract')
+      if (built?.kind === 'document' && built.bytes) {
+        await sendMedia(waPhone, {
+          bytes: built.bytes,
+          mimeType: built.mimeType || 'application/pdf',
+          filename: built.filename || 'contract.pdf',
+          kind: 'document',
+          caption: built.caption,
+        })
+        return
+      }
+      // Not signed yet: the library's link item is the honest alternative.
+      const link = await buildSendable(vendorId, 'contract_link')
+      if (link?.caption) await sendText(waPhone, link.caption)
+    } catch (e) {
+      console.error('[tool send_contract] deferred send failed:', (e as Error).message)
+    }
+  }
+}
+
+async function contractStatusLine(vendorId: string): Promise<string> {
   const row = await ownRow(vendorId)
   if (!row) return 'I could not find your application.'
-  if (row.contract_signed_at && row.contract_pdf_path) {
-    const db = createAdminClient()
-    const { data } = await db.storage.from('vendor-docs').createSignedUrl(row.contract_pdf_path, 300)
-    if (data?.signedUrl) return `Here is your signed contract (link valid 5 minutes): ${data.signedUrl}`
-  }
-  return `Your contract is waiting in the portal at ${PORTAL_LOGIN}. Log in, open Contract, review it and sign. Reply here once you have signed and I can send you the signed copy.`
+  return row.contract_signed_at
+    ? 'Sending your signed contract now.'
+    : `Your contract is waiting in your portal at ${PORTAL_LOGIN}. Sending you the link now.`
 }
 
 function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
@@ -387,7 +418,10 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'check_application_status': content = await checkApplicationStatus(session.vendorId!); break
       case 'get_payment_status': content = await getPaymentStatus(session.vendorId!); break
       case 'get_badge_allocation': content = await getBadgeAllocation(session.vendorId!); break
-      case 'send_contract': content = await sendContract(session.vendorId!); break
+      case 'send_contract':
+        deferred = sendContractDeferred(session)
+        content = await contractStatusLine(session.vendorId!)
+        break
       case 'get_logo_upload_link': content = getLogoUploadLink(); break
       case 'start_verification': content = await startVerification(session, (args as { email?: string })?.email || ''); break
       case 'request_password_reset': content = await requestPasswordReset(session.vendorId!); break

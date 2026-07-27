@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Send, Loader2, Paperclip, Sparkles, X, MessageSquareQuote } from 'lucide-react'
+import { Send, Loader2, Paperclip, Sparkles, X, MessageSquareQuote, FolderOpen } from 'lucide-react'
 
 export interface SendResult {
   ok: boolean
@@ -36,6 +36,8 @@ interface Props {
   /** Shown above the box on email so the operator knows which identity replies. */
   sendingAs?: string
   subject?: string | null
+  /** Vendor this thread belongs to, if any. Drives the send library. */
+  applicationId?: string | null
   onSent: () => void
   onError: (msg: string) => void
 }
@@ -44,7 +46,7 @@ interface Canned { id: string; title: string; body: string }
 
 const MAX_BYTES = 4_000_000
 
-export function Composer({ channel, phone, email, sendingAs, subject, onSent, onError }: Props) {
+export function Composer({ channel, phone, email, sendingAs, subject, applicationId, onSent, onError }: Props) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [aiBusy, setAiBusy] = useState(false)
@@ -52,6 +54,9 @@ export function Composer({ channel, phone, email, sendingAs, subject, onSent, on
   const [file, setFile] = useState<{ name: string; type: string; b64: string } | null>(null)
   const [canned, setCanned] = useState<Canned[]>([])
   const [cannedOpen, setCannedOpen] = useState(false)
+  const [libOpen, setLibOpen] = useState(false)
+  const [lib, setLib] = useState<Array<{ key: string; label: string; description: string }>>([])
+  const [libBusy, setLibBusy] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   // A new inbound reopens the window, so never leave the banner up across threads.
@@ -64,6 +69,36 @@ export function Composer({ channel, phone, email, sendingAs, subject, onSent, on
       .then((j) => setCanned(j.canned || j.replies || []))
       .catch(() => {})
   }, [cannedOpen, canned.length])
+
+  useEffect(() => {
+    if (!libOpen || !applicationId || lib.length) return
+    fetch(`/api/admin/inbox/send-library?applicationId=${applicationId}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((j) => setLib(j.items || []))
+      .catch(() => {})
+  }, [libOpen, applicationId, lib.length])
+
+  /** Send a library item. The server builds it and reports honestly when it
+   *  cannot, so this never claims a delivery that did not happen. */
+  async function sendFromLibrary(key: string) {
+    if (!applicationId) return
+    setLibBusy(key)
+    try {
+      const r = await fetch('/api/admin/inbox/send-library', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ applicationId, key, channel, ...(phone ? { phone } : {}), ...(email ? { email } : {}) }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j.ok === false) throw new Error(j.message || `Could not send that (${r.status})`)
+      setLibOpen(false)
+      onSent()
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setLibBusy(null)
+    }
+  }
 
   async function pickFile(f: File) {
     if (f.size > MAX_BYTES) { onError(`${f.name} is too large (max 4MB).`); return }
@@ -181,6 +216,12 @@ export function Composer({ channel, phone, email, sendingAs, subject, onSent, on
             className={`w-full ${isEmail ? 'resize-y' : 'resize-none max-h-40'} px-3 py-2 pr-20 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-900/10`}
           />
           <div className="absolute right-2 bottom-2 flex items-center gap-1">
+            {applicationId && (
+              <button onClick={() => setLibOpen((o) => !o)} title="Send a document or link"
+                className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100">
+                <FolderOpen className="h-4 w-4" />
+              </button>
+            )}
             <button onClick={() => setCannedOpen((o) => !o)} title="Canned replies"
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100">
               <MessageSquareQuote className="h-4 w-4" />
@@ -194,6 +235,33 @@ export function Composer({ channel, phone, email, sendingAs, subject, onSent, on
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             </button>
           </div>
+
+          {libOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setLibOpen(false)} />
+              <div className="absolute bottom-full mb-1 right-0 z-20 w-80 max-h-72 overflow-y-auto rounded-lg border border-neutral-200 bg-white shadow-lg py-1">
+                <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                  Send to this vendor
+                </p>
+                {lib.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-neutral-500">Nothing available for this vendor.</p>
+                ) : lib.map((it) => (
+                  <button
+                    key={it.key}
+                    onClick={() => sendFromLibrary(it.key)}
+                    disabled={!!libBusy}
+                    className="w-full text-left px-3 py-2 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    <p className="text-xs font-medium text-neutral-800 flex items-center gap-1.5">
+                      {libBusy === it.key && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {it.label}
+                    </p>
+                    <p className="text-xs text-neutral-500">{it.description}</p>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {cannedOpen && (
             <>
