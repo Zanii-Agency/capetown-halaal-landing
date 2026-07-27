@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, Check, X, Search, ExternalLink, CheckCircle2 } from 'lucide-react'
+import { Loader2, Check, X, Search, ExternalLink, CheckCircle2, ChevronDown } from 'lucide-react'
 
 interface Bank { accountName: string; bank: string; accountNumber: string; branchCode: string; accountType?: string }
 interface Row {
@@ -53,6 +53,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
   const [err, setErr] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [exQuery, setExQuery] = useState('')
+  const [excludedOpen, setExcludedOpen] = useState(false)
 
   // Newest activity first. The lane arrived in query order, so a proof uploaded
   // this morning could sit below one from three weeks ago.
@@ -230,9 +231,28 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
             </div>
           )}
         </div>
+        {/* Collapsed by default. Eleven permanently-excluded vendors is reference
+            data you set once and rarely revisit, and stacked open it pushed the
+            lane table itself off the screen. */}
         {excluded.length > 0 && (
-          <div className="mt-4 space-y-2">
-            <p className="text-xs uppercase tracking-wider text-[#1B1A17]/45 font-semibold">Excluded from EFT ({excluded.length})</p>
+          <div className="mt-4">
+            <button
+              onClick={() => setExcludedOpen((o) => !o)}
+              aria-expanded={excludedOpen}
+              className="w-full flex items-center gap-2 rounded-lg border border-[#F2EBD8] bg-[#FBF8F0] px-3 py-2.5 text-left hover:bg-[#F7F1E3] transition-colors"
+            >
+              <ChevronDown className={`w-4 h-4 shrink-0 text-[#1B1A17]/40 transition-transform ${excludedOpen ? 'rotate-180' : ''}`} />
+              <span className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold">
+                Excluded from EFT ({excluded.length})
+              </span>
+              <span className="ml-auto text-xs text-[#1B1A17]/40">
+                {excludedOpen ? 'Hide' : 'Show'}
+              </span>
+            </button>
+          </div>
+        )}
+        {excluded.length > 0 && excludedOpen && (
+          <div className="mt-2 space-y-2 max-h-72 overflow-y-auto pr-1">
             {excluded.map((c) => (
               <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#F2EBD8] px-3 py-2 text-sm">
                 <span className="min-w-0">
