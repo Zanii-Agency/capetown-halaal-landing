@@ -484,13 +484,13 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           icon={<MessageCircle className="w-4 h-4" />}
           label="Send WhatsApp"
           tone="mint"
-          onClick={waContact ? () => router.push(`/admin/customer-inbox?contact=${encodeURIComponent(waContact)}&channel=whatsapp`) : undefined}
+          onClick={waContact ? () => router.push(`/admin/inbox/whatsapp?contact=${encodeURIComponent(waContact)}`) : undefined}
         />
         <ActionChip
           icon={<Mail className="w-4 h-4" />}
           label="Send Email"
           tone="sky"
-          onClick={email ? () => router.push(`/admin/customer-inbox?contact=${encodeURIComponent(email)}&channel=email`) : undefined}
+          onClick={email ? () => router.push(`/admin/inbox/support?contact=${encodeURIComponent(email)}`) : undefined}
         />
         <ActionChip
           icon={<CreditCard className="w-4 h-4" />}

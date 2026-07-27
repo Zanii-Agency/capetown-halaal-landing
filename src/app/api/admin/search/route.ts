@@ -250,7 +250,7 @@ export async function GET(req: NextRequest) {
         thread_key: r.thread_key as string,
         channel: r.channel as 'wa' | 'mail',
         last_inbound_at: (r.last_inbound_at as string | null) ?? null,
-        link: `/admin/customer-inbox`,
+        link: `/admin/inbox/whatsapp`,
       }))
     })()
 
@@ -284,7 +284,7 @@ export async function GET(req: NextRequest) {
         last_inbound_at: (r.last_inbound_at as string | null) ?? null,
         // Support inbox is a single SPA, no per-thread route. Land there
         // with ?thread=<id> so the client can deep-link to the row.
-        link: `/admin/support-inbox?thread=${r.id}`,
+        link: `/admin/inbox/support`,
       }))
     })()
 

@@ -1,9 +1,8 @@
 import { redirect } from 'next/navigation'
 
-// Retired: the Support Inbox is now merged into the single master Inbox at
-// /admin/customer-inbox (email/support threads are aggregated there). Kept as a
-// redirect so old links/bookmarks land in the right place. The old
-// SupportInboxClient + APIs remain in the repo.
+// Retired. Support email now lives in its own channel workspace at
+// /admin/inbox/support, and this stays only so old links and bookmarks land
+// somewhere useful. SupportInboxClient was deleted with the merged inbox.
 export default function SupportInboxRedirect() {
-  redirect('/admin/customer-inbox')
+  redirect('/admin/inbox/support')
 }

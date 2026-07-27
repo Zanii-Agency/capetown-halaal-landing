@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { WhatsAppStream } from '@/components/admin/inbox/WhatsAppStream'
 import { createClient } from '@/lib/supabase/client'
@@ -39,6 +40,7 @@ export function WhatsAppWorkspace() {
    *  for something a vendor actually said found nothing. */
   const [bodyHits, setBodyHits] = useState<Set<string>>(new Set())
   const [panelOpen, setPanelOpen] = useState(false)
+  const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // The thread pane needs THREE distinct states. It had one: `messages`. Any
@@ -130,6 +132,20 @@ export function WhatsAppWorkspace() {
   }, [messages, loadingOlder])
 
   useEffect(() => { loadThreads() }, [loadThreads])
+
+  // ?contact=<phone> opens that conversation directly. Vendor360 and global search
+  // link straight into a thread; without this they landed on a list and left the
+  // operator to find the person again, which is a downgrade on what the old
+  // inbox did.
+  const wanted = (searchParams.get('contact') || '').trim().toLowerCase()
+  useEffect(() => {
+    if (!wanted || activeId || !threads.length) return
+    const digits = wanted.replace(/\D/g, '').slice(-9)
+    const hit = threads.find((t) =>
+      (t.phone || '').toLowerCase() === wanted
+      || (digits.length === 9 && (t.phone || '').replace(/\D/g, '').slice(-9) === digits))
+    if (hit) open(hit)
+  }, [wanted, threads, activeId])
 
   // Debounced message-body search. /api/admin/inbox/search was orphaned (no
   // caller anywhere) and pointed at a table with zero rows, so email bodies had

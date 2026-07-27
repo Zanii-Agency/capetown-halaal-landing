@@ -50,7 +50,7 @@ const STEPS: TourStep[] = [
   {
     title: 'Handle Support Emails',
     body: 'Click "Support Inbox" under COMMUNICATIONS to read and reply to emails. Tag, assign, snooze, or resolve threads.',
-    navigateTo: '/admin/support-inbox',
+    navigateTo: '/admin/inbox/support',
   },
   {
     title: 'Search Everything with Cmd+K',

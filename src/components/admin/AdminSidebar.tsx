@@ -101,8 +101,7 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
     : navGroups
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [supportUnread, setSupportUnread] = useState(0)
-  const [needsResponse, setNeedsResponse] = useState(0)
+  const [channelCounts, setChannelCounts] = useState<Record<string, number>>({})
   const [pendingApps, setPendingApps] = useState<number | null>(null)
   // Collapsed state for desktop (lg+) sidebar. Persisted to localStorage so the
   // operator's preference survives reloads. Mobile drawer is unaffected.
@@ -128,20 +127,27 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
     setMobileOpen(false)
   }, [pathname])
 
-  // Poll the unified inbox unread count for the sidebar badge. Fires every 60s
-  // when the tab is visible. Best-effort, sidebar still works if it fails.
+  // Per-channel "waiting on a person" counts. These polled the merged
+  // /inbox/unified list, which goes away with the old inbox. Each tab now
+  // reports its own number from the endpoint that tab actually renders, so a
+  // badge and the page behind it can never disagree about how much work there
+  // is — which they did, because they were reading different queries.
   useEffect(() => {
     let cancelled = false
     const tick = async () => {
       if (document.hidden) return
       try {
-        const res = await fetch('/api/admin/inbox/unified?channel=all')
-        if (!res.ok) return
-        const j = await res.json()
+        const entries = await Promise.all(
+          (['whatsapp', 'support', 'gmail'] as const).map(async (c) => {
+            const res = await fetch(`/api/admin/inbox/channel/${c}`)
+            if (!res.ok) return [c, 0] as [string, number]
+            const j = await res.json()
+            return [c, (j.counts?.needs_response as number) || 0] as [string, number]
+          }),
+        )
         if (cancelled) return
-        setSupportUnread(j.counts?.unread || 0)
-        setNeedsResponse(j.counts?.needs_response || 0)
-      } catch { /* swallow */ }
+        setChannelCounts(Object.fromEntries(entries))
+      } catch { /* a badge is never worth breaking the sidebar */ }
     }
     tick()
     // 30s (was 60s) so the Needs You / unread badges track the inbox page more
@@ -263,18 +269,11 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
               </p>
             )}
             {group.items.map((item) => {
-              // Inbox and Needs You share the /admin/customer-inbox path and are
-              // told apart by the ?view=needs query (usePathname drops the query,
-              // so disambiguate with searchParams).
-              const onInbox = pathname.startsWith('/admin/customer-inbox')
-              const isNeedsView = searchParams.get('view') === 'needs'
-              const isActive = item.href.includes('view=needs')
-                ? (onInbox && isNeedsView)
-                : item.href === '/admin/customer-inbox'
-                  ? (onInbox && !isNeedsView)
-                  : isItemActive(item.href)
-              const badgeNum = item.href.includes('view=needs') ? needsResponse
-                : item.href === '/admin/customer-inbox' ? supportUnread
+              // Every communications tab now has its own path, so the
+              // ?view=needs disambiguation the merged inbox needed is gone.
+              const isActive = isItemActive(item.href)
+              const channel = item.href.startsWith('/admin/inbox/') ? item.href.split('/').pop()! : null
+              const badgeNum = channel ? (channelCounts[channel] ?? 0)
                 : item.href === '/admin/applications' ? pendingApps
                 : null
               return (
