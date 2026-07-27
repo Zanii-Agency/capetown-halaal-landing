@@ -34,6 +34,23 @@ async function findVendorByEmail(
   return (data?.[0] as { id: string }) || null
 }
 
+/**
+ * A pulse on every run, mirroring support-mail-fetcher. The Gmail fetcher wrote
+ * NO heartbeat at all, so there was no record anywhere of it running, skipping,
+ * or dying: the only way to notice was to spot that inbound mail had stopped.
+ * No heartbeat for >10 minutes now means this cron is down.
+ */
+async function heartbeat(metadata: Record<string, unknown>) {
+  try {
+    await createAdminClient().from('site_events').insert({
+      session_id: 'gmail-inbox-cron',
+      event_type: 'gmail_mail_fetcher_heartbeat',
+      path: '/api/cron/mail-fetcher',
+      metadata,
+    })
+  } catch { /* swallow: a heartbeat must never break the fetch */ }
+}
+
 export async function GET(req: Request) {
   const started = Date.now()
   const errors: string[] = []
@@ -46,7 +63,16 @@ export async function GET(req: Request) {
   const user = process.env.GMAIL_IMAP_USER
   const pass = process.env.GMAIL_APP_PASS
   if (!user || !pass) {
-    return NextResponse.json({ ok: true, skipped: 'GMAIL_IMAP_USER/GMAIL_APP_PASS not set', durationMs: Date.now() - started })
+    // NOT ok. This returned `ok: true` until 2026-07-27, so a mailbox with no
+    // credentials looked identical to a mailbox with no new mail: every 2 minutes
+    // the cron went green while importing nothing. Samreen's Gmail was dark from
+    // 24 Jul 16:29 to 27 Jul and nothing anywhere said so. A skip is an outage,
+    // and an outage has to be loud.
+    await heartbeat({ skipped: 'no_credentials', errors_count: 1, durationMs: Date.now() - started })
+    return NextResponse.json(
+      { ok: false, errors: ['GMAIL_IMAP_USER/GMAIL_APP_PASS not set'], durationMs: Date.now() - started },
+      { status: 503 },
+    )
   }
 
   const supabase = createAdminClient()
@@ -56,6 +82,9 @@ export async function GET(req: Request) {
     await client.connect()
   } catch (e) {
     try { await client.close() } catch { /* swallow */ }
+    // The other silent death: a rejected app password fails HERE, and without a
+    // heartbeat the outage is invisible for exactly as long as nobody looks.
+    await heartbeat({ skipped: 'imap_connect_failed', error: (e as Error).message, errors_count: 1, durationMs: Date.now() - started })
     return NextResponse.json({ ok: false, errors: [`imap connect: ${(e as Error).message}`], durationMs: Date.now() - started }, { status: 502 })
   }
 
@@ -172,6 +201,7 @@ export async function GET(req: Request) {
 
   const durationMs = Date.now() - started
   console.log(JSON.stringify({ at: 'gmail-fetcher', event: 'run_complete', fetched, written, skipped, errorCount: errors.length, durationMs }))
+  await heartbeat({ fetched, written, skipped, errors_count: errors.length, host: 'imap.gmail.com', durationMs })
   // See the note in support-mail-fetcher: email had no realtime path at all.
   if (written > 0) await broadcastInboxRefresh('email').catch(() => {})
 
