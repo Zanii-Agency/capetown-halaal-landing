@@ -40,6 +40,11 @@ const navGroups: NavGroup[] = [
   {
     label: 'COMMUNICATIONS',
     items: [
+      // The channel split (2026-07-27). WhatsApp is live; Support and Gmail get
+      // their own entries as each workspace lands, and Inbox + Needs You come
+      // out only once all three exist. Removing a working surface before its
+      // replacement ships is a gap, not a cleanup.
+      { name: 'WhatsApp', href: '/admin/inbox/whatsapp', icon: MessageCircle },
       { name: 'Inbox', href: '/admin/customer-inbox', icon: MessageCircle },
       { name: 'Needs You', href: '/admin/customer-inbox?view=needs', icon: Bell },
       { name: 'Broadcast', href: '/admin/broadcast', icon: Megaphone },
