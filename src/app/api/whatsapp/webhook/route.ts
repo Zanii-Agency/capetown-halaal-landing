@@ -32,6 +32,7 @@ import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { isMaintenanceEnabled } from '@/lib/maintenance'
 import { guardReply, logGuardRedaction } from '@/lib/bot/reply-guard'
 import { shouldProcess } from '@/lib/brain-core/index.js'
+import { isAcknowledgement } from '@/lib/bot/ack'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -130,6 +131,31 @@ async function logLLMThrottle(waId: string, count: number) {
     })
   } catch (e) {
     console.warn('[wa-webhook] LLM throttle log failed:', (e as Error).message)
+  }
+}
+
+/**
+ * Did WE ask this number something in our last message? If so, whatever comes
+ * back is an answer and must be processed, even when it looks like a closer:
+ * "yes" is both. Fails OPEN (returns true, meaning "assume we asked") on a DB
+ * error, because a spurious reply is a far smaller failure than swallowing a
+ * vendor's answer.
+ */
+async function weAskedSomething(e164: string): Promise<boolean> {
+  try {
+    const db = createAdminClient()
+    const { data } = await db
+      .from('wa_messages')
+      .select('body')
+      .eq('wa_phone', e164.replace(/^\+/, ''))
+      .eq('direction', 'out')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    const last = (data?.[0] as { body?: string } | undefined)?.body || ''
+    return /[?？]/.test(last)
+  } catch (e) {
+    console.warn('[wa-webhook] weAskedSomething failed (assuming we asked):', (e as Error).message)
+    return true
   }
 }
 
@@ -505,6 +531,20 @@ async function handleInbound(msg: {
   // question is never suppressed.
   if (isLikelyAutoresponder(msg.text)) {
     console.log(JSON.stringify({ at: 'webhook', event: 'autoresponder_echo_suppressed', e164_last4: e164.slice(-4) }))
+    return
+  }
+
+  // Let a conversation END. A vendor reacted ❤️ to her approval and typed
+  // "Yeaaahh"; the bot replied "Haha, love the energy! 😄 What's got you excited
+  // ...", reopening a conversation that had just closed. The system prompt
+  // already forbade that and the model did it anyway, because replying is what a
+  // model is for, so the decision is made here instead of being asked for.
+  //
+  // Gated on our OWN last message, which is the part that makes it safe: if we
+  // asked something, ANY answer is real input, and "yes" is both a closer and an
+  // answer. Suppression only applies when nobody is waiting on a reply.
+  if (isAcknowledgement(msg.text) && !(await weAskedSomething(e164))) {
+    console.log(JSON.stringify({ at: 'webhook', event: 'acknowledgement_no_reply', e164_last4: e164.slice(-4), text: msg.text.slice(0, 40) }))
     return
   }
 
