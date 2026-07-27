@@ -108,7 +108,7 @@ export async function GET(req: Request) {
     // no log, and no heartbeat. That is the exact shape of this outage, and it is
     // why the heartbeat added minutes earlier recorded nothing at all.
     stage('connecting')
-    await withDeadline(client.connect(), 15_000, 'imap connect timed out after 15s')
+    await withDeadline(client.connect(), 30_000, 'imap connect timed out after 30s')
     stage('connected')
   } catch (e) {
     stage('connect_failed:'+(e as Error).message)
@@ -147,11 +147,60 @@ export async function GET(req: Request) {
     // for three days. Stop early instead and report what was done: the cron runs
     // every 2 minutes, so an unfinished backlog drains on the following runs.
     const budgetMs = 240_000
+    // CHEAP PRE-PASS. This loop used to pull `source: true` (the FULL body) for
+    // all 50 messages and only then check message_id against the database, so a
+    // run with nothing new still downloaded and parsed 50 whole emails: 217
+    // seconds of work to discover it already had everything. The cron fires
+    // every 120s, so runs overlapped, and the overlapping IMAP connections timed
+    // each other out. 20 consecutive runs failed that way. The fetcher was
+    // DDoSing itself.
+    //
+    // Now: one streamed round trip for envelopes and headers only, one bulk
+    // query to find which are already imported, and bodies fetched ONLY for the
+    // genuinely new ones. A no-op run costs a couple of seconds.
+    const heads = new Map<number, { messageId: string; headerBlob: string; date: number }>()
+    try {
+      for await (const m of client.fetch(`${first}:${total}`, {
+        envelope: true,
+        headers: ['message-id', 'auto-submitted', 'x-auto-response-suppress', 'precedence', 'in-reply-to'],
+      })) {
+        const blob = m.headers ? m.headers.toString('utf8') : ''
+        const idMatch = blob.match(/^message-id:\s*(.+)$/im)
+        heads.set(m.seq, {
+          messageId: (idMatch?.[1] || m.envelope?.messageId || '').trim(),
+          headerBlob: blob,
+          date: m.envelope?.date ? new Date(m.envelope.date).getTime() : 0,
+        })
+      }
+    } catch (e) {
+      errors.push(`header sweep: ${(e as Error).message}`)
+    }
+    stage(`headers_ready:${heads.size}`)
+
+    const ids = [...heads.values()].map((h) => h.messageId).filter(Boolean)
+    const known = new Set<string>()
+    if (ids.length) {
+      const { data: existing } = await supabase
+        .from('support_inbox_messages').select('message_id').in('message_id', ids)
+      for (const r of (existing || []) as Array<{ message_id: string }>) known.add(r.message_id)
+    }
+    stage(`already_have:${known.size}/${ids.length}`)
+
     for (const seq of toFetch) {
       if (Date.now() - started > budgetMs) {
         errors.push(`budget: stopped after ${fetched} of ${toFetch.length} messages`)
         break
       }
+      // Everything decidable from the headers is decided BEFORE paying for a body.
+      const head = heads.get(seq)
+      if (!head) { skipped += 1; continue }
+      if (!head.messageId || known.has(head.messageId)) { skipped += 1; continue }
+      if (head.date && head.date < cutoff) { skipped += 1; continue }
+      const auto = head.headerBlob.match(/^auto-submitted:\s*([^\r\n]+)/im)
+      if ((auto !== null && auto[1].trim().toLowerCase() !== 'no')
+        || /^x-auto-response-suppress:\s*\S/im.test(head.headerBlob)
+        || /^precedence:\s*(bulk|list|junk)/im.test(head.headerBlob)) { skipped += 1; continue }
+
       fetched += 1
       let msg: FetchMessageObject | null = null
       try {
