@@ -19,6 +19,7 @@
 
 import nodemailer from 'nodemailer'
 import { guardBankingTalk } from '@/lib/bot/banking-guard'
+import { mirrorOutboundToSupportInbox } from '@/lib/email/support-mirror'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getEftMode, mentionsEft, markVendorToldEft } from '@/lib/eft'
@@ -160,6 +161,20 @@ export async function sendEmailReply(email: InboundEmail, replyText: string): Pr
       from, to: email.from_address, subject, text: stripEmDashes(replyText.trim()),
       ...(email.message_id ? { inReplyTo: email.message_id, references: email.message_id } : {}),
     })
+    // MIRROR IT INTO THE THREAD. This sent via raw nodemailer and returned, so
+    // the reply reached the vendor and appeared NOWHERE in the admin inbox: the
+    // thread still showed the vendor's message as the newest, still read
+    // "Waiting on a reply", and the operator had no record of what was said.
+    // 2026-07-27: Taona replied to Fahema Ryklief through the WhatsApp SEND
+    // flow, the bot confirmed "Sent ✅", and the Support Email thread was
+    // unchanged. Resend's sendEmail mirrors automatically; every raw SMTP path
+    // has to do it explicitly, exactly as unified/reply's gmail branch already
+    // does.
+    await mirrorOutboundToSupportInbox({
+      to: email.from_address,
+      subject,
+      text: stripEmDashes(replyText.trim()),
+    }).catch((e) => console.error('[email-concierge] mirror failed:', (e as Error).message))
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error).message }

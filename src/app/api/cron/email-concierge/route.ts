@@ -13,6 +13,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { sendText } from '@/lib/whatsapp'
 import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, EMAIL_MIRROR, type InboundEmail } from '@/lib/email-concierge'
+import { parseAttachmentMarker } from '@/lib/email/attachments'
 import { getEftMode } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
@@ -146,12 +147,20 @@ export async function GET(req: Request) {
   const box = toAddr.includes('capetownhalaal') ? 'capetownhalaal@gmail.com'
     : toAddr.includes('support@youngatheart') ? 'support@youngatheart.co.za'
     : email.account === 'gmail' ? 'capetownhalaal@gmail.com' : 'support@youngatheart.co.za'
-  const snippet = clean(email.body, 500)
+  // Strip the ⟦ATTACH:<base64>⟧ marker before it reaches WhatsApp. The alert for
+  // Fahema Ryklief's proof of payment carried ~300 characters of base64 into the
+  // operator's chat, burying the actual message. The marker is how attachments
+  // are stored on body_text; it is never something a human should read.
+  const { cleanBody, attachments } = parseAttachmentMarker(email.body)
+  const attachNote = attachments.length
+    ? `\n\n📎 ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}: ${attachments.map((a) => a.filename).join(', ')}`
+    : ''
+  const snippet = clean(cleanBody, 500)
   const bubble1 =
     `📧 New email on ${box}\n` +
     `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
     `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
-    `"${snippet}${snippet.length >= 500 ? '…' : ''}"`
+    `"${snippet}${snippet.length >= 500 ? '…' : ''}"${attachNote}`
   const r1 = await sendText(confirmer.phone, bubble1)
 
   const bubble2 = draft
