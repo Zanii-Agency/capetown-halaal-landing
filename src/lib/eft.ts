@@ -25,6 +25,10 @@ const EFT_MARKER = '⟦EFT⟧'
 // survives their read-modify-writes untouched.
 const EFT_RE = /⟦EFT⟧/
 
+// Bare token like ⟦EFT⟧/⟦NOEFT⟧, distinct body so no reader collides with them.
+const OWNERVIS_MARKER = '⟦OWNERVIS⟧'
+const OWNERVIS_RE = /⟦OWNERVIS⟧/
+
 const NOEFT_MARKER = '⟦NOEFT⟧'
 // Explicit EXCLUSION: this vendor is handled manually and must NEVER enter the EFT
 // lane, even under global mode. They never see EFT details on their portal and
@@ -235,11 +239,35 @@ export function vendorInOwnerScope(
   adminNotes: string | null | undefined,
   paidAt?: string | null,
 ): boolean {
+  // DELIBERATE HAND-OVER. The only way an UNPAID vendor reaches the festival
+  // owner. Taona 2026-07-27: vendors who write in asking for an extension or a
+  // payment plan are hers to negotiate, and she cannot negotiate with someone
+  // she cannot see. Applied per vendor, by an explicit act, never by a rule that
+  // infers intent: a detector deciding who leaves this wall would eventually
+  // decide wrong, and the wall only works because every hole in it was made on
+  // purpose and can be listed.
+  if (OWNERVIS_RE.test(adminNotes || '')) return true
+
   const p = parsePortalState(adminNotes).payment
   // 'collected' is the EFT interim state and never sets paid_at, so it correctly
   // fails this test and stays with the master until a real settlement lands.
   if (!paidAt && p?.status !== 'paid') return false
   return !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+}
+
+/** Hand a vendor to the festival owner regardless of payment state. */
+export function withOwnerVisibleMarker(adminNotes: string | null | undefined): string {
+  const notes = adminNotes || ''
+  return OWNERVIS_RE.test(notes) ? notes : `${notes}\n${OWNERVIS_MARKER}`.trim()
+}
+
+/** Take it back. The vendor returns to the normal payment-based rule. */
+export function withoutOwnerVisibleMarker(adminNotes: string | null | undefined): string {
+  return (adminNotes || '').replace(OWNERVIS_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+export function isOwnerVisible(adminNotes: string | null | undefined): boolean {
+  return OWNERVIS_RE.test(adminNotes || '')
 }
 
 /** Whose CONVERSATIONS move to the master EFT tab (and off the festival owner's
