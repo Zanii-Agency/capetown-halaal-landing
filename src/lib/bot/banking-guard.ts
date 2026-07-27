@@ -36,6 +36,15 @@ export const PORTAL_PAYMENT_LINE =
 // ABOUT them, so matching digits alone would miss every real case.
 const BANKING_TERMS = [
   /\bbank(?:ing)?\s+(?:details?|info(?:rmation)?|account)\b/i,
+  // THE HOLE. The list above requires details|info|account AFTER "bank", so
+  // "bank transfer" matched nothing and the bot shipped "it'll show you the
+  // exact amount and where to pay via bank transfer" straight past the guard.
+  // The first version of this file enumerated the phrasings from one screenshot
+  // instead of the topic, which is the same mistake the prompt rules kept making.
+  /\bbank\s*transfers?\b/i,
+  /\beft\b/i,
+  /\bpay(?:ment)?\s+(?:via|by|with|through)\s+(?:a\s+)?(?:bank|eft|transfer)/i,
+  /\btransfer(?:red)?\s+(?:in)?to\s+(?:the\s+|our\s+)?account/i,
   /\baccount\s+(?:details?|number|name|no\b)/i,
   /\bbranch\s+code\b/i,
   /\bbeneficiary\b/i,

@@ -18,6 +18,7 @@
  */
 
 import nodemailer from 'nodemailer'
+import { guardBankingTalk } from '@/lib/bot/banking-guard'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getEftMode, mentionsEft, markVendorToldEft } from '@/lib/eft'
@@ -86,7 +87,7 @@ export async function draftReply(email: InboundEmail): Promise<string> {
     // simply how a stall is paid for. No outage, no "temporarily", no acronym,
     // no framing it as a fallback: a vendor told the payment system is broken
     // loses confidence in the festival, not just the gateway.
-    ? `CURRENT STALL FEE PAYMENT: vendors pay the stall fee by bank transfer. Present this as the plain, normal way to pay. Tell them the banking details, their reference and the full terms are on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, where they also upload proof of payment. Do NOT state account numbers yourself. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay. TERMS the vendor must follow: ${EFT_TERMS_TEXT} `
+    ? `CURRENT STALL FEE PAYMENT: send the vendor to their exhibitor portal payment page at cthalaal.co.za/exhibitor/login and stop there. Do NOT name a payment method, do NOT say "banking details", "account details", "account number", "branch code" or "bank transfer", and do NOT describe what the payment page contains: the portal holds the live values and anything you say about them can be out of date. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay. TERMS the vendor must follow: ${EFT_TERMS_TEXT} `
     : ''
   const system =
     `You draft email replies on behalf of the Cape Town Halaal Festival team (operator: Samreen). ` +
@@ -117,7 +118,12 @@ export async function draftReply(email: InboundEmail): Promise<string> {
       messages: [{ role: 'user', content: user }],
     })
     const text = r.content[0]?.type === 'text' ? r.content[0].text.trim() : ''
-    return stripEmDashes(text)
+    // Same guard the WhatsApp bot passes through. It was wired into guardReply
+    // only, so this second path to a vendor was never covered and the drafter
+    // duly wrote "The banking details and your unique payment reference are
+    // available on your exhibitor portal" (2026-07-27, to a vendor asking why
+    // her payment failed). One outbound rule, both channels.
+    return guardBankingTalk(stripEmDashes(text)).reply
   } catch (e) {
     console.error('[email-concierge] draft failed:', (e as Error).message)
     return ''

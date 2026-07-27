@@ -66,3 +66,20 @@ test('empty input is safe', () => {
   assert.equal(mentionsBanking(null), false)
   assert.equal(guardBankingTalk('').replaced, false)
 })
+
+test('the EMAIL drafter sentence, and the phrasings the first guard missed', () => {
+  // The guard was wired into the WhatsApp reply path only, so the email
+  // concierge wrote this to a vendor whose payment had failed:
+  assert.equal(mentionsBanking(
+    'The banking details and your unique payment reference are available on your exhibitor portal.'), true)
+  // And "bank transfer" was not in the original term list at all, which is how
+  // "it'll show you the exact amount and where to pay via bank transfer" shipped.
+  for (const s of [
+    "it'll show you the exact amount and where to pay via bank transfer",
+    'You can pay via bank transfer.',
+    'Vendors pay the stall fee by bank transfer.',
+    'Please make an EFT to the details on your portal.',
+  ]) {
+    assert.equal(mentionsBanking(s), true, `expected caught: ${s}`)
+  }
+})

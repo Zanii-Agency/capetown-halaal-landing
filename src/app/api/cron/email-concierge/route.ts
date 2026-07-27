@@ -48,12 +48,25 @@ export async function GET(req: Request) {
   const STALE_MINUTES = 60
   const { data: inflightRows } = await db
     .from('support_inbox_messages')
-    .select('id, received_at')
+    .select('id, received_at, created_at')
     .eq('concierge_status', 'awaiting_confirm')
     .eq('concierge_admin', confirmer.phone)
   const staleCutoff = Date.now() - STALE_MINUTES * 60 * 1000
-  const stale = (inflightRows || []).filter((r) => new Date(r.received_at as string).getTime() < staleCutoff)
-  const fresh = (inflightRows || []).filter((r) => new Date(r.received_at as string).getTime() >= staleCutoff)
+  // Staleness is measured from when the email entered OUR system (created_at),
+  // NOT from when the vendor sent it (received_at).
+  //
+  // On received_at, any email imported more than an hour after it was written
+  // was stale the instant we asked about it, and got auto-skipped on the very
+  // next 2-minute cron run. 2026-07-27: a vendor's payment problem arrived
+  // 07:33, was imported 11:30 by the Gmail backfill, alerted, and was dead
+  // before the operator's reply landed ONE MINUTE later. Every email that
+  // backfill recovered was in the same position. The window is meant to stop
+  // the queue wedging on an unanswered prompt, so it has to start when the
+  // prompt was sent.
+  const basis = (r: { created_at?: string | null; received_at?: string | null }) =>
+    new Date((r.created_at || r.received_at) as string).getTime()
+  const stale = (inflightRows || []).filter((r) => basis(r) < staleCutoff)
+  const fresh = (inflightRows || []).filter((r) => basis(r) >= staleCutoff)
   if (stale.length > 0) {
     await db
       .from('support_inbox_messages')
@@ -125,7 +138,14 @@ export async function GET(req: Request) {
   // Sanitize attacker-controlled header fields before they hit WhatsApp, so a
   // crafted from-name/subject can't fake fields or the SEND/SKIP footer (#7b).
   const clean = (s: string | null, n: number) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n)
-  const box = email.account === 'gmail' ? 'capetownhalaal@gmail.com' : 'support@youngatheart.co.za'
+  // Label from the actual RECIPIENT where we have one. The alert told the
+  // operator this email was on support@ when it had been sent to the Gmail box,
+  // so he searched the wrong tab for it. to_address is unambiguous; the mailbox
+  // column is only the fallback.
+  const toAddr = (email.to_address || '').toLowerCase()
+  const box = toAddr.includes('capetownhalaal') ? 'capetownhalaal@gmail.com'
+    : toAddr.includes('support@youngatheart') ? 'support@youngatheart.co.za'
+    : email.account === 'gmail' ? 'capetownhalaal@gmail.com' : 'support@youngatheart.co.za'
   const snippet = clean(email.body, 500)
   const bubble1 =
     `📧 New email on ${box}\n` +
