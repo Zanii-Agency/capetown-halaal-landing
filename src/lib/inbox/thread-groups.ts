@@ -20,7 +20,25 @@
 
 import type { ChannelThread } from './channel-threads'
 
-export type ThreadFilter = 'all' | 'waiting' | 'unread'
+export type ThreadFilter = 'all' | 'waiting' | 'unread' | 'starred' | 'vendors' | 'people'
+
+/**
+ * What each tab keeps. Split out so the tabs are data rather than a growing
+ * ternary chain, and so a new tab cannot be added to the UI without also being
+ * given a meaning here.
+ *
+ * `vendors` deliberately includes UNAPPROVED applicants (Taona: "vendors (which
+ * includes approved and unapprovd) and generic people"), so `people` is the
+ * genuinely-not-a-vendor remainder: suppliers, press, councils, spam.
+ */
+const KEEP: Record<ThreadFilter, (t: ChannelThread) => boolean> = {
+  all: () => true,
+  waiting: (t) => t.needs_response,
+  unread: (t) => t.unread,
+  starred: (t) => t.starred,
+  vendors: (t) => t.is_vendor,
+  people: (t) => !t.is_vendor,
+}
 
 /** How many pins "All" shows before it hands the rest to the Waiting tab. */
 export const WAITING_CAP = 3
@@ -38,8 +56,7 @@ export interface ThreadGroups {
 }
 
 export function groupThreads(shown: ChannelThread[], filter: ThreadFilter): ThreadGroups {
-  const matching = shown.filter((t) =>
-    filter === 'waiting' ? t.needs_response : filter === 'unread' ? t.unread : true)
+  const matching = shown.filter(KEEP[filter] ?? KEEP.all)
 
   const waiting = matching.filter((t) => t.needs_response)
   const answered = matching.filter((t) => !t.needs_response)

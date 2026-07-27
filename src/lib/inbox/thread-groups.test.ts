@@ -9,7 +9,7 @@ function t(id: string, needs_response: boolean, unread = false): ChannelThread {
     id, channel: 'whatsapp', peer_name: null, business_name: null, phone: null,
     email: null, application_id: null, subject: null, last_message_at: null,
     last_preview: null, last_direction: null, unread, needs_response,
-    bot_paused: false,
+    bot_paused: false, starred: false, is_vendor: false,
   }
 }
 
@@ -85,4 +85,46 @@ test('empty in means empty out, not a crash', () => {
     assert.equal(g.total, 0)
     assert.equal(g.hiddenWaiting, 0)
   }
+})
+
+// ---------------------------------------------------------------------------
+// The tabs added for #16 and #17.
+// ---------------------------------------------------------------------------
+
+function tagged(id: string, o: Partial<ChannelThread>): ChannelThread {
+  return { ...t(id, false), ...o }
+}
+
+test('Starred keeps only starred threads, waiting or not', () => {
+  const rows = [
+    tagged('a', { starred: true, needs_response: true }),
+    tagged('b', { starred: true }),
+    tagged('c', { starred: false }),
+  ]
+  const g = groupThreads(rows, 'starred')
+  assert.equal(g.total, 2)
+  assert.deepEqual([...g.waitingRows, ...g.answered].map((r) => r.id).sort(), ['a', 'b'])
+})
+
+test('Vendors and People partition the list with nothing lost', () => {
+  const rows = [
+    tagged('vendor-approved', { is_vendor: true }),
+    tagged('vendor-unapproved', { is_vendor: true }),
+    tagged('supplier', { is_vendor: false }),
+    tagged('press', { is_vendor: false }),
+  ]
+  const v = groupThreads(rows, 'vendors')
+  const p = groupThreads(rows, 'people')
+  assert.equal(v.total, 2)
+  assert.equal(p.total, 2)
+  // A partition: every thread lands in exactly one of the two, so switching
+  // between them can never hide a conversation from both.
+  assert.equal(v.total + p.total, rows.length)
+})
+
+test('the Vendors tab includes UNAPPROVED applicants', () => {
+  // Taona: "vendors (which includes approved and unapprovd) and generic people".
+  // is_vendor is deliberately not an approval test.
+  const g = groupThreads([tagged('pending-applicant', { is_vendor: true })], 'vendors')
+  assert.equal(g.total, 1)
 })

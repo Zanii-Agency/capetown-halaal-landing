@@ -60,3 +60,4 @@ scripts/.verification-blast.DONE
 .claude/worktrees/
 public/stalls.excel-extracted.json.bak
 .gstack/
+.migration-baseline.json

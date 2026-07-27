@@ -25,6 +25,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { parseTag } from '@/lib/inbox/tag-state'
 import { laneScopeFor } from '@/lib/inbox-lane'
 import { withoutMerged } from '@/lib/merge'
 import { BOT_ADMINS } from '@/lib/bot/admins'
@@ -59,6 +60,27 @@ export interface ChannelThread {
   /** Bot is silenced on this thread (a [HUMAN_HANDOVER_ON] marker is the latest).
    *  Without this the operator cannot see whether the bot is still answering. */
   bot_paused: boolean
+  /**
+   * Starred, decoded from the `tag` column that /inbox/unified/status writes.
+   *
+   * SHARED BETWEEN OPERATORS BY CONSTRUCTION. Neither vendor_tickets nor
+   * support_inbox_threads has a viewer column, so a star belongs to the
+   * conversation and not to whoever set it — which is what Taona asked for ("if
+   * i star an email she should see it starred on her side too"). It was already
+   * true in the data; the star simply had no reader, so it was written and never
+   * displayed to anyone.
+   */
+  starred: boolean
+  /**
+   * This conversation resolves to a vendor application, approved or not.
+   *
+   * Taona: "the emails must be categorised to vendors (which includes approved
+   * and unapproved) and generic people". Derived from the vendor index rather
+   * than stored, so it cannot go stale, and deliberately NOT the same question
+   * as `application_id != null` — a thread can match a vendor by phone or email
+   * without ever having been stamped with an id.
+   */
+  is_vendor: boolean
 }
 
 const phoneKey = (p: string | null | undefined) => (p || '').replace(/\D/g, '').slice(-9)
@@ -289,6 +311,10 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
           unread: false,
           needs_response: false,
           bot_paused: false,
+          // Filled in below from vendor_tickets: a WhatsApp thread has no row of
+          // its own to carry a star, so it borrows the vendor's.
+          starred: false,
+          is_vendor: !!vendor,
         })
       }
     }
@@ -298,7 +324,24 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
     if (emptyPages >= 2) break
   }
 
+  // Stars for the WhatsApp side. A WhatsApp thread has no row of its own (no
+  // wa_threads table, DDL is blocked), so /inbox/unified/status writes its star
+  // onto the VENDOR's vendor_tickets row. Read it back the same way, keyed by
+  // application id, or a starred vendor chat shows no star.
+  const starredApps = new Set<string>()
+  const appIds = [...threads.values()].map((t) => t.application_id).filter(Boolean) as string[]
+  for (let i = 0; i < appIds.length; i += 1000) {
+    const { data } = await db
+      .from('vendor_tickets')
+      .select('vendor_application_id, tag')
+      .in('vendor_application_id', appIds.slice(i, i + 1000))
+    for (const r of (data || []) as Array<{ vendor_application_id: string | null; tag: string | null }>) {
+      if (r.vendor_application_id && parseTag(r.tag).starred) starredApps.add(r.vendor_application_id)
+    }
+  }
+
   for (const [k, t] of threads) {
+    if (t.application_id) t.starred = starredApps.has(t.application_id)
     const inAt = lastInboundAt.get(k)
     const anyOut = lastOutboundAt.get(k)
     const humanOut = humanReplyAt.get(k)
@@ -412,7 +455,7 @@ export async function loadMailThreads(
   for (let i = 0; i < wanted.length; i += 1000) {
     const { data } = await db
       .from('support_inbox_threads')
-      .select('id, peer_email, peer_name, subject, status, unread_count, last_inbound_at, last_handled_at, vendor_application_id')
+      .select('id, peer_email, peer_name, subject, status, unread_count, last_inbound_at, last_handled_at, vendor_application_id, tag')
       .in('id', wanted.slice(i, i + 1000))
     if (data) threadRows.push(...data)
   }
@@ -421,7 +464,7 @@ export async function loadMailThreads(
   for (const t of (threadRows || []) as Array<{
     id: string; peer_email: string | null; peer_name: string | null; subject: string | null
     status: string | null; unread_count: number | null; last_inbound_at: string | null
-    last_handled_at: string | null; vendor_application_id: string | null
+    last_handled_at: string | null; vendor_application_id: string | null; tag: string | null
   }>) {
     const vendor = t.peer_email ? byEmail.get(t.peer_email.toLowerCase()) : undefined
     const appId = toPrimary(t.vendor_application_id) || vendor?.id || null
@@ -458,6 +501,11 @@ export async function loadMailThreads(
       // "waiting on a person", which is a queue nobody can read. A thread that
       // resolves to a vendor always pins, whatever their address looks like.
       bot_paused: false,   // no bot answers email; the field exists for one shared list shape
+      starred: parseTag(t.tag).starred,
+      // A vendor match by EMAIL counts even with no stamped application id: the
+      // id is only written when the ingest recognised them at the time, and it
+      // often was not. Approved or not is deliberately irrelevant here.
+      is_vendor: !!vendor || !!appId,
       needs_response:
         t.status !== 'resolved' &&
         !!inAt && (!outAt || new Date(outAt) < new Date(inAt)) &&

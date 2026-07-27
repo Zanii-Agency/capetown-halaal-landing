@@ -134,6 +134,11 @@ export function ThreadList({
             ['all', 'All', threads.length],
             ['waiting', 'Waiting', pinnedCount],
             ['unread', 'Unread', unreadCount],
+            ['starred', 'Starred', threads.filter((t) => t.starred).length],
+            // Vendors includes UNAPPROVED applicants, so People is the genuine
+            // remainder: suppliers, press, councils, spam.
+            ['vendors', 'Vendors', threads.filter((t) => t.is_vendor).length],
+            ['people', 'People', threads.filter((t) => !t.is_vendor).length],
           ] as const).map(([k, label, n]) => (
             <button
               key={k}

@@ -12,13 +12,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { assertRole } from '@/lib/admin-rbac'
+import { parseTag, encodeTag, INBOX_TAGS as TAGS } from '@/lib/inbox/tag-state'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const ACTIONS = ['resolve', 'snooze', 'reopen', 'read', 'unread', 'star', 'unstar', 'assign', 'tag', 'untag'] as const
-export const INBOX_TAGS = ['payment', 'load-in', 'badges', 'contract', 'refund', 'general'] as const
+export { INBOX_TAGS } from '@/lib/inbox/tag-state'
 
 const bodySchema = z.object({
   action: z.enum(ACTIONS),
@@ -27,18 +28,12 @@ const bodySchema = z.object({
   email: z.string().email().max(160).optional(),
   assigneeId: z.string().uuid().nullable().optional(),
   snoozeUntil: z.string().datetime().optional(),
-  tag: z.enum(INBOX_TAGS).optional(),
+  tag: z.enum(TAGS).optional(),
 })
 
-// tag column <-> { starred, tag }
-function parseTag(v: string | null): { starred: boolean; tag: string | null } {
-  const parts = (v || '').split('|').map((s) => s.trim()).filter(Boolean)
-  return { starred: parts.includes('starred'), tag: parts.find((p) => p !== 'starred') || null }
-}
-function encodeTag(starred: boolean, tag: string | null): string | null {
-  const parts = [starred ? 'starred' : null, tag].filter(Boolean) as string[]
-  return parts.length ? parts.join('|') : null
-}
+// The codec moved to @/lib/inbox/tag-state so the thread LOADERS can decode what
+// this route writes. While it lived here privately, stars were written and never
+// read back, so nobody ever saw one.
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()

@@ -5,7 +5,7 @@ import { sortPinned, type ChannelThread } from '@/lib/inbox/channel-threads'
 const t = (id: string, at: string, needs: boolean): ChannelThread => ({
   id, channel: 'whatsapp', peer_name: null, business_name: null, phone: null, email: null,
   application_id: null, subject: null, last_message_at: at, last_preview: null,
-  last_direction: null, unread: false, needs_response: needs, bot_paused: false,
+  last_direction: null, unread: false, needs_response: needs, bot_paused: false, starred: false, is_vendor: false,
 })
 
 test('unresolved chats pin above everything, however old', () => {
