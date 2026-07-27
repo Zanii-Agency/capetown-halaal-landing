@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { VendorTimeline } from '@/components/admin/inbox/VendorTimeline'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -168,7 +169,6 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const stallCode = initialData.stall
   const stats = initialData.stats
 
-  const [commExpanded, setCommExpanded] = useState<Set<string>>(new Set())
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerView, setDrawerView] = useState<'contact' | 'doc' | 'paid'>('contact')
   const [previewDoc, setPreviewDoc] = useState<DocRecord | null>(null)
@@ -211,14 +211,6 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   // 'rejected'; a re-approved vendor (status flips back) sheds the label.
   const isWithdrawn = !!portal.withdrawn && status === 'rejected'
 
-  function toggleCommExpanded(id: string) {
-    setCommExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
 
   function openContactDrawer() {
     setEditBusiness(businessName)
@@ -589,55 +581,12 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
         <QuickNotesSection applicationId={String(v.id)} />
       </Section>
 
-      <Section title="Communication Log" icon={<Mail className="w-4 h-4" />}>
-        {initialData.communications.length === 0 ? (
-          <p className="text-sm text-neutral-500">No messages recorded.</p>
-        ) : (
-          <div className="space-y-1">
-            {initialData.communications.map((c) => {
-              const expanded = commExpanded.has(c.id)
-              const preview = c.body.length > 120 ? c.body.slice(0, 120) + '...' : c.body
-              return (
-                <div
-                  key={c.id}
-                  className="border border-neutral-200 rounded-lg overflow-hidden"
-                >
-                  <button
-                    onClick={() => toggleCommExpanded(c.id)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-neutral-50 transition-colors"
-                  >
-                    <span className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-neutral-100 text-neutral-500">
-                      {c.channel === 'whatsapp' ? (
-                        <MessageCircle className="w-3.5 h-3.5" />
-                      ) : (
-                        <Mail className="w-3.5 h-3.5" />
-                      )}
-                    </span>
-                    <span className="shrink-0 text-xs text-neutral-400 tabular-nums w-28">
-                      {fmtDate(c.at)}
-                    </span>
-                    <span className="shrink-0 text-xs font-medium text-neutral-600 w-20 truncate">
-                      {c.from}
-                    </span>
-                    <span className="flex-1 text-xs text-neutral-700 truncate">
-                      {preview}
-                    </span>
-                    {c.body.length > 120 && (
-                      <span className="shrink-0 text-neutral-400">
-                        {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </span>
-                    )}
-                  </button>
-                  {expanded && c.body.length > 120 && (
-                    <div className="px-3 pb-3 pt-1 text-xs text-neutral-700 whitespace-pre-wrap border-t border-neutral-100 bg-neutral-50">
-                      {c.body}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
+      {/* One vendor, every channel, in time order. This is where the split
+          channels meet again (Taona: "how do we find a way that allows us to see
+          messages from both channels when we need to"). Replaces a flat,
+          unpaginated log that read from a separate server payload. */}
+      <Section title="Full History" icon={<Mail className="w-4 h-4" />}>
+        <VendorTimeline applicationId={String(v.id)} />
       </Section>
 
       <VendorDocsChecklist applicationId={String(v.id)} docs={portal.docs || []} />
