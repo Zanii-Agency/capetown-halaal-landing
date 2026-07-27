@@ -152,6 +152,20 @@ export async function notifyApplicationDecision({
           loginUrl: 'https://cthalaal.co.za/exhibitor/login',
           paymentDueDate: dueDateLabel,
         }),
+        // REQUIRED HERE, not optional. res.ok gates the ⟦APPROVED_NOTIFIED⟧
+        // marker below, and without this flag `ok` means "Resend ACCEPTED it",
+        // not "the vendor got it". Resend accepts a send addressed to a
+        // suppressed recipient and drops it afterwards, so four approved
+        // vendors (MaterniTee, Chocotag, Soapretty, Simply Educational) were
+        // stamped as notified on 2026-06/07 while receiving nothing — and this
+        // email is the ONLY place their temp password is delivered, so they
+        // could not log in either. They were then chased for payment for weeks.
+        //
+        // Worse, the marker is what remediation filters on, so every catch-up
+        // pass skipped precisely the people who had never been reached.
+        // confirmDelivery makes ok mean delivered, so a suppressed vendor stays
+        // un-marked and the next sweep picks them up.
+        confirmDelivery: true,
       })
 
       // Fire approval WhatsApp template (vendor_application_approved).
