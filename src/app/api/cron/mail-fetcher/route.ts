@@ -23,7 +23,11 @@ import { captureAttachments } from '@/lib/email/attachments'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
-export const maxDuration = 60
+// 300, not 60. Connect and INBOX-lock alone cost ~20s against this mailbox, which
+// left under 40s to fetch and parse 50 messages with full source: the loop was
+// still running when the 60s ceiling killed it, so a run could do all that work
+// and commit nothing. 300 is the same ceiling remediate-approved already uses.
+export const maxDuration = 300
 
 async function findVendorByEmail(
   supabase: ReturnType<typeof createAdminClient>,
@@ -138,7 +142,16 @@ export async function GET(req: Request) {
     stage(`range_ready:${first}-${total}`)
     const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000
 
+    // Wall-clock budget. A hard kill at maxDuration returns nothing, writes no
+    // heartbeat and leaves no reason behind, which is exactly how this outage hid
+    // for three days. Stop early instead and report what was done: the cron runs
+    // every 2 minutes, so an unfinished backlog drains on the following runs.
+    const budgetMs = 240_000
     for (const seq of toFetch) {
+      if (Date.now() - started > budgetMs) {
+        errors.push(`budget: stopped after ${fetched} of ${toFetch.length} messages`)
+        break
+      }
       fetched += 1
       let msg: FetchMessageObject | null = null
       try {
