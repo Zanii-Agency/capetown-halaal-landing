@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { EmailThread } from '@/components/admin/inbox/EmailThread'
 import { createClient } from '@/lib/supabase/client'
@@ -170,6 +171,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
   return (
     <AdminPage
       fill
+      bare
       caption="COMMUNICATIONS"
       title={title}
       subtitle={
@@ -297,8 +299,20 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                     <p className="truncate text-sm font-semibold text-neutral-900">
                       {active.subject || '(no subject)'}
                     </p>
+                    {/* Same as WhatsApp: the vendor's name opens their record,
+                        because "what's their status?" is the usual next thought
+                        while reading a thread. */}
                     <p className="truncate text-xs text-neutral-500">
-                      {active.business_name || active.peer_name || ''}{active.business_name || active.peer_name ? ' · ' : ''}{active.email}
+                      {active.application_id && (active.business_name || active.peer_name) ? (
+                        <Link
+                          href={`/admin/vendors/${active.application_id}`}
+                          className="font-medium text-neutral-700 hover:text-[#cd2653] hover:underline underline-offset-2"
+                          title="Open this vendor's profile"
+                        >
+                          {active.business_name || active.peer_name}
+                        </Link>
+                      ) : (active.business_name || active.peer_name || '')}
+                      {active.business_name || active.peer_name ? ' · ' : ''}{active.email}
                     </p>
                   </div>
                 <div className="ml-auto shrink-0 flex items-center gap-2">

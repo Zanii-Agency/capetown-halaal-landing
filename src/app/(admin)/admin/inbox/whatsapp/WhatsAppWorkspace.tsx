@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { WhatsAppStream } from '@/components/admin/inbox/WhatsAppStream'
 import { createClient } from '@/lib/supabase/client'
@@ -221,6 +222,7 @@ export function WhatsAppWorkspace() {
   return (
     <AdminPage
       fill
+      bare
       caption="COMMUNICATIONS"
       title="WhatsApp"
       subtitle={
@@ -345,9 +347,23 @@ export function WhatsAppWorkspace() {
                   {initials(active.business_name || active.peer_name || active.phone || '?')}
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-neutral-900">
-                    {active.business_name || active.peer_name || active.phone}
-                  </p>
+                  {/* The name is the way into the vendor's record. Reading a
+                      conversation and needing their status, stall or documents
+                      is the single most common next step, and it meant leaving
+                      for the vendors list and searching for them by hand. */}
+                  {active.application_id ? (
+                    <Link
+                      href={`/admin/vendors/${active.application_id}`}
+                      className="block truncate text-sm font-semibold text-neutral-900 hover:text-[#cd2653] hover:underline underline-offset-2"
+                      title="Open this vendor's profile"
+                    >
+                      {active.business_name || active.peer_name || active.phone}
+                    </Link>
+                  ) : (
+                    <p className="truncate text-sm font-semibold text-neutral-900">
+                      {active.business_name || active.peer_name || active.phone}
+                    </p>
+                  )}
                   <p className="truncate text-xs text-neutral-500">{active.phone}</p>
                 </div>
                 <div className="ml-auto shrink-0 flex items-center gap-2">
