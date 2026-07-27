@@ -119,24 +119,39 @@ export async function GET(req: Request) {
   try {
     stage('locking_inbox')
     lock = await withDeadline(client.getMailboxLock('INBOX'), 15_000, 'INBOX lock timed out after 15s')
-    // NON-DESTRUCTIVE: read RECENT (last 3 days), never mark seen. Dedup via the
-    // message-existence check below so re-reads are cheap no-ops.
-    const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
-    stage('searching')
-    const uidsRaw = await withDeadline(client.search({ since }, { uid: true }), 20_000, 'IMAP search timed out after 20s')
-    const uids: number[] = Array.isArray(uidsRaw) ? uidsRaw : []
-    const toFetch = uids.slice(-50)
+    // NO SEARCH. This used `client.search({ since })`, and on 2026-07-27 the stage
+    // trace caught it entering that call at 19.7s and never coming back: killed at
+    // the 60s ceiling, every run, since 24 July. Gmail implements SEARCH SINCE as a
+    // scan of the whole mailbox rather than an index hit, so on an account this
+    // size it simply does not return inside a serverless function. Worse, it starves
+    // the event loop while it waits, so neither the 20s deadline wrapped around it
+    // nor ImapFlow's own 30s socketTimeout could fire. Three credible-looking
+    // guards, none of which could ever have run.
+    //
+    // The newest N messages are the last N sequence numbers, which the SELECT
+    // already told us for free. No search, no scan, constant work per run. The
+    // 3-day window it used to buy is applied per message from the envelope date
+    // below, which is a comparison we were doing anyway.
+    const total = client.mailbox && typeof client.mailbox !== 'boolean' ? client.mailbox.exists : 0
+    const first = Math.max(1, total - 49)
+    const toFetch = total > 0 ? Array.from({ length: total - first + 1 }, (_, i) => first + i) : []
+    stage(`range_ready:${first}-${total}`)
+    const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000
 
-    for (const uid of toFetch) {
+    for (const seq of toFetch) {
       fetched += 1
       let msg: FetchMessageObject | null = null
       try {
-        msg = (await client.fetchOne(String(uid), {
+        msg = (await client.fetchOne(String(seq), {
           envelope: true, source: true,
           headers: ['message-id', 'auto-submitted', 'x-auto-response-suppress', 'precedence', 'in-reply-to'],
-        }, { uid: true })) as FetchMessageObject
-      } catch (e) { errors.push(`uid ${uid} fetch: ${(e as Error).message}`); skipped += 1; continue }
+        })) as FetchMessageObject
+      } catch (e) { errors.push(`seq ${seq} fetch: ${(e as Error).message}`); skipped += 1; continue }
       if (!msg) { skipped += 1; continue }
+
+      // The window the removed SEARCH used to enforce, now a date comparison.
+      const sent = msg.envelope?.date ? new Date(msg.envelope.date).getTime() : 0
+      if (sent && sent < cutoff) { skipped += 1; continue }
 
       const headerBlob = msg.headers ? msg.headers.toString('utf8') : ''
       const autoSubmittedMatch = headerBlob.match(/^auto-submitted:\s*([^\r\n]+)/im)
