@@ -102,6 +102,29 @@ export const VENDOR_FACTS = `EXHIBITOR PORTAL FACTS (approved / applying vendors
 - Stall allocation happens closer to the festival. After paying, a vendor waits for their stall to be allocated and emailed to them.
 - In the portal a vendor can: pay, view and download their tax invoice, upload documents, add staff for gate passes, view their allocated stall, and request a stall or tier change.`
 
+/**
+ * The same facts with every payment-METHOD claim removed.
+ *
+ * VENDOR_FACTS asserts "vendors pay their stall fee by card (Yoco)" and lists
+ * what the portal payment page shows. While the EFT lane is on, the vendor agent
+ * is simultaneously told to name no method at all and describe nothing about
+ * that page, so pushing both handed the model two opposed instructions about the
+ * single most sensitive topic it handles. It resolved the contradiction the way
+ * models do, by blending them, and produced "it'll show you the exact amount and
+ * where to pay via bank transfer".
+ *
+ * Everything else (prices, zones, documents, allocation) is unchanged: those are
+ * the facts a vendor actually needs.
+ */
+export const VENDOR_FACTS_NO_PAYMENT = VENDOR_FACTS
+  .split('\n')
+  .filter((line) => !/^- Payment:/.test(line))
+  .map((line) =>
+    line.startsWith('- In the portal a vendor can:')
+      ? '- In the portal a vendor can: handle their stall fee, view and download their tax invoice, upload documents, add staff for gate passes, view their allocated stall, and request a stall or tier change.'
+      : line)
+  .join('\n')
+
 const PUBLIC_VENDOR_SCOPE = `VENDOR SCOPE (PUBLIC SITE): You are the PUBLIC festival assistant. You MAY explain how to become a vendor (apply at cthalaal.co.za/apply; food vendors need a halaal certificate) and that approved vendors manage everything in the exhibitor portal at cthalaal.co.za/exhibitor/login. If the ABOUT THE SENDER block confidently identifies this person as a vendor, you MAY report THEIR OWN application status and the exact NEXT STEP from that block (it is their own data, looked up by their own number). You must NOT reveal anyone else's data, and you must NOT answer generic operational portal questions for unidentified callers (how to pay, upload documents, view or change a specific stall, a specific person's status). For those, tell them to apply, or if already approved to log into their exhibitor portal where the in-portal assistant helps. Do NOT state vendor stall prices or stall numbers on the public site.`
 
 const VENDOR_SURFACE_SCOPE = `VENDOR SCOPE (EXHIBITOR PORTAL): You are the assistant INSIDE the exhibitor portal, talking to an approved or applying vendor. You SHOULD help fully with vendor-platform questions using the EXHIBITOR PORTAL FACTS block: payments, documents, halaal certificate, staff and gate passes, stall allocation, stall or tier changes, invoices, plus general festival info. Be practical and specific. Still defer to support@youngatheart.co.za for anything not covered.`

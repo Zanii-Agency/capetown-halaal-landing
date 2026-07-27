@@ -13,7 +13,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { TOOL_DEFS, executeTool } from '@/lib/bot/tools/registry'
-import { VENDOR_FACTS } from '@/lib/festival-brain/system-prompt'
+import { VENDOR_FACTS, VENDOR_FACTS_NO_PAYMENT } from '@/lib/festival-brain/system-prompt'
 import { FAQ } from '@/lib/festival-brain/faq'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
@@ -101,11 +101,11 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
           // the festival, not just the gateway.
           'STALL FEE PAYMENT: point the vendor to their exhibitor portal at cthalaal.co.za/exhibitor/login, open Payments, and say that everything they need is there. Say it as the plain, normal way to pay, because it is. NEVER tell a vendor "cash at the event" or list ticket payment methods, that answer is for TICKET buyers.',
           '',
-          'NEVER DISCUSS BANKING (Taona 2026-07-27, after the bot told a vendor "your banking details for the stall fee are already available now ... you will see the amount and account details there"): do not say "banking details", "account details", "account number", "branch code", "beneficiary", or name a bank, and do not describe what the payment page contains. Just send them to the portal and let the page speak for itself. The portal is the ONLY source of payment truth, and it changes without telling you, so anything you say about it can be confidently out of date. Also never mention a card gateway, an outage, a system being down, or that bank transfer is temporary or a fallback. If a vendor asks whether they can pay by card, do not explain why not, point them to Payments in the portal; if they press, offer to have the team call them. An outbound guard replaces any reply that discusses banking, so breaking this rule costs the vendor your actual answer.',
+          'HOW TO ANSWER ANY PAYMENT QUESTION: send them to Payments in their portal and stop there. That is the complete answer. The portal holds the live figures and instructions, it changes without telling you, and it is the only thing the vendor should be reading. Say nothing about HOW the money moves and nothing about what the page contains: no method, no institution, no numbers, no codes. If they ask whether they can pay a particular way, do not explain, just point them at Payments; if they press, offer to have the team call them.',
           '',
-          'You NEVER type out bank account details yourself, ever, even if the vendor asks directly and even if you believe you know them. The portal shows the vendor their own details after they log in, and that is the only place they come from. If they cannot log in, help them with the login, do not read out an account number.',
+          'You never read out payment figures or codes of any kind, even if asked directly and even if you believe you know them. The portal shows the vendor their own details after they log in, and that is the only place they come from. If they cannot log in, help them with the login.',
           '',
-          'Once a vendor says they have PAID by transfer, thank them and tell them to upload their proof in the portal (Payments, upload proof of payment), and that the team confirms it and their portal unlocks. Do NOT tell them they are confirmed yourself, and do not treat a proof as payment received.',
+          'Once a vendor says they have PAID, thank them and tell them to upload their proof in the portal (Payments, upload proof of payment), and that the team confirms it and their portal unlocks. Do NOT tell them they are confirmed yourself, and do not treat a proof as payment received.',
         ]
       : [
           'STALL FEE PAYMENT: a vendor pays their stall fee by CARD only (Visa or Mastercard) through the Yoco gateway in their exhibitor portal at cthalaal.co.za/exhibitor/login. NEVER tell a vendor "cash at the event" or list ticket payment methods, that answer is for TICKET buyers, a stall fee is card-in-the-portal only. If they have not paid, help them: send the invoice, give the portal link, offer to check their status.',
@@ -131,7 +131,18 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
   ]
   // Operational facts (prices, stall sizes, documents, allocation timing) are
   // for verified vendors only, mirroring the exhibitor-portal surface wall.
-  if (verified) parts.push('', VENDOR_FACTS)
+  // VENDOR_FACTS states "vendors pay their stall fee by card (Yoco)" and
+  // describes the portal's payment page. Pushed unconditionally, it contradicted
+  // the lane rules directly above whenever EFT mode was on, and a model given
+  // two opposed facts about payment does not pick one, it improvises a blend.
+  // "where to pay via bank transfer" is what that blend sounded like.
+  // There is no vendor pack. The phrase appears in NO prompt, template or email
+  // in this repo, yet the bot promised one ("Next steps and your vendor pack
+  // will follow") — invented once, then fed back to itself by the history replay
+  // until it read as established fact. A model cannot be argued out of a
+  // hallucination by silence, so the absence is stated.
+  parts.push('', 'THERE IS NO "VENDOR PACK", welcome pack, info pack or starter pack, and no such document exists to send. Never mention one, never promise one is coming, and if a vendor asks about a pack tell them everything is in their portal. Everything you can actually send a vendor, you send with a tool: anything not covered by a tool does not exist and must not be offered.')
+  if (verified) parts.push('', eftMode ? VENDOR_FACTS_NO_PAYMENT : VENDOR_FACTS)
   return parts.join('\n')
 }
 

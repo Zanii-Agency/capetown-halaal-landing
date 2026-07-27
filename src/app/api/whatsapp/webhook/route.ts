@@ -33,6 +33,7 @@ import { isMaintenanceEnabled } from '@/lib/maintenance'
 import { guardReply, logGuardRedaction } from '@/lib/bot/reply-guard'
 import { shouldProcess } from '@/lib/brain-core/index.js'
 import { isAcknowledgement } from '@/lib/bot/ack'
+import { isMarker } from '@/lib/inbox/channel-threads'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -146,8 +147,20 @@ async function weAskedSomething(e164: string): Promise<boolean> {
     const db = createAdminClient()
     const { data } = await db
       .from('wa_messages')
+      // BOTH key forms. This stripped the leading '+', but wa_phone is written
+      // WITH it on the modern path, so the query only ever saw a minority of
+      // legacy rows. Measured on one live number: the stripped key returned an
+      // approval template from weeks earlier, while the real last outbound was
+      // "Here you go, jazakallah for your patience. Your contract's waiting..."
+      // So the "did we just ask a question?" test was answering about the wrong
+      // message, and on any number with no legacy rows it saw nothing at all and
+      // answered false. Either way the acknowledgement suppression fired when it
+      // should not have, and a vendor replying "yes" to "Want me to send your
+      // contract?" was classified as a conversation-closer and dropped: no
+      // reply, no model call, no trace. Same +27 vs 27 key fragmentation already
+      // documented in tools/registry.ts.
       .select('body')
-      .eq('wa_phone', e164.replace(/^\+/, ''))
+      .or(`wa_phone.eq.${e164},wa_phone.eq.${e164.replace(/^\+/, '')}`)
       .eq('direction', 'out')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -576,9 +589,36 @@ async function handleInbound(msg: {
   const llmAllowed = checkLLMBucket(e164) && (await durableLLMRateOk(e164))
   if (!llmAllowed) {
     await logLLMThrottle(e164, LLM_MAX_PER_5MIN + 1)
+
+    // THIS LINE USED TO BE A LIE, AND IT REPEATED.
+    //
+    // Soxbox, 2026-07-26: three inbound messages in 90 seconds each got the
+    // identical "A human will respond shortly", because the branch was
+    // stateless (no check for whether it had just said this), self-reinforcing
+    // (every inbound is logged at the top of handleInbound BEFORE the early
+    // returns, so each one extended the very window that was throttling her),
+    // and it notified NOBODY: no escalateToHuman, no notifyOwners, no handover
+    // marker. So the sentence was false, and because no handover was opened the
+    // "already in handover, stay quiet" gate above could never catch the repeat
+    // either.
+    //
+    // Now: escalate for real, tell the team, and say it ONCE. escalateToHuman
+    // writes the [HUMAN_HANDOVER_ON] marker, so every subsequent message in this
+    // burst takes the quiet handover path instead of coming back here.
+    try {
+      await escalateToHuman(e164, 'rate limited, handed to a human')
+      await notifyOwners({
+        event: 'vendor_support_message',
+        body: await buildHandoverAlert(e164, msg.text, false),
+        audience: 'all',
+        vendorPhone: e164,
+      })
+    } catch (e) {
+      console.error('[wa-webhook] throttle escalation failed:', (e as Error).message)
+    }
     reply = identity.firstName
-      ? `Thanks ${identity.firstName}, we've received your message. A human will respond shortly. For tickets visit cthalaal.co.za`
-      : "We've received your message. A human will respond shortly. For tickets visit cthalaal.co.za"
+      ? `Thanks ${identity.firstName}, I have passed this to the team and someone will come back to you here.`
+      : 'Thanks, I have passed this to the team and someone will come back to you here.'
   } else {
     try {
       // Phase D (ADR-0005): when CTH_AGENT is on, vendors and unknown senders go
@@ -992,13 +1032,25 @@ async function recentHistory(e164: string): Promise<Array<{ role: 'user' | 'assi
   const { data } = await db
     .from('wa_messages')
     .select('direction, body')
-    .eq('wa_phone', e164)
+    // Both key forms: rows exist with and without the leading '+', and an
+    // eq on one of them silently returns a partial conversation.
+    .or(`wa_phone.eq.${e164},wa_phone.eq.${e164.replace(/^\+/, '')}`)
     .order('created_at', { ascending: false })
-    .limit(8)
+    .limit(12)
   const rows = (data as Array<{ direction: string; body: string }>) || []
   return rows
     .reverse()
     .filter((r) => r.body)
+    // OUR BOOKKEEPING IS NOT THE BOT'S OWN SPEECH. [NEEDS_HUMAN],
+    // [HUMAN_HANDOVER_*] and the 🛎️ owner pings were being replayed as
+    // `assistant` turns, so the model read internal notes about OTHER vendors as
+    // things it had itself said, and treated them as established fact. This is
+    // the most likely source of the "vendor pack" it kept promising: the phrase
+    // exists NOWHERE in any prompt, template or email in this repo, so it was
+    // either invented once or picked up from a human-typed line in the thread,
+    // and then this replay kept feeding it back until it was true by repetition.
+    .filter((r) => !isMarker(r.body))
+    .slice(-8)
     .map((r) => ({ role: r.direction === 'in' ? ('user' as const) : ('assistant' as const), content: r.body }))
 }
 
