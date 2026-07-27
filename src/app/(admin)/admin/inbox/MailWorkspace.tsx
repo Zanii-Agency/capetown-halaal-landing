@@ -26,7 +26,8 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtSAST, initials } from '@/lib/inbox/format'
 import type { CommItem } from '@/lib/inbox/types'
 import type { ChannelThread, MailBox } from '@/lib/inbox/channel-threads'
-import { Search, Send, Loader2, Pin, Check } from 'lucide-react'
+import { Search, Send, Loader2, Pin } from 'lucide-react'
+import { ThreadToolbar } from '@/components/admin/inbox/ThreadToolbar'
 
 interface Props {
   mailbox: MailBox
@@ -42,6 +43,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<CommItem[]>([])
   const [q, setQ] = useState('')
+  const [filter, setFilter] = useState<'all' | 'waiting' | 'unread'>('all')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [draft, setDraft] = useState('')
@@ -106,24 +108,6 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
     loadMessages(t)
   }
 
-  /** Clear a conversation out of the queue, or put it back. Optimistic, because
-   *  the whole complaint was that the list could not be emptied. */
-  async function setDone(t: ChannelThread, done: boolean) {
-    setThreads((prev) => prev.map((x) => (x.id === t.id ? { ...x, needs_response: !done } : x)))
-    try {
-      const r = await fetch('/api/admin/inbox/channel/done', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ threadId: t.id, done }),
-      })
-      if (!r.ok) throw new Error(`Could not update (${r.status})`)
-      loadThreads(true)
-    } catch (e) {
-      setError((e as Error).message)
-      loadThreads(true)   // roll back to whatever the server actually thinks
-    }
-  }
-
   async function send() {
     const text = draft.trim()
     if (!text || !active?.email || sending) return
@@ -160,7 +144,10 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
         [t.business_name, t.peer_name, t.email, t.subject, t.last_preview]
           .some((f) => (f || '').toLowerCase().includes(needle)))
     : threads
+  const shownFiltered = shown.filter((t) =>
+    filter === 'waiting' ? t.needs_response : filter === 'unread' ? t.unread : true)
   const pinnedCount = threads.filter((t) => t.needs_response).length
+  const unreadCount = threads.filter((t) => t.unread).length
 
   return (
     <AdminPage
@@ -182,17 +169,36 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                 className="w-full pl-8 pr-3 py-2 text-sm rounded-lg bg-neutral-100 focus:bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900/10"
               />
             </div>
+            {/* Filters. The old inbox had these and the new tabs shipped without
+                them, so a 200-row list could only be read top to bottom. */}
+            <div className="mt-2 flex items-center gap-1">
+              {([
+                ['all', 'All', threads.length],
+                ['waiting', 'Waiting', pinnedCount],
+                ['unread', 'Unread', unreadCount],
+              ] as const).map(([k, label, n]) => (
+                <button
+                  key={k}
+                  onClick={() => setFilter(k)}
+                  className={`px-2 py-1 text-xs font-medium rounded-md transition-colors ${
+                    filter === k ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'
+                  }`}
+                >
+                  {label} {n > 0 && <span className={filter === k ? 'opacity-70' : 'text-neutral-400'}>{n}</span>}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto">
             {loading && <p className="p-4 text-sm text-neutral-500">Loading…</p>}
-            {!loading && shown.length === 0 && (
+            {!loading && shownFiltered.length === 0 && (
               <p className="p-4 text-sm text-neutral-500">
                 {needle ? 'No conversations match.' : 'Nothing here.'}
               </p>
             )}
-            {shown.map((t, i) => {
-              const prev = shown[i - 1]
+            {shownFiltered.map((t, i) => {
+              const prev = shownFiltered[i - 1]
               const boundary = i > 0 && prev.needs_response && !t.needs_response
               return (
                 <div key={t.id}>
@@ -256,22 +262,21 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                     </p>
                   </div>
                 <div className="ml-auto shrink-0 flex items-center gap-2">
+                  {active.bot_paused && (
+                    <span className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                      Bot paused
+                    </span>
+                  )}
                   {active.needs_response && (
                     <span className="text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5">
                       Waiting on a reply
                     </span>
                   )}
-                  <button
-                    onClick={() => setDone(active, active.needs_response)}
-                    className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5 border transition-colors ${
-                      active.needs_response
-                        ? 'bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800'
-                        : 'bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50'
-                    }`}
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                    {active.needs_response ? 'Mark done' : 'Reopen'}
-                  </button>
+                  <ThreadToolbar
+                    thread={active}
+                    onChanged={() => loadThreads(true)}
+                    onError={(m) => setError(m)}
+                  />
                 </div>
                 </div>
               </header>

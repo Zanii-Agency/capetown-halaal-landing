@@ -26,6 +26,14 @@ interface Row {
 }
 interface Candidate { id: string; business_name: string | null; contact_name: string | null; email: string | null }
 
+
+/** The date this row last MOVED: proof upload if there is one, else the recorded
+ *  submission time. Drives both the Date column and the sort, so the lane reads
+ *  newest-activity-first instead of in whatever order the query returned. */
+function laneDate(r: { submitted_at?: string | null; proofs: Array<{ uploaded_at: string }> }): string | null {
+  const newestProof = r.proofs.map((p) => p.uploaded_at).sort().at(-1) ?? null
+  return newestProof || r.submitted_at || null
+}
 const rand = (n: number | null) => (n === null ? 'TBC' : `R${n.toFixed(2)}`)
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
 
@@ -41,6 +49,32 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
   const [err, setErr] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [exQuery, setExQuery] = useState('')
+
+  // Newest activity first. The lane arrived in query order, so a proof uploaded
+  // this morning could sit below one from three weeks ago.
+  const sortedRows = [...rows].sort((a, b) => {
+    const da = laneDate(a), dbb = laneDate(b)
+    if (!da && !dbb) return (a.business_name || '').localeCompare(b.business_name || '')
+    if (!da) return 1          // nothing has happened on this one yet: bottom
+    if (!dbb) return -1
+    return new Date(dbb).getTime() - new Date(da).getTime()
+  })
+
+  // Owed per state. `outstanding ?? amount` is the same value the row renders,
+  // so the totals can never disagree with the column above them.
+  const owed = (r: Row) => r.outstanding ?? r.amount ?? 0
+  const totals = rows.reduce(
+    (acc, r) => {
+      const v = owed(r)
+      acc.total += v
+      if (r.reconciled) acc.reconciled += v
+      else if (r.collected) acc.collected += v
+      else if (r.submitted) acc.submitted += v
+      else acc.awaiting += v
+      return acc
+    },
+    { total: 0, collected: 0, submitted: 0, awaiting: 0, reconciled: 0 },
+  )
 
   async function post(url: string, body: unknown, key: string) {
     setBusy(key); setErr(null)
@@ -208,8 +242,20 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
 
       {/* Lane table */}
       <div className="rounded-2xl border border-[#E5DCC4] bg-white overflow-hidden">
-        <div className="px-5 py-3 border-b border-[#E5DCC4] flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-[#E5DCC4] flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold">In the EFT lane ({rows.length})</p>
+          {/* Money at a glance. The table listed seven amounts and left the
+              operator adding them up by eye, which is the one thing a payment
+              screen must never ask (Taona 2026-07-27: "we should have total to
+              easily keep track"). Split three ways, because the states mean very
+              different things: collected is money we HAVE but have not settled
+              through Yoco, awaiting is money still outside. */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+            <span className="text-[#1B1A17]/55">Collected <span className="font-semibold text-amber-700">{rand(totals.collected)}</span></span>
+            <span className="text-[#1B1A17]/55">Proof in <span className="font-semibold text-[#1B1A17]">{rand(totals.submitted)}</span></span>
+            <span className="text-[#1B1A17]/55">Awaiting <span className="font-semibold text-[#1B1A17]/70">{rand(totals.awaiting)}</span></span>
+            <span className="text-[#1B1A17]/70 border-l border-[#E5DCC4] pl-5">Total owed <span className="font-bold text-[#1B1A17]">{rand(totals.total)}</span></span>
+          </div>
         </div>
         {rows.length === 0 ? (
           <p className="p-5 text-sm text-[#1B1A17]/55">No vendors in the lane yet. Turn on global mode, or add vendors above.</p>
@@ -221,12 +267,13 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                   <th className="px-5 py-2 font-medium">Vendor</th>
                   <th className="px-3 py-2 font-medium">Owed</th>
                   <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Date</th>
                   <th className="px-3 py-2 font-medium">Proof</th>
                   <th className="px-5 py-2 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {sortedRows.map((r) => (
                   <tr key={r.id} className="border-b border-[#F2EBD8] last:border-0 align-top">
                     <td className="px-5 py-3">
                       <p className="font-medium text-[#1B1A17]">{r.business_name || 'Unnamed'}</p>
@@ -244,6 +291,9 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                         <span className="text-[#1B1A17]/50"><span className="inline-block w-2 h-2 rounded-full bg-neutral-300 mr-1.5" />Awaiting proof</span>
                       )}
                     </td>
+                    <td className="px-3 py-3 whitespace-nowrap text-[#1B1A17]/70">
+                      {laneDate(r) ? fmtDate(laneDate(r) as string) : <span className="text-[#1B1A17]/40">—</span>}
+                    </td>
                     <td className="px-3 py-3">
                       {r.proofs.length === 0 ? (
                         <span className="text-[#1B1A17]/40">None</span>
@@ -251,7 +301,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                         <div className="space-y-1">
                           {r.proofs.map((p, i) => (
                             <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#cd2653] hover:underline">
-                              <ExternalLink className="w-3 h-3" /> View {fmtDate(p.uploaded_at)}
+                              <ExternalLink className="w-3 h-3" /> View{r.proofs.length > 1 ? ` ${i + 1}` : ''}
                             </a>
                           ))}
                         </div>
@@ -296,6 +346,13 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-[#E5DCC4] bg-[#FBF8F0]">
+                  <td className="px-5 py-3 font-semibold text-[#1B1A17]">{sortedRows.length} vendor{sortedRows.length === 1 ? '' : 's'}</td>
+                  <td className="px-3 py-3 font-bold text-[#1B1A17] whitespace-nowrap">{rand(totals.total)}</td>
+                  <td className="px-3 py-3" colSpan={4} />
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
