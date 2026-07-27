@@ -157,10 +157,16 @@ export interface EftBankDetails {
 // so they can pay, i.e. they are display data, not a secret credential. Live
 // values supplied by the operator 2026-07-23; branch 250655 is FNB's universal
 // EFT branch code. Overridable via env without a code change.
+//
+// ACCOUNT CHANGED 2026-07-27 on Taona's instruction: 63170873351 -> 63141269191.
+// Everything else (account name, bank, branch code) is unchanged. This constant
+// is the ONLY place the number appears in the repo and no EFT_BANK_ACCOUNT_NUMBER
+// override is set in production, so this line alone governs what every vendor
+// sees: portal EftPanel, the admin EFT tab, invoices, emails and the bot.
 const DEFAULT_BANK: EftBankDetails = {
   accountName: 'Halaal Hub',
   bank: 'FNB',
-  accountNumber: '63170873351',
+  accountNumber: '63141269191',
   branchCode: '250655',
 }
 
