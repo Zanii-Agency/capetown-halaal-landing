@@ -22,7 +22,7 @@ const MASTER = 'dev@cthalaal.co.za'  // EFT_ADMIN_EMAIL. NOT taona@, who is lane
 
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
-const { data: apps } = await db.from('vendor_applications').select('id, business_name, admin_notes, paid_at')
+const { data: apps } = await db.from('vendor_applications').select('id, business_name, admin_notes, paid_at, status')
 const byId = new Map((apps || []).map((a) => [a.id as string, a]))
 
 /** Independently derived truth: may the festival owner see this vendor at all? */
@@ -35,6 +35,12 @@ function ownerMaySee(appId: string | null): boolean {
   // state, so judging by it says "unpaid" about a vendor who has paid.
   const m = MERGED.exec((a.admin_notes as string) || '')
   if (m) a = byId.get(m[1]) ?? a
+  // Two authorised widenings, both deliberate and both re-derived here from the
+  // ROW rather than trusted from the loader:
+  //   unapproved applicants have no payment lane yet, so nothing to protect
+  //   ⟦OWNERVIS⟧ is an explicit per-vendor hand-over
+  if (a.status && a.status !== 'approved') return true
+  if (/\u27E6OWNERVIS\u27E7/.test((a.admin_notes as string) || '')) return true
   return vendorInOwnerScope(a.admin_notes as string | null, a.paid_at as string | null)
 }
 

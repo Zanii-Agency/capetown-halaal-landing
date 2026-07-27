@@ -36,7 +36,8 @@ function laneDate(r: { submitted_at?: string | null; proofs: Array<{ uploaded_at
   const newestProof = r.proofs.map((p) => p.uploaded_at).sort().at(-1) ?? null
   return newestProof || r.submitted_at || null
 }
-const rand = (n: number | null) => (n === null ? 'TBC' : `R${n.toFixed(2)}`)
+const rand = (n: number | null) =>
+  n === null ? 'TBC' : `R${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtTime = (s: string | null) => (s ? new Date(s).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false }) : '')
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
 
@@ -56,6 +57,9 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
   // Newest activity first. The lane arrived in query order, so a proof uploaded
   // this morning could sit below one from three weeks ago.
   const sortedRows = [...rows].sort((a, b) => {
+    // Rows that do not count toward the money sink to the bottom, so the top of
+    // the table is only real vendors.
+    if (isDemo(a) !== isDemo(b)) return isDemo(a) ? 1 : -1
     const da = laneDate(a), dbb = laneDate(b)
     if (!da && !dbb) return (a.business_name || '').localeCompare(b.business_name || '')
     if (!da) return 1          // nothing has happened on this one yet: bottom
@@ -258,7 +262,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
               easily keep track"). Split three ways, because the states mean very
               different things: collected is money we HAVE but have not settled
               through Yoco, awaiting is money still outside. */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs tabular-nums">
             <span className="text-[#1B1A17]/55">Collected <span className="font-semibold text-amber-700">{rand(totals.collected)}</span></span>
             <span className="text-[#1B1A17]/55">Proof in <span className="font-semibold text-[#1B1A17]">{rand(totals.submitted)}</span></span>
             <span className="text-[#1B1A17]/55">Awaiting <span className="font-semibold text-[#1B1A17]/70">{rand(totals.awaiting)}</span></span>
@@ -273,7 +277,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
               <thead>
                 <tr className="text-left text-[#1B1A17]/50 border-b border-[#E5DCC4]">
                   <th className="px-5 py-2 font-medium">Vendor</th>
-                  <th className="px-3 py-2 font-medium">Owed</th>
+                  <th className="px-3 py-2 font-medium text-right">Owed</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Added to lane</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Date</th>
@@ -291,7 +295,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                       </p>
                       <p className="text-xs text-[#1B1A17]/50">{r.contact_name || ''}{r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}</p>
                     </td>
-                    <td className={`px-3 py-3 whitespace-nowrap ${isDemo(r) ? 'text-[#1B1A17]/35 line-through' : ''}`}>{rand(r.outstanding ?? r.amount)}</td>
+                    <td className={`px-3 py-3 whitespace-nowrap text-right tabular-nums ${isDemo(r) ? 'text-[#1B1A17]/35 line-through' : 'font-medium'}`}>{rand(r.outstanding ?? r.amount)}</td>
                     <td className="px-3 py-3">
                       {r.reconciled ? (
                         <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Reconciled</span>
@@ -334,8 +338,8 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                         </div>
                       )}
                     </td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                    <td className="px-5 py-3 align-middle">
+                      <div className="flex items-center justify-end gap-2 flex-nowrap whitespace-nowrap">
                         {/* Not yet collected + not paid: mark the EFT money collected
                             (interim). Vendor sees paid + acknowledged; NOT counted in
                             finance until settled via Yoco. */}
@@ -379,7 +383,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                     {sortedRows.filter((r) => !isDemo(r)).length} vendor{sortedRows.filter((r) => !isDemo(r)).length === 1 ? '' : 's'}
                     {sortedRows.some(isDemo) && <span className="ml-1 font-normal text-[#1B1A17]/40">+ demo</span>}
                   </td>
-                  <td className="px-3 py-3 font-bold text-[#1B1A17] whitespace-nowrap">{rand(totals.total)}</td>
+                  <td className="px-3 py-3 font-bold text-[#1B1A17] whitespace-nowrap text-right tabular-nums">{rand(totals.total)}</td>
                   <td className="px-3 py-3" colSpan={5} />
                 </tr>
               </tfoot>

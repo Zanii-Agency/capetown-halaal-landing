@@ -54,10 +54,10 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
       operators = (data || []) as { id: string; email: string }[]
     } catch { /* empty */ }
     return (
-      <div className="p-6 h-full flex flex-col">
+      <div className="px-6 pt-6 pb-2 h-full flex flex-col">
         {header}
         <div className="flex-1 min-h-0">
-          <CustomerInboxClient currentUserId={user!.id} operators={operators} eftOnly />
+          <CustomerInboxClient currentUserId={user!.id} operators={operators} eftOnly embedded />
         </div>
       </div>
     )

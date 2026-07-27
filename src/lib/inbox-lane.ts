@@ -55,6 +55,8 @@ export interface LaneVendorRow {
   email: string | null
   admin_notes: string | null
   paid_at: string | null
+  /** Unapproved applicants are never lane-gated: no payment lane exists yet. */
+  status?: string | null
 }
 
 export interface LaneScope {
@@ -94,6 +96,11 @@ export function buildLaneScope(
     // "EFT lane" cohort. Taona: "samreen should never have access to unpaid
     // vendors except for when they sign up, sign contract". Those two moments are
     // ALERTS, not reads, so nothing here needs to carve them out.
+    // UNAPPROVED applicants are hers (Taona 2026-07-27: "samreen must be able to
+    // see all emails and messages from unapproved vendors"). They have no
+    // payment lane yet, so there is nothing about the EFT arrangement to leak,
+    // and they are exactly the people asking the questions she answers.
+    if (r.status && r.status !== 'approved') continue
     if (vendorInOwnerScope(r.admin_notes, r.paid_at)) continue
     ids.add(r.id)
     if (r.email) emails.add(r.email.toLowerCase())
@@ -126,7 +133,7 @@ export async function laneScopeFor(viewerEmail: string | null | undefined): Prom
   const globalOn = await getEftMode()
   const { data, error } = await createAdminClient()
     .from('vendor_applications')
-    .select('id, phone, email, admin_notes, paid_at')
+    .select('id, phone, email, admin_notes, paid_at, status')
     .limit(5000)
   if (error) {
     // Fail closed: block nothing-resolvable rather than expose the lane. Callers

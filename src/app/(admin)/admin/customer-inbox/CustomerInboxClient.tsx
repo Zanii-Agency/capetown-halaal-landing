@@ -88,7 +88,7 @@ interface VendorContext {
   stall: string | null; docs_complete: boolean; contract_signed: boolean
 }
 
-export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { currentUserId: string; operators: Operator[]; eftOnly?: boolean }) {
+export function CustomerInboxClient({ currentUserId, operators, eftOnly, embedded }: { currentUserId: string; operators: Operator[]; eftOnly?: boolean; embedded?: boolean }) {
   // TEMPORARY EFT lane: when mounted on /admin/eft this appends &eftOnly=1 to the
   // contact-list fetches, so the same inbox shows ONLY EFT-lane conversations.
   const eftParam = eftOnly ? '&eftOnly=1' : ''
@@ -614,7 +614,11 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly }: { cur
   const focus = focusMode && inNeeds
 
   return (
-    <AdminPage fill title="Inbox" caption="UNIFIED" subtitle="Every WhatsApp, bot and email conversation in one place.">
+    // EMBEDDED: the Master Lane page already has its own header, so rendering a
+    // second "UNIFIED / Inbox / Every WhatsApp, bot and email conversation in one
+    // place" underneath it stacked two headers and pushed the conversation into
+    // a letterbox. Same reason the channel tabs went bare.
+    <AdminPage fill bare={embedded} title="Inbox" caption="UNIFIED" subtitle="Every WhatsApp, bot and email conversation in one place.">
       <div className={`grid ${focus ? 'grid-cols-1' : 'lg:grid-cols-[1fr_380px]'} grid-rows-[minmax(0,1fr)] h-[calc(100dvh-6rem)] lg:h-full gap-4`}>
 
         {/* LEFT: conversation */}
