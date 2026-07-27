@@ -11,6 +11,7 @@ import { Loader2, Check, X, Search, ExternalLink, CheckCircle2, ChevronDown } fr
 // calls it and every render threw a temporal-dead-zone ReferenceError. See
 // src/lib/eft-rows.ts.
 import { isDemoRow } from '@/lib/eft-rows'
+import { SwipeToConfirm } from '@/components/admin/SwipeToConfirm'
 
 interface Bank { accountName: string; bank: string; accountNumber: string; branchCode: string; accountType?: string }
 interface Row {
@@ -390,17 +391,18 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                             </button>
                           )}
                         </div>
-                        <div className="w-8 shrink-0">
+                        {/* Swipe, not a click: this moves a vendor out of the
+                            payment lane, so the gesture is the confirmation and
+                            there is no dialog on top of it. Fixed width, so the
+                            column above stays a straight edge whether or not a
+                            row has this action. */}
+                        <div className="w-[132px] shrink-0">
                           {r.marked && (
-                            <button
-                              onClick={() => post('/api/admin/eft/lane', { applicationId: r.id, action: 'remove' }, `rm-${r.id}`)}
-                              disabled={busy === `rm-${r.id}`}
-                              aria-label={`Remove ${r.business_name || 'this vendor'} from the EFT lane`}
-                              title="Remove from the EFT lane"
-                              className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-[#1B1A17]/60 hover:border-[#cd2653] hover:text-[#cd2653] disabled:opacity-60"
-                            >
-                              {busy === `rm-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
-                            </button>
+                            <SwipeToConfirm
+                              onConfirm={() => post('/api/admin/eft/lane', { applicationId: r.id, action: 'remove' }, `rm-${r.id}`)}
+                              busy={busy === `rm-${r.id}`}
+                              ariaLabel={`Remove ${r.business_name || 'this vendor'} from the EFT lane`}
+                            />
                           )}
                         </div>
                       </div>
