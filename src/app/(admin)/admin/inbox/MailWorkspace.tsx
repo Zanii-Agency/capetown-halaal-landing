@@ -156,7 +156,12 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
       fill
       caption="COMMUNICATIONS"
       title={title}
-      subtitle={pinnedCount > 0 ? `${pinnedCount} waiting on a reply, pinned to the top.` : subtitle}
+      subtitle={
+        error ? 'Could not load these conversations.'
+        : loading ? 'Loading conversations…'
+        : pinnedCount > 0 ? `${pinnedCount} waiting on a reply, pinned to the top.`
+        : subtitle
+      }
     >
       <div className="flex h-full min-h-0 gap-4">
         {/* ── Thread list ─────────────────────────────────────────────── */}
@@ -186,27 +191,44 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                     filter === k ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'
                   }`}
                 >
-                  {label} {n > 0 && <span className={filter === k ? 'opacity-70' : 'text-neutral-400'}>{n}</span>}
+                  {label} <span className={filter === k ? 'opacity-70' : 'text-neutral-400'}>{n}</span>
                 </button>
               ))}
             </div>
           </div>
 
           <div className="flex-1 overflow-y-auto">
+            {error && (
+              <div className="m-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
+                <p className="text-xs font-medium text-rose-800">{error}</p>
+                <button onClick={() => loadThreads()} className="mt-1.5 text-xs font-semibold text-rose-700 underline underline-offset-2">
+                  Try again
+                </button>
+              </div>
+            )}
             {loading && <p className="p-4 text-sm text-neutral-500">Loading…</p>}
             {!loading && shownFiltered.length === 0 && (
               <p className="p-4 text-sm text-neutral-500">
-                {needle ? 'No conversations match.' : 'Nothing here.'}
+                {needle ? `Nothing matches "${q.trim()}".`
+                  : filter === 'waiting' ? 'Nothing is waiting on a reply. Everything here has been answered.'
+                  : filter === 'unread' ? 'Nothing unread.'
+                  : 'Nothing here.'}
               </p>
             )}
             {shownFiltered.map((t, i) => {
               const prev = shownFiltered[i - 1]
-              const boundary = i > 0 && prev.needs_response && !t.needs_response
+              const startsWaiting = t.needs_response && i === 0
+              const startsAnswered = !t.needs_response && (i === 0 || prev.needs_response)
               return (
                 <div key={t.id}>
-                  {boundary && (
-                    <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-neutral-400 border-t border-neutral-100">
-                      Answered
+                  {startsWaiting && (
+                    <div className="sticky top-0 z-10 px-3 py-1.5 bg-rose-50/95 backdrop-blur border-y border-rose-100 text-[11px] font-semibold uppercase tracking-wide text-rose-700">
+                      Waiting on a reply · {pinnedCount}
+                    </div>
+                  )}
+                  {startsAnswered && (
+                    <div className="sticky top-0 z-10 px-3 py-1.5 bg-neutral-50/95 backdrop-blur border-y border-neutral-100 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                      Answered · {threads.length - pinnedCount}
                     </div>
                   )}
                   <button
