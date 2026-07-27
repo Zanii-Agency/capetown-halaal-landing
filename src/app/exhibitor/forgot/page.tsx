@@ -79,13 +79,13 @@ function ForgotPassword() {
                 Not there? Check your spam or promotions folder before asking for another one.
               </p>
 
-              {/* The trap this whole screen exists to close: each new link
-                  supersedes the last, so a vendor who requests twice and then
-                  opens the FIRST email gets "invalid or expired" and concludes
-                  the portal is broken. */}
+              {/* PROVEN 2026-07-27 against a throwaway account: minting a second
+                  recovery link invalidates the first, which then fails with
+                  "Email link is invalid or has expired". No hedge needed, and a
+                  vendor who opens the wrong email deserves to know why. */}
               {sends > 1 && (
                 <p className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
-                  You have asked for {sends} links. Please use the <b>most recent</b> email, the earlier links may no longer work.
+                  You have asked for {sends} links. Only the <b>most recent</b> email works now, the earlier ones have been cancelled.
                 </p>
               )}
 
@@ -96,6 +96,9 @@ function ForgotPassword() {
               >
                 {loading ? 'Sending…' : cooldown > 0 ? `You can request another in ${cooldown}s` : 'Send another link'}
               </button>
+              <p className="mt-1.5 text-[11px] text-neutral-400">
+                Asking again cancels the link we just sent.
+              </p>
 
               <a href="/exhibitor/login" className="inline-block mt-4 text-sm font-semibold text-[#cd2653]">← Back to sign in</a>
             </div>
