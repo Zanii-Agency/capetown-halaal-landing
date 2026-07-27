@@ -34,10 +34,23 @@ export function WhatsAppWorkspace() {
   const [sending, setSending] = useState(false)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // The thread pane needs THREE distinct states. It had one: `messages`. Any
+  // failure did setMessages([]) and rendered an empty room, so a 403, a dropped
+  // network and "this vendor has never written" all looked identical — which is
+  // most of what "it's not showing the messages" meant.
+  const [msgLoading, setMsgLoading] = useState(false)
+  const [msgError, setMsgError] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
 
   const threadsRef = useRef<ChannelThread[]>([])
   const activeIdRef = useRef<string | null>(null)
   const streamEnd = useRef<HTMLDivElement>(null)
+  const scrollBox = useRef<HTMLDivElement>(null)
+  /** Only auto-scroll when the operator is already at the bottom. Scrolling on
+   *  EVERY change yanked her out of the history she was reading whenever any
+   *  message landed anywhere. Both old surfaces guard this; this one did not. */
+  const stickToBottom = useRef(true)
   threadsRef.current = threads
   activeIdRef.current = activeId
 
@@ -58,13 +71,56 @@ export function WhatsAppWorkspace() {
     }
   }, [])
 
-  const loadMessages = useCallback(async (t: ChannelThread) => {
+  const loadMessages = useCallback(async (t: ChannelThread, opts?: { silent?: boolean }) => {
     if (!t.phone) return
-    const r = await fetch(`/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}`, { cache: 'no-store' })
-    if (!r.ok) { setMessages([]); return }
-    const j = await r.json()
-    setMessages((j.messages || []).filter((m: CommItem) => m.channel === 'whatsapp'))
+    if (!opts?.silent) { setMsgLoading(true); setMsgError(null) }
+    try {
+      const r = await fetch(`/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}`, { cache: 'no-store' })
+      if (r.status === 403) throw new Error('This conversation is outside your lane.')
+      if (!r.ok) throw new Error(`Could not load this conversation (${r.status})`)
+      const j = await r.json()
+      const next: CommItem[] = j.messages || []
+      setHasMore(!!j.pagination?.hasMore)
+      // Replace only when something actually changed, so a poll does not blow
+      // the list away and re-render the whole thread under the cursor.
+      setMessages((prev) =>
+        prev.length === next.length && prev[prev.length - 1]?.id === next[next.length - 1]?.id ? prev : next)
+      setMsgError(null)
+    } catch (e) {
+      setMsgError((e as Error).message)
+      if (!opts?.silent) setMessages([])
+    } finally {
+      setMsgLoading(false)
+    }
   }, [])
+
+  /** Walk further back in history. Two live threads hold 600+ messages, all of
+   *  which were unreachable before this. */
+  const loadOlder = useCallback(async () => {
+    const t = threadsRef.current.find((x) => x.id === activeIdRef.current)
+    const oldest = messages[0]?.at
+    if (!t?.phone || !oldest || loadingOlder) return
+    setLoadingOlder(true)
+    try {
+      const r = await fetch(
+        `/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}&before=${encodeURIComponent(oldest)}`,
+        { cache: 'no-store' })
+      if (!r.ok) return
+      const j = await r.json()
+      const older: CommItem[] = j.messages || []
+      setHasMore(!!j.pagination?.hasMore)
+      // Prepending must NOT move the viewport: keep the scroll pinned to the
+      // message the operator was looking at.
+      const box = scrollBox.current
+      const prevHeight = box?.scrollHeight ?? 0
+      setMessages((prev) => [...older, ...prev])
+      requestAnimationFrame(() => {
+        if (box) box.scrollTop += box.scrollHeight - prevHeight
+      })
+    } finally {
+      setLoadingOlder(false)
+    }
+  }, [messages, loadingOlder])
 
   useEffect(() => { loadThreads() }, [loadThreads])
 
@@ -76,7 +132,7 @@ export function WhatsAppWorkspace() {
       .on('broadcast', { event: 'refresh' }, () => {
         loadThreads(true)
         const t = threadsRef.current.find((x) => x.id === activeIdRef.current)
-        if (t) loadMessages(t)
+        if (t) loadMessages(t, { silent: true })
       })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
@@ -88,11 +144,16 @@ export function WhatsAppWorkspace() {
     return () => clearInterval(id)
   }, [loadThreads])
 
-  useEffect(() => { streamEnd.current?.scrollIntoView({ block: 'end' }) }, [messages])
+  useEffect(() => {
+    if (stickToBottom.current) streamEnd.current?.scrollIntoView({ block: 'end' })
+  }, [messages])
 
   function open(t: ChannelThread) {
     setActiveId(t.id)
     setMessages([])
+    setMsgError(null)
+    setHasMore(false)
+    stickToBottom.current = true
     loadMessages(t)
   }
 
@@ -233,7 +294,50 @@ export function WhatsAppWorkspace() {
                 )}
               </header>
 
-              <div className="flex-1 overflow-y-auto px-4 bg-[#efeae2]">
+              <div
+                ref={scrollBox}
+                onScroll={(e) => {
+                  const el = e.currentTarget
+                  stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+                }}
+                className="flex-1 overflow-y-auto px-4 wa-wallpaper"
+              >
+                {hasMore && (
+                  <div className="flex justify-center py-3">
+                    <button
+                      onClick={loadOlder}
+                      disabled={loadingOlder}
+                      className="px-3 py-1.5 text-xs font-medium rounded-full bg-white/80 border border-black/5 text-neutral-600 hover:bg-white disabled:opacity-50"
+                    >
+                      {loadingOlder ? 'Loading…' : 'Load older messages'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Three states, not one. An error must never look like an
+                    empty conversation. */}
+                {msgLoading && messages.length === 0 && (
+                  <p className="py-10 text-center text-sm text-neutral-500 flex items-center justify-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading conversation…
+                  </p>
+                )}
+                {!msgLoading && msgError && (
+                  <div className="my-6 mx-auto max-w-sm rounded-lg bg-white/90 border border-rose-200 px-4 py-3 text-center">
+                    <p className="text-sm font-medium text-rose-700">{msgError}</p>
+                    <button
+                      onClick={() => active && loadMessages(active)}
+                      className="mt-2 text-xs font-medium text-neutral-600 underline underline-offset-2"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                )}
+                {!msgLoading && !msgError && messages.length === 0 && (
+                  <p className="py-10 text-center text-sm text-neutral-500">
+                    No messages in this conversation yet.
+                  </p>
+                )}
+
                 <WhatsAppStream messages={messages} />
                 <div ref={streamEnd} />
               </div>

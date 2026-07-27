@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Bell } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -40,15 +40,15 @@ const navGroups: NavGroup[] = [
   {
     label: 'COMMUNICATIONS',
     items: [
-      // The channel split (2026-07-27). WhatsApp is live; Support and Gmail get
-      // their own entries as each workspace lands, and Inbox + Needs You come
-      // out only once all three exist. Removing a working surface before its
-      // replacement ships is a gap, not a cleanup.
+      // The channel split (2026-07-27). The merged "Inbox" and "Needs You" are
+      // GONE from navigation on Taona's instruction ("kill the unified inbox
+      // totally, it's not working according to how it should be"). The route
+      // still exists and is still reachable by URL until Phase 3 gives these
+      // tabs take-over / resolve / search, because deleting it today would
+      // remove the only way to silence the bot on a thread.
       { name: 'WhatsApp', href: '/admin/inbox/whatsapp', icon: MessageCircle },
       { name: 'Support Email', href: '/admin/inbox/support', icon: Mail },
       { name: 'Gmail', href: '/admin/inbox/gmail', icon: Inbox },
-      { name: 'Inbox', href: '/admin/customer-inbox', icon: MessageCircle },
-      { name: 'Needs You', href: '/admin/customer-inbox?view=needs', icon: Bell },
       { name: 'Broadcast', href: '/admin/broadcast', icon: Megaphone },
       { name: 'Contacts', href: '/admin/contacts', icon: BookOpen },
     ],

@@ -25,7 +25,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { laneScopeFor, hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { laneScopeFor } from '@/lib/inbox-lane'
 import { withoutMerged } from '@/lib/merge'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 import { canPin } from '@/lib/inbox/automated'
@@ -55,13 +55,42 @@ export interface ChannelThread {
    * the list you already live in cannot be missed.
    */
   needs_response: boolean
+  /** Bot is silenced on this thread (a [HUMAN_HANDOVER_ON] marker is the latest).
+   *  Without this the operator cannot see whether the bot is still answering. */
+  bot_paused: boolean
 }
 
 const phoneKey = (p: string | null | undefined) => (p || '').replace(/\D/g, '').slice(-9)
+
+/** Our own bookkeeping rows, never conversation. Same predicate as
+ *  unified/route.ts:81 and the skip in messages/route.ts:76, so the list and the
+ *  open thread finally agree on what counts as a message. */
+export const isMarker = (b: string) =>
+  /^\s*\[[A-Z_]+\]/.test(b) || /HUMAN_HANDOVER/.test(b) || /^\s*🛎/u.test(b)
+
+/** Preview label for a media-only message, so the list reads "📷 Photo" rather
+ *  than an empty row. Mirrors the kinds the webhook stores on metadata.media. */
+function mediaPreviewLabel(kind: string | undefined): string | null {
+  switch (kind) {
+    case 'image': return '📷 Photo'
+    case 'document': return '📎 Document'
+    case 'audio': return '🎙 Voice note'
+    case 'video': return '🎬 Video'
+    default: return null
+  }
+}
 const norm = (p: string) => p.replace(/^\+/, '')
 
-/** The master line(s). Operator threads are never customer conversations. */
-const MASTER_PHONES = new Set(BOT_ADMINS.filter((a) => a.role === 'master').map((a) => phoneKey(a.phone)))
+/** EVERY operator line, not just the master one. Operator threads are never
+ *  customer conversations.
+ *
+ *  This filtered on role==='master' only, so Samreen (role 'festival_owner')
+ *  was not excluded — and because she also holds a vendor application on her own
+ *  number, her private operator alert feed rendered in the inbox as a vendor
+ *  conversation titled "GLOBAL CUISINE", full of SYSTEM ALERTs about OTHER
+ *  vendors. Nothing leaked to a vendor (the messages were correctly addressed to
+ *  her), but an operator reading that screen would reasonably conclude it had. */
+const OPERATOR_PHONES = new Set(BOT_ADMINS.map((a) => phoneKey(a.phone)))
 
 interface VendorLite {
   id: string
@@ -120,61 +149,109 @@ async function vendorIndex(db: ReturnType<typeof createAdminClient>) {
 export async function loadWhatsAppThreads(viewerEmail: string | null | undefined): Promise<ChannelThread[]> {
   const db = createAdminClient()
   const scope = await laneScopeFor(viewerEmail)
-  const hideEft = hidesEftContent(viewerEmail)
   const { byPhone, toPrimary } = await vendorIndex(db)
-
-  const { data: msgs } = await db
-    .from('wa_messages')
-    // NO read_at: that column does not exist on wa_messages, and selecting it
-    // made the whole query error, so this loader silently returned ZERO threads.
-    // Unread is derived from message direction below instead.
-    .select('id, wa_phone, direction, body, created_at, metadata')
-    .order('created_at', { ascending: false })
-    .limit(4000)
-
-  const rows = stripEftMessages(
-    (msgs || []) as Array<{
-      id: string; wa_phone: string; direction: 'in' | 'out'; body: string | null
-      created_at: string; metadata: Record<string, unknown> | null
-    }>,
-    (m) => m.body,
-    hideEft,
-  )
 
   const threads = new Map<string, ChannelThread>()
   const needsHumanAt = new Map<string, string>()
   const humanReplyAt = new Map<string, string>()
   const lastInboundAt = new Map<string, string>()
   const lastOutboundAt = new Map<string, string>()
+  const botPaused = new Map<string, boolean>()
+  const handoverSeen = new Set<string>()
 
-  // created_at DESC, so the FIRST time a phone is seen is its newest message.
-  for (const m of rows) {
-    const k = phoneKey(m.wa_phone)
-    if (k.length !== 9 || MASTER_PHONES.has(k)) continue
-    const vendor = byPhone.get(k)
-    if (scope.blocks({ phone: m.wa_phone, applicationId: toPrimary(vendor?.id) })) continue
+  // PAGE, do not cap. `.limit(4000)` silently returned 1000 rows, because
+  // PostgREST enforces db-max-rows=1000 on this project, so this list only ever
+  // saw the newest ELEVEN DAYS and 88 of 204 threads (43%) were missing from it
+  // with no error and no "load more" — they simply aged out and never returned.
+  // unified/route.ts:259-334 already pages exactly like this and carries a
+  // comment warning that a fixed cap "silently drops a conversation from the
+  // list the moment its last message falls outside the window". This loader
+  // reintroduced the bug that comment was written about.
+  //
+  // Stop once two consecutive pages surface no new phone (every live
+  // conversation is covered by then), with MAX_PAGES as a hard ceiling.
+  const PAGE_SIZE = 1000
+  const MAX_PAGES = 10
+  let emptyPages = 0
 
-    if (!threads.has(k)) {
-      threads.set(k, {
-        id: `wa:${norm(m.wa_phone)}`,
-        channel: 'whatsapp',
-        peer_name: vendor?.contact_name ?? null,
-        business_name: vendor?.business_name ?? null,
-        phone: m.wa_phone,
-        email: vendor?.email ?? null,
-        application_id: vendor?.id ?? null,
-        subject: null,
-        last_message_at: m.created_at,
-        last_preview: (m.body || '').slice(0, 120),
-        last_direction: m.direction,
-        unread: false,
-        needs_response: false,
-      })
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE_SIZE
+    const { data: msgs } = await db
+      .from('wa_messages')
+      // NO read_at: that column does not exist on wa_messages, and selecting it
+      // made the whole query error, so this loader once returned ZERO threads.
+      .select('id, wa_phone, direction, body, created_at, metadata')
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1)
+    if (!msgs || msgs.length === 0) break
+
+    const before = threads.size
+
+    // NO stripEftMessages. Taona 2026-07-27: the festival owner sees her own
+    // vendors in full. The content strip removed any message mentioning "EFT" or
+    // "proof of payment" from threads she was ALREADY allowed to open, which
+    // mostly meant hiding the vendor's own questions ("I have already emailed my
+    // proof of payment") and the bot's harmless "we are card only" answers, so
+    // her conversations read with holes: an answer on screen with no question.
+    // Verified before removing it: the real account number, branch code and
+    // account name appear in 0 of 2,617 WhatsApp messages, because the bot never
+    // had them. The VENDOR-level seal below is untouched and still hides every
+    // master-lane vendor from her completely.
+    for (const m of msgs as Array<{
+      id: string; wa_phone: string; direction: 'in' | 'out'; body: string | null
+      created_at: string; metadata: Record<string, unknown> | null
+    }>) {
+      const k = phoneKey(m.wa_phone)
+      if (k.length !== 9 || OPERATOR_PHONES.has(k)) continue
+      const vendor = byPhone.get(k)
+      if (scope.blocks({ phone: m.wa_phone, applicationId: toPrimary(vendor?.id) })) continue
+
+      const raw = (m.body || '').trim()
+
+      // Signals are read BEFORE the marker skip, so a marker still flags the
+      // queue without ever becoming the visible preview. Rows are created_at
+      // DESC, so the first hit per phone is the latest.
+      if (!handoverSeen.has(k)) {
+        if (/^\[HUMAN_HANDOVER_ON\]/.test(raw)) { botPaused.set(k, true); handoverSeen.add(k) }
+        else if (/^\[HUMAN_HANDOVER_OFF\]/.test(raw)) { botPaused.set(k, false); handoverSeen.add(k) }
+      }
+      if (/\[NEEDS_HUMAN\]/.test(raw) && !needsHumanAt.has(k)) needsHumanAt.set(k, m.created_at)
+      if (m.direction === 'out' && m.metadata?.sent_by && !humanReplyAt.has(k)) humanReplyAt.set(k, m.created_at)
+
+      // Markers are OUR bookkeeping, not conversation. 115 of them were winning
+      // last_preview in the list while messages/route.ts categorically refuses
+      // to render them in the thread, so the list and the open thread showed
+      // different things for the same conversation.
+      if (isMarker(raw)) continue
+
+      if (m.direction === 'in' && !lastInboundAt.has(k)) lastInboundAt.set(k, m.created_at)
+      if (m.direction === 'out' && !lastOutboundAt.has(k)) lastOutboundAt.set(k, m.created_at)
+
+      if (!threads.has(k)) {
+        const stripped = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '')
+        const media = (m.metadata as { media?: { kind?: string } } | null)?.media?.kind
+        threads.set(k, {
+          id: `wa:${norm(m.wa_phone)}`,
+          channel: 'whatsapp',
+          peer_name: vendor?.contact_name ?? null,
+          business_name: vendor?.business_name ?? null,
+          phone: m.wa_phone,
+          email: vendor?.email ?? null,
+          application_id: vendor?.id ?? null,
+          subject: null,
+          last_message_at: m.created_at,
+          last_preview: (stripped || mediaPreviewLabel(media) || '[no text]').slice(0, 120),
+          last_direction: m.direction,
+          unread: false,
+          needs_response: false,
+          bot_paused: false,
+        })
+      }
     }
-    if (m.direction === 'in' && !lastInboundAt.has(k)) lastInboundAt.set(k, m.created_at)
-    if (m.direction === 'out' && !lastOutboundAt.has(k)) lastOutboundAt.set(k, m.created_at)
-    if (/\[NEEDS_HUMAN\]/.test(m.body || '') && !needsHumanAt.has(k)) needsHumanAt.set(k, m.created_at)
-    if (m.direction === 'out' && m.metadata?.sent_by && !humanReplyAt.has(k)) humanReplyAt.set(k, m.created_at)
+
+    if (msgs.length < PAGE_SIZE) break
+    emptyPages = threads.size === before ? emptyPages + 1 : 0
+    if (emptyPages >= 2) break
   }
 
   for (const [k, t] of threads) {
@@ -190,6 +267,7 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
     const escalationOpen = !!escalated && (!humanOut || new Date(humanOut) < new Date(escalated))
     const inboundUnanswered = !!inAt && (!humanOut || new Date(humanOut) < new Date(inAt))
     t.needs_response = escalationOpen || inboundUnanswered
+    t.bot_paused = botPaused.get(k) === true
   }
 
   return sortPinned([...threads.values()])
@@ -209,7 +287,6 @@ export async function loadMailThreads(
 ): Promise<ChannelThread[]> {
   const db = createAdminClient()
   const scope = await laneScopeFor(viewerEmail)
-  const hideEft = hidesEftContent(viewerEmail)
   const { byEmail, toPrimary } = await vendorIndex(db)
 
   const { data: msgs } = await db
@@ -218,14 +295,15 @@ export async function loadMailThreads(
     .order('created_at', { ascending: false })
     .limit(4000)
 
-  const rows = stripEftMessages(
-    (msgs || []) as Array<{
-      id: string; thread_id: string; direction: 'in' | 'out'; body_text: string | null
-      created_at: string; received_at: string | null; mailbox: string | null; sent_by: string | null
-    }>,
-    (m) => m.body_text,
-    hideEft,
-  )
+  // No content strip here either, for the same reason as the WhatsApp loader:
+  // once a thread has passed the VENDOR-level gate below, the viewer sees all of
+  // it. Stripping mid-thread previously rewrote last_preview and
+  // last_message_at to an older message, so the list quietly disagreed with the
+  // conversation it linked to.
+  const rows = (msgs || []) as Array<{
+    id: string; thread_id: string; direction: 'in' | 'out'; body_text: string | null
+    created_at: string; received_at: string | null; mailbox: string | null; sent_by: string | null
+  }>
 
   // Newest-first, so the first message seen for a thread decides its mailbox.
   const owner = new Map<string, MailBox>()
@@ -281,6 +359,7 @@ export async function loadMailThreads(
       // leaving them in the list. Without it 37 of 45 Gmail threads pinned as
       // "waiting on a person", which is a queue nobody can read. A thread that
       // resolves to a vendor always pins, whatever their address looks like.
+      bot_paused: false,   // no bot answers email; the field exists for one shared list shape
       needs_response:
         t.status !== 'resolved' &&
         !!inAt && (!outAt || new Date(outAt) < new Date(inAt)) &&

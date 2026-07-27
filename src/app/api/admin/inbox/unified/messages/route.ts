@@ -48,7 +48,9 @@ export async function GET(req: NextRequest) {
   // within that thread any EFT message is stripped at the bottom of this handler.
   const scope = await laneScopeFor(user.email)
   if (scope.blocks({ email, phone })) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  const hide = hidesEftContent(user.email)
+  const PAGE = 200
+  const before = (url.searchParams.get('before') || '').trim() || null
+  let waHasMore = false
 
   const comms: CommItem[] = []
   const local = (e?: string | null) => (e ? e.split('@')[0] : null)
@@ -60,15 +62,23 @@ export async function GET(req: NextRequest) {
   // ---- WhatsApp by phone (both +27… and 27… forms) ----
   if (phone) {
     const noPlus = phone.replace(/^\+/, '')
-    const { data: msgs } = await db
+    // PAGE BACK. Newest PAGE first; `?before=<iso>` walks further into history.
+    // Two live threads hold 643 and 474 messages, so the older 243 and 74 were
+    // unreachable by any request the UI could make: the conversation simply
+    // began mid-sentence with nothing on screen to say so.
+    let q = db
       .from('wa_messages')
       .select('id, direction, body, created_at, wa_phone, template_name, metadata, status, error')
       .or(`wa_phone.eq.+${noPlus},wa_phone.eq.${noPlus}`)
-      // DESC + limit, reversed below: ascending + limit returns the OLDEST 400,
-      // so past 400 messages a thread froze on ancient history and new messages
-      // never appeared at all. We want the newest 400.
+      // DESC + limit, reversed below: ascending + limit returns the OLDEST N,
+      // so past N messages a thread froze on ancient history and new messages
+      // never appeared at all. We want the newest N.
       .order('created_at', { ascending: false })
-      .limit(400)
+      .limit(PAGE + 1)   // +1 sentinel: tells us there IS more without a count query
+    if (before) q = q.lt('created_at', before)
+    const { data: msgs } = await q
+    waHasMore = (msgs || []).length > PAGE
+    if (waHasMore) (msgs as unknown[]).length = PAGE
     for (const m of (msgs || []) as Array<{ id: string; direction: string; body: string | null; created_at: string; wa_phone: string; template_name: string | null; metadata: { sent_by?: string; via?: string; media?: { kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'; id?: string; mime_type?: string; filename?: string; caption?: string } } | null; status: string | null; error: string | null }>) {
       // Internal owner-notification pings ("🛎️ …") and bracket markers are not
       // part of the customer conversation. A real inbound with no text is media.
@@ -202,15 +212,19 @@ export async function GET(req: NextRequest) {
   }
 
   comms.sort((a, b) => +new Date(a.at) - +new Date(b.at))
-  // EFT wall: the accessor MUST cover every field that can carry message text.
-  // It used to read `m.body` alone, which was complete until bodyHtml existed —
-  // an email whose plain-text part is empty but whose HTML says "I sent the EFT"
-  // would otherwise sail straight past the content filter shipped in eda870d.
+  // NO CONTENT STRIP. The vendor-level gate is the 403 above: if the viewer got
+  // this far, this conversation is theirs to read in full (Taona 2026-07-27,
+  // "show her everything from her own vendors"). The old in-thread filter
+  // removed any message mentioning EFT or proof of payment, which mostly meant
+  // deleting the VENDOR's own questions and leaving an answer on screen with no
+  // question above it — 24 such messages across 10 of the festival owner's own
+  // threads. Verified before removing it: the real account number, branch code
+  // and account name appear in 0 of 2,617 WhatsApp messages, because the bot
+  // never had them. The vendor-level seal is untouched and still hides every
+  // master-lane vendor completely.
   return NextResponse.json({
-    messages: stripEftMessages(
-      comms,
-      (m) => [m.body, m.subject, m.bodyHtml, m.bodyQuoted, m.bodyHtmlQuoted].filter(Boolean).join(' '),
-      hide,
-    ),
+    messages: comms,
+    // Oldest loaded row is the cursor for "load older".
+    pagination: { hasMore: waHasMore, before: comms.length ? comms[0].at : null },
   })
 }
