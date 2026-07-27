@@ -10,13 +10,14 @@
 //     operator bubble — an email is a document, and outbound just gets a left
 //     accent and "You".
 //   · collapsed rows (sender, snippet, date) with the newest expanded, so a long
-//     thread is scannable instead of a wall.
+//     thread is scannable instead of a wall. The header row is the toggle in BOTH
+//     directions: the same click that opens a message closes it again.
 //   · sanitised HTML when the row has it, so structure survives. `bodyHtml` is
 //     sanitised SERVER-SIDE in the messages route — this component trusts it by
 //     contract and must never re-sanitise or accept HTML from anywhere else.
 //   · the quoted tail hides behind Gmail's "···".
 import { useState } from 'react'
-import { Mail, MoreHorizontal } from 'lucide-react'
+import { ChevronDown, Mail, MoreHorizontal } from 'lucide-react'
 import type { CommItem } from '@/lib/inbox/types'
 import { fmtSAST, initials } from '@/lib/inbox/format'
 import { MediaBubble } from './MediaBubble'
@@ -47,8 +48,11 @@ function EmailMessage({ m, defaultExpanded }: { m: CommItem; defaultExpanded: bo
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-expanded={false}
+        title="Expand"
         className="w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 transition min-w-0"
       >
+        <ChevronDown className="shrink-0 w-3.5 h-3.5 text-neutral-400 -rotate-90" />
         <span className="shrink-0 w-6 h-6 rounded-full bg-neutral-200 text-neutral-600 text-[10px] font-semibold grid place-items-center">
           {initials(m.from || '?')}
         </span>
@@ -62,13 +66,23 @@ function EmailMessage({ m, defaultExpanded }: { m: CommItem; defaultExpanded: bo
   }
 
   return (
-    <div className={`rounded-lg border bg-white min-w-0 ${out ? 'border-neutral-200 border-l-2 border-l-[#cd2653]' : 'border-neutral-200'}`}>
-      <div className="flex items-start gap-2 px-3 pt-2.5 pb-2 border-b border-neutral-100 min-w-0">
+    <div className={`rounded-lg border bg-white shadow-sm min-w-0 ${out ? 'border-neutral-200 border-l-2 border-l-[#cd2653]' : 'border-neutral-200'}`}>
+      {/* The whole header is the close control. A collapse that hides in a
+          corner glyph is one the operator never finds, so a long email stays
+          open forever and every later message sits below a wall of scroll. */}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        aria-expanded
+        title="Collapse"
+        className="w-full text-left flex items-start gap-2 px-3 pt-2.5 pb-2 rounded-t-lg border-b border-neutral-200 bg-neutral-50 hover:bg-neutral-100 transition min-w-0"
+      >
+        <ChevronDown className="shrink-0 mt-2 w-3.5 h-3.5 text-neutral-500" />
         <span className="shrink-0 w-7 h-7 rounded-full bg-neutral-200 text-neutral-600 text-[11px] font-semibold grid place-items-center">
           {initials(out ? 'You' : m.from || '?')}
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-1.5 flex-wrap">
+        <span className="min-w-0 flex-1">
+          <span className="flex items-baseline gap-1.5 flex-wrap">
             <span className="text-[13px] font-semibold text-neutral-900">{out ? 'You' : m.from}</span>
             {m.fromAddress && <span className="text-[11px] text-neutral-400 truncate">{m.fromAddress}</span>}
             {m.mailbox && (
@@ -80,21 +94,14 @@ function EmailMessage({ m, defaultExpanded }: { m: CommItem; defaultExpanded: bo
                 {m.mailbox === 'gmail' ? 'Gmail' : 'YAH'}
               </span>
             )}
-          </div>
-          {m.to && <div className="text-[11px] text-neutral-400 truncate">to {m.to}</div>}
-        </div>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="shrink-0 text-[11px] text-neutral-400 hover:text-neutral-600"
-          title="Collapse"
-        >
-          {/* The sender's own send time, which is what a mail client shows. `at`
-              is arrival, which is what the thread sorts on — they differ by the
-              cron interval and occasionally by a skewed sender clock. */}
-          {fmtSAST(m.sentAt || m.at)}
-        </button>
-      </div>
+          </span>
+          {m.to && <span className="block text-[11px] text-neutral-400 truncate">to {m.to}</span>}
+        </span>
+        {/* The sender's own send time, which is what a mail client shows. `at`
+            is arrival, which is what the thread sorts on — they differ by the
+            cron interval and occasionally by a skewed sender clock. */}
+        <span className="shrink-0 text-[11px] text-neutral-400">{fmtSAST(m.sentAt || m.at)}</span>
+      </button>
 
       <div className="px-3 py-2.5 min-w-0">
         <Body m={m} quoted={false} />

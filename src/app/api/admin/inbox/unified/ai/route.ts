@@ -15,6 +15,8 @@ import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lan
 import { stripEmDashes } from '@/lib/festival-brain/system-prompt'
 import { getEftMode } from '@/lib/eft'
 import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
+import { FESTIVAL_FACTS, SPECIFICS_RULE, guardUngroundedDates } from '@/lib/ai-grounding'
+import { joburgClockBlock } from '@/lib/joburg-clock'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -51,14 +53,18 @@ function hardFacts(eftOn: boolean): string {
     // the bot: never explain the lane, never name an outage (Taona 2026-07-26).
     ? `- STALL FEE PAYMENT (current): the stall fee is paid by bank transfer. Present this as the plain, normal way to pay. The vendor sees the banking details, their unique reference and the full terms on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, and uploads proof of payment there. Direct them to the portal for the banking details, do NOT state account numbers yourself. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay the stall fee. TERMS the vendor must follow: ${EFT_TERMS_TEXT}`
     : `- Vendor flow: apply, approval takes a few working days, pay the stall fee by card in the exhibitor portal, stall allocated closer to the festival.`
-  return `FESTIVAL FACTS (use only these, never invent):
-- Young at Heart Festival (Cape Town Halaal), 11 to 13 December 2026, Youngsfield Military Base, Wetton Road, Claremont, Cape Town.
-- Tickets R30/day, R60 weekend pass, children under 3 free. Buy + apply at cthalaal.co.za. Vendor apply: cthalaal.co.za/apply. Exhibitor portal: cthalaal.co.za/exhibitor/login.
-- All food on site is strictly halaal. Free parking on site. Contact: support@youngatheart.co.za.
+  // Today comes from the trusted clock, not the model's sense of when it is. The
+  // email drafter with no date in its prompt told a vendor her outcome was due
+  // "1 June 2026", a deadline that never existed and had already passed.
+  return `${joburgClockBlock()}
+
+${FESTIVAL_FACTS}
 ${payLine}`
 }
 
-const STYLE = `STYLE: warm, plain, concise. 2 to 4 sentences. No em-dashes or en-dashes, use commas/periods/colons. Never say AI assistant, Claude, OpenAI, Anthropic. You are the Young at Heart festival team. Do not invent prices, stall numbers, dates, or banking details. If you do not know, defer to support@youngatheart.co.za.`
+const STYLE = `STYLE: warm, plain, concise. 2 to 4 sentences. No em-dashes or en-dashes, use commas/periods/colons. Never say AI assistant, Claude, OpenAI, Anthropic. You are the Young at Heart festival team. Stall numbers and banking details are never yours to state, send them to the exhibitor portal for those. If you do not know, defer to support@youngatheart.co.za.
+
+${SPECIFICS_RULE}`
 
 async function loadThread(db: ReturnType<typeof createAdminClient>, phone?: string, email?: string): Promise<Turn[]> {
   const turns: Turn[] = []
@@ -173,9 +179,14 @@ export async function POST(req: NextRequest) {
     })
     const text = res.content[0]?.type === 'text' ? res.content[0].text : ''
     const clean = stripEmDashes(text).trim()
+    // The composer text is one click from a vendor, so a date the model was not
+    // given never gets that far. The operator's own draft and the vendor's own
+    // messages are part of the prompt, so quoting a date from either still passes.
+    const dated = guardUngroundedDates(clean, `${prompt.system}\n${prompt.user}`)
+    if (dated.replaced) console.warn('[inbox/ai] dropped ungrounded date(s):', dated.ungrounded.join(', '))
     // reply/follow-up/tone/attachments fill the composer; summary/status show in a strip.
     const fillsComposer = ['smart_reply', 'tone_adjust', 'follow_up'].includes(body.action)
-    return NextResponse.json({ ok: true, action: body.action, text: clean, fillsComposer })
+    return NextResponse.json({ ok: true, action: body.action, text: dated.text, fillsComposer })
   } catch (err) {
     console.error('[inbox/ai] error', err)
     return NextResponse.json({ ok: false, message: 'AI could not respond just now. Try again.' }, { status: 502 })

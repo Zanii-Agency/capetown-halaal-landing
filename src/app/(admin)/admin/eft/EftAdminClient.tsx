@@ -359,39 +359,50 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                       )}
                     </td>
                     <td className="px-5 py-3 align-middle">
+                      {/* Two fixed-width slots, never a flow row: Remove is absent on
+                          most rows, and in a justify-end flow that pulled the primary
+                          button right by Remove's width, so the primary buttons never
+                          formed a straight column down the table. Both slots keep their
+                          width whether or not they hold a button. */}
                       <div className="flex items-center justify-end gap-2 flex-nowrap whitespace-nowrap">
-                        {/* Not yet collected + not paid: mark the EFT money collected
-                            (interim). Vendor sees paid + acknowledged; NOT counted in
-                            finance until settled via Yoco. */}
-                        {!r.reconciled && !r.collected && (
-                          <button
-                            onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as EFT COLLECTED for ${rand(r.outstanding ?? r.amount)}? They will see PAID and be acknowledged, but this is NOT final until you settle it via Yoco. Do this only after the EFT money has landed.`)) post('/api/admin/eft/reconcile', { applicationId: r.id }, `rec-${r.id}`) }}
-                            disabled={busy === `rec-${r.id}`}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
-                          >
-                            {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark collected
-                          </button>
-                        )}
-                        {/* Collected but not yet settled: pay it through Yoco (opens a
-                            checkout the operator pays; webhook flips it to real paid). */}
-                        {!r.reconciled && r.collected && (
-                          <button
-                            onClick={() => { if (confirm(`Settle ${r.business_name || 'this vendor'} through Yoco for ${rand(r.outstanding ?? r.amount)}? This opens a Yoco checkout you pay on your card (Yoco fee applies), funded by the EFT cash. It records the real payment and notifies Samreen.`)) settle(r.id) }}
-                            disabled={busy === `set-${r.id}`}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
-                          >
-                            {busy === `set-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Settle via Yoco
-                          </button>
-                        )}
-                        {r.marked && (
-                          <button
-                            onClick={() => post('/api/admin/eft/lane', { applicationId: r.id, action: 'remove' }, `rm-${r.id}`)}
-                            disabled={busy === `rm-${r.id}`}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 hover:border-[#cd2653] hover:text-[#cd2653] px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
-                          >
-                            {busy === `rm-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Remove
-                          </button>
-                        )}
+                        <div className="w-[152px] shrink-0">
+                          {/* Not yet collected + not paid: mark the EFT money collected
+                              (interim). Vendor sees paid + acknowledged; NOT counted in
+                              finance until settled via Yoco. */}
+                          {!r.reconciled && !r.collected && (
+                            <button
+                              onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as EFT COLLECTED for ${rand(r.outstanding ?? r.amount)}? They will see PAID and be acknowledged, but this is NOT final until you settle it via Yoco. Do this only after the EFT money has landed.`)) post('/api/admin/eft/reconcile', { applicationId: r.id }, `rec-${r.id}`) }}
+                              disabled={busy === `rec-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark collected
+                            </button>
+                          )}
+                          {/* Collected but not yet settled: pay it through Yoco (opens a
+                              checkout the operator pays; webhook flips it to real paid). */}
+                          {!r.reconciled && r.collected && (
+                            <button
+                              onClick={() => { if (confirm(`Settle ${r.business_name || 'this vendor'} through Yoco for ${rand(r.outstanding ?? r.amount)}? This opens a Yoco checkout you pay on your card (Yoco fee applies), funded by the EFT cash. It records the real payment and notifies Samreen.`)) settle(r.id) }}
+                              disabled={busy === `set-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `set-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Settle via Yoco
+                            </button>
+                          )}
+                        </div>
+                        <div className="w-8 shrink-0">
+                          {r.marked && (
+                            <button
+                              onClick={() => post('/api/admin/eft/lane', { applicationId: r.id, action: 'remove' }, `rm-${r.id}`)}
+                              disabled={busy === `rm-${r.id}`}
+                              aria-label={`Remove ${r.business_name || 'this vendor'} from the EFT lane`}
+                              title="Remove from the EFT lane"
+                              className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-[#1B1A17]/60 hover:border-[#cd2653] hover:text-[#cd2653] disabled:opacity-60"
+                            >
+                              {busy === `rm-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
