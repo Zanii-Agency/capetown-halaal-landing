@@ -22,27 +22,34 @@ export const dynamic = 'force-dynamic'
 // PDF rendering uses headless chromium, which is slow on a cold start.
 export const maxDuration = 120
 
-async function gate(applicationId: string) {
+/** Who is calling. Runs BEFORE the body is read: parsing first meant an
+ *  unauthenticated POST with no body threw on req.json() and answered 500,
+ *  which both hides the real 401 and reports an error where none happened. */
+async function requireAdmin() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
   const db = createAdminClient()
   const { data: adminUser } = await db.from('admin_users').select('id, email').eq('id', user.id).maybeSingle()
   if (!adminUser) return { error: NextResponse.json({ error: 'forbidden' }, { status: 403 }) }
-  // Same lane seal as every other read: a vendor outside the viewer's lane
-  // cannot be listed OR sent to from here.
-  const scope = await laneScopeFor(user.email)
-  if (scope.blocksApplicationId(applicationId)) {
-    return { error: NextResponse.json({ error: 'forbidden' }, { status: 403 }) }
-  }
-  return { email: (adminUser as { email?: string }).email ?? null }
+  return { email: (adminUser as { email?: string }).email ?? null, viewer: user.email }
+}
+
+/** Same lane seal as every other read: a vendor outside the viewer's lane
+ *  cannot be listed OR sent to from here. */
+async function laneAllows(viewerEmail: string | null | undefined, applicationId: string) {
+  const scope = await laneScopeFor(viewerEmail)
+  return !scope.blocksApplicationId(applicationId)
 }
 
 export async function GET(req: NextRequest) {
+  const g = await requireAdmin()
+  if ('error' in g) return g.error
   const applicationId = (new URL(req.url).searchParams.get('applicationId') || '').trim()
   if (!applicationId) return NextResponse.json({ items: [] })
-  const g = await gate(applicationId)
-  if ('error' in g) return g.error
+  if (!(await laneAllows(g.viewer, applicationId))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
   return NextResponse.json({ items: await listSendables(applicationId) })
 }
 
@@ -55,15 +62,19 @@ const bodySchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
+  const g = await requireAdmin()
+  if ('error' in g) return g.error
+
   let body: z.infer<typeof bodySchema>
   try {
     body = bodySchema.parse(await req.json())
   } catch (e) {
     if (e instanceof z.ZodError) return NextResponse.json({ error: 'invalid body', details: e.issues }, { status: 400 })
-    throw e
+    return NextResponse.json({ error: 'invalid body' }, { status: 400 })
   }
-  const g = await gate(body.applicationId)
-  if ('error' in g) return g.error
+  if (!(await laneAllows(g.viewer, body.applicationId))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   const built = await buildSendable(body.applicationId, body.key)
   // NOTHING went out. Say so plainly rather than reporting a success the vendor
