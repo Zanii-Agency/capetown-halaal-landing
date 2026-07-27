@@ -23,6 +23,8 @@ interface Row {
   collected: boolean       // EFT money marked collected (interim); awaiting Yoco settlement
   reconciled: boolean
   proofs: Array<{ url: string; uploaded_at: string; note?: string }>
+  added_at?: string | null
+  added_by?: string | null
 }
 interface Candidate { id: string; business_name: string | null; contact_name: string | null; email: string | null }
 
@@ -35,6 +37,7 @@ function laneDate(r: { submitted_at?: string | null; proofs: Array<{ uploaded_at
   return newestProof || r.submitted_at || null
 }
 const rand = (n: number | null) => (n === null ? 'TBC' : `R${n.toFixed(2)}`)
+const fmtTime = (s: string | null) => (s ? new Date(s).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false }) : '')
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
 
 export default function EftAdminClient({ globalOn, bank, rows, candidates, excluded }: {
@@ -267,6 +270,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                   <th className="px-5 py-2 font-medium">Vendor</th>
                   <th className="px-3 py-2 font-medium">Owed</th>
                   <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Added to lane</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Date</th>
                   <th className="px-3 py-2 font-medium">Proof</th>
                   <th className="px-5 py-2 font-medium text-right">Actions</th>
@@ -289,6 +293,21 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                         <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5" />Proof uploaded {r.submitted_at ? fmtDate(r.submitted_at) : ''}</span>
                       ) : (
                         <span className="text-[#1B1A17]/50"><span className="inline-block w-2 h-2 rounded-full bg-neutral-300 mr-1.5" />Awaiting proof</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {r.added_at ? (
+                        <>
+                          <span className="text-[#1B1A17]/70">{fmtDate(r.added_at)}</span>
+                          <span className="block text-xs text-[#1B1A17]/45">
+                            {fmtTime(r.added_at)}{r.added_by ? ` · ${r.added_by.split('@')[0]}` : ''}
+                          </span>
+                        </>
+                      ) : (
+                        // Honest gap: the audit that should have recorded this
+                        // was writing to a non-existent column inside a silent
+                        // catch, so nothing before 2026-07-27 exists to show.
+                        <span className="text-[#1B1A17]/40" title="Added before lane changes were being recorded">—</span>
                       )}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-[#1B1A17]/70">
@@ -350,7 +369,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                 <tr className="border-t-2 border-[#E5DCC4] bg-[#FBF8F0]">
                   <td className="px-5 py-3 font-semibold text-[#1B1A17]">{sortedRows.length} vendor{sortedRows.length === 1 ? '' : 's'}</td>
                   <td className="px-3 py-3 font-bold text-[#1B1A17] whitespace-nowrap">{rand(totals.total)}</td>
-                  <td className="px-3 py-3" colSpan={4} />
+                  <td className="px-3 py-3" colSpan={5} />
                 </tr>
               </tfoot>
             </table>

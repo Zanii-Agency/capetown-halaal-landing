@@ -81,10 +81,32 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     outstanding: number | null
     submitted: boolean
     submitted_at: string | null
+    added_at: string | null
+    added_by: string | null
     marked: boolean
     collected: boolean
     reconciled: boolean
     proofs: Array<{ url: string; uploaded_at: string; note?: string }>
+  }
+
+  // When each vendor was ADDED to the lane. Read from the audit trail rather
+  // than guessed: nothing on the vendor row records it (the ⟦EFT⟧ marker is a
+  // bare token with no timestamp). Rows added before 2026-07-27 have no event,
+  // because the audit insert was writing to a column that does not exist inside
+  // a silent catch, so it recorded nothing for its whole life. Those show a dash
+  // rather than a fabricated date.
+  const addedAt = new Map<string, { at: string; by: string | null }>()
+  {
+    const { data: ev } = await db
+      .from('vendor_application_events')
+      .select('application_id, created_at, actor_email, event_type')
+      .eq('event_type', 'eft_lane_add')
+      .order('created_at', { ascending: false })
+    // DESC, so the first row per vendor is the MOST RECENT add: a vendor removed
+    // and re-added should read from when they last came back.
+    for (const e of (ev || []) as Array<{ application_id: string; created_at: string; actor_email: string | null }>) {
+      if (!addedAt.has(e.application_id)) addedAt.set(e.application_id, { at: e.created_at, by: e.actor_email })
+    }
   }
 
   type Contact = { id: string; business_name: string | null; contact_name: string | null; email: string | null }
@@ -134,6 +156,8 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         outstanding,
         submitted,
         submitted_at: state.payment?.eft_submitted_at || null,
+        added_at: addedAt.get(a.id as string)?.at || null,
+        added_by: addedAt.get(a.id as string)?.by || null,
         marked,
         collected,
         reconciled,

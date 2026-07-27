@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, withEftMarker, withoutEftMarker, withNoEftMarker, withoutNoEftMarker } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, withEftMarker, withoutEftMarker, withNoEftMarker, withoutNoEftMarker } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 
@@ -40,14 +40,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'could not update' }, { status: 500 })
   }
 
-  // Best-effort audit; never blocks the change.
-  try {
-    await admin.from('vendor_application_events').insert({
-      application_id: id,
-      event_type: `eft_lane_${action}`,
-      metadata: { by: gate.adminUser.email },
-    })
-  } catch { /* schema/audit is secondary */ }
+  // Audit. This wrote to a `metadata` column that DOES NOT EXIST on
+  // vendor_application_events, inside a bare `catch {}`, so every lane change
+  // since this endpoint shipped failed to record and said nothing: the table
+  // holds 0 eft_lane rows. That is why the lane could not show when a vendor was
+  // added. Real columns now, and a LOUD catch, because a silent audit is
+  // indistinguishable from no audit.
+  const { error: evErr } = await admin.from('vendor_application_events').insert({
+    application_id: id,
+    event_type: `eft_lane_${action}`,
+    actor_email: gate.adminUser.email,
+    actor_role: gate.adminUser.role ?? null,
+    before_value: hasEftMarker(notes) ? 'in_lane' : 'out',
+    after_value: action === 'add' ? 'in_lane' : action === 'remove' ? 'out' : action,
+    note: `EFT lane ${action}`,
+  })
+  if (evErr) console.error('[eft/lane] audit insert failed:', evErr.message)
 
   return NextResponse.json({ ok: true })
 }
