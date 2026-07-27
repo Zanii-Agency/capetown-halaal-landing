@@ -34,6 +34,15 @@ async function findVendorByEmail(
   return (data?.[0] as { id: string }) || null
 }
 
+/** Reject a hung promise so a silent stall becomes a loud, logged failure. */
+function withDeadline<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms) }),
+  ]).finally(() => clearTimeout(timer)) as Promise<T>
+}
+
 /**
  * A pulse on every run, mirroring support-mail-fetcher. The Gmail fetcher wrote
  * NO heartbeat at all, so there was no record anywhere of it running, skipping,
@@ -79,7 +88,14 @@ export async function GET(req: Request) {
   const client = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user, pass }, logger: false, socketTimeout: 30_000 })
 
   try {
-    await client.connect()
+    // HARD deadline around connect, because ImapFlow's socketTimeout governs an
+    // ESTABLISHED socket and does nothing for a TCP handshake that never
+    // completes. When the far end silently drops the SYN (Google greylisting an
+    // egress IP, a revoked app password refused at the edge) connect() hangs
+    // rather than throwing: the function is killed at maxDuration with no error,
+    // no log, and no heartbeat. That is the exact shape of this outage, and it is
+    // why the heartbeat added minutes earlier recorded nothing at all.
+    await withDeadline(client.connect(), 15_000, 'imap connect timed out after 15s')
   } catch (e) {
     try { await client.close() } catch { /* swallow */ }
     // The other silent death: a rejected app password fails HERE, and without a
@@ -90,11 +106,11 @@ export async function GET(req: Request) {
 
   let lock: Awaited<ReturnType<typeof client.getMailboxLock>> | null = null
   try {
-    lock = await client.getMailboxLock('INBOX')
+    lock = await withDeadline(client.getMailboxLock('INBOX'), 15_000, 'INBOX lock timed out after 15s')
     // NON-DESTRUCTIVE: read RECENT (last 3 days), never mark seen. Dedup via the
     // message-existence check below so re-reads are cheap no-ops.
     const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
-    const uidsRaw = await client.search({ since }, { uid: true })
+    const uidsRaw = await withDeadline(client.search({ since }, { uid: true }), 20_000, 'IMAP search timed out after 20s')
     const uids: number[] = Array.isArray(uidsRaw) ? uidsRaw : []
     const toFetch = uids.slice(-50)
 
