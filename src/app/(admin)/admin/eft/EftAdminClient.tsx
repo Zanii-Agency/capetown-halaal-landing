@@ -7,6 +7,10 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2, Check, X, Search, ExternalLink, CheckCircle2, ChevronDown } from 'lucide-react'
+// Imported, not declared below: as a local const it sat under the sort that
+// calls it and every render threw a temporal-dead-zone ReferenceError. See
+// src/lib/eft-rows.ts.
+import { isDemoRow } from '@/lib/eft-rows'
 
 interface Bank { accountName: string; bank: string; accountNumber: string; branchCode: string; accountType?: string }
 interface Row {
@@ -60,7 +64,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
   const sortedRows = [...rows].sort((a, b) => {
     // Rows that do not count toward the money sink to the bottom, so the top of
     // the table is only real vendors.
-    if (isDemo(a) !== isDemo(b)) return isDemo(a) ? 1 : -1
+    if (isDemoRow(a) !== isDemoRow(b)) return isDemoRow(a) ? 1 : -1
     const da = laneDate(a), dbb = laneDate(b)
     if (!da && !dbb) return (a.business_name || '').localeCompare(b.business_name || '')
     if (!da) return 1          // nothing has happened on this one yet: bottom
@@ -69,14 +73,10 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
   })
 
   // Owed per state. `outstanding ?? amount` is the same value the row renders,
-  // so the totals can never disagree with the column above them.
-  // Demo rows stay VISIBLE (Taona: "hide ... from this list tho keep it on the
-  // list") but are excluded from every total. R7,500 of fake vendor was sitting
-  // inside a R44,250 "Total owed" on a payments screen.
-  const isDemo = (r: Row) =>
-    /@cthalaal\.co\.za$/i.test(r.email || '') || /\bdemo\b/i.test(r.business_name || '')
+  // so the totals can never disagree with the column above them. Demo rows are
+  // excluded from every total (see isDemoRow).
   const owed = (r: Row) => r.outstanding ?? r.amount ?? 0
-  const totals = rows.filter((r) => !isDemo(r)).reduce(
+  const totals = rows.filter((r) => !isDemoRow(r)).reduce(
     (acc, r) => {
       const v = owed(r)
       acc.total += v
@@ -311,11 +311,11 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                     <td className="px-5 py-3">
                       <p className="font-medium text-[#1B1A17]">
                         {r.business_name || 'Unnamed'}
-                        {isDemo(r) && <span className="ml-2 align-middle rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-neutral-100 text-[#1B1A17]/45">demo, not counted</span>}
+                        {isDemoRow(r) && <span className="ml-2 align-middle rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-neutral-100 text-[#1B1A17]/45">demo, not counted</span>}
                       </p>
                       <p className="text-xs text-[#1B1A17]/50">{r.contact_name || ''}{r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}</p>
                     </td>
-                    <td className={`px-3 py-3 whitespace-nowrap text-right tabular-nums ${isDemo(r) ? 'text-[#1B1A17]/35 line-through' : 'font-medium'}`}>{rand(r.outstanding ?? r.amount)}</td>
+                    <td className={`px-3 py-3 whitespace-nowrap text-right tabular-nums ${isDemoRow(r) ? 'text-[#1B1A17]/35 line-through' : 'font-medium'}`}>{rand(r.outstanding ?? r.amount)}</td>
                     <td className="px-3 py-3">
                       {r.reconciled ? (
                         <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Reconciled</span>
@@ -411,8 +411,8 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
               <tfoot>
                 <tr className="border-t-2 border-[#E5DCC4] bg-[#FBF8F0]">
                   <td className="px-5 py-3 font-semibold text-[#1B1A17]">
-                    {sortedRows.filter((r) => !isDemo(r)).length} vendor{sortedRows.filter((r) => !isDemo(r)).length === 1 ? '' : 's'}
-                    {sortedRows.some(isDemo) && <span className="ml-1 font-normal text-[#1B1A17]/40">+ demo</span>}
+                    {sortedRows.filter((r) => !isDemoRow(r)).length} vendor{sortedRows.filter((r) => !isDemoRow(r)).length === 1 ? '' : 's'}
+                    {sortedRows.some(isDemoRow) && <span className="ml-1 font-normal text-[#1B1A17]/40">+ demo</span>}
                   </td>
                   <td className="px-3 py-3 font-bold text-[#1B1A17] whitespace-nowrap text-right tabular-nums">{rand(totals.total)}</td>
                   <td className="px-3 py-3" colSpan={5} />
