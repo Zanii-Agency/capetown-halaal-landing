@@ -77,5 +77,20 @@ for (const [label, load] of [
   if (withheld === 0) { failures++; console.log('   FAIL: the seal withheld nothing here, so it was never exercised') }
 }
 
+// A thread must appear in EXACTLY ONE mailbox. support_inbox_threads carries no
+// mailbox column, so the split is derived per thread from its newest message; if
+// that derivation is wrong a conversation shows up in both lists (answered twice)
+// or in neither (silently lost). This is the core claim of the split, so it is
+// asserted rather than assumed.
+const sup = await loadMailThreads(MASTER, 'support')
+const gm = await loadMailThreads(MASTER, 'gmail')
+const supIds = new Set(sup.map((t) => t.id))
+const both = gm.filter((t) => supIds.has(t.id))
+console.log(`\nmailbox split: support=${sup.length} gmail=${gm.length} in-both=${both.length}`)
+if (both.length) {
+  failures++
+  for (const b of both.slice(0, 5)) console.log('   IN BOTH LISTS:', b.subject || b.email)
+}
+
 console.log(failures === 0 ? '\nPASS: no master-lane vendor reached the owner on any channel.' : `\nFAIL: ${failures} problem(s).`)
 process.exit(failures === 0 ? 0 : 1)

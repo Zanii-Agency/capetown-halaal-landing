@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Tent, ArrowLeftRight, Bell } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Tent, ArrowLeftRight, Bell } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -45,6 +45,7 @@ const navGroups: NavGroup[] = [
       // out only once all three exist. Removing a working surface before its
       // replacement ships is a gap, not a cleanup.
       { name: 'WhatsApp', href: '/admin/inbox/whatsapp', icon: MessageCircle },
+      { name: 'Support Email', href: '/admin/inbox/support', icon: Mail },
       { name: 'Inbox', href: '/admin/customer-inbox', icon: MessageCircle },
       { name: 'Needs You', href: '/admin/customer-inbox?view=needs', icon: Bell },
       { name: 'Broadcast', href: '/admin/broadcast', icon: Megaphone },
