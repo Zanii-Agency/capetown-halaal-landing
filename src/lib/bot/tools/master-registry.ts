@@ -17,7 +17,7 @@ import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { segmentCount, SEGMENT_LABELS, type SegmentKey } from '@/lib/bot/segments'
-import { hasEftMarker } from '@/lib/eft'
+import { hasEftMarker, vendorInOwnerScope, mentionsEft } from '@/lib/eft'
 
 export const MASTER_TOOL_DEFS = [
   {
@@ -60,6 +60,35 @@ export const MASTER_TOOL_DEFS = [
 
 export interface MasterToolOutcome { content: string; isError?: boolean }
 
+// ── THE FESTIVAL OWNER'S SUBSET ──────────────────────────────────────────────
+//
+// Taona 2026-07-28: "whenever she texts the bot u an help her with info sh
+// needs as long as it deosnt open eft lane". So she gets the same brain, over a
+// strictly smaller world.
+//
+// AN ALLOW-LIST, NOT A DENY-LIST. Naming what she MAY call means a tool added
+// to MASTER_TOOL_DEFS later is invisible to her until someone adds it here on
+// purpose. A deny-list would expose every future tool by default and rely on
+// the author remembering this file exists. That is the exact shape of the leak
+// on the morning of 2026-07-28: thirteen inbox readers were patched by hand and
+// the fourteenth surface served bank notices to her for hours.
+//
+// eft_lane_activity is absent DELIBERATELY. Do not add it.
+const OWNER_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'find_vendors',        // scoped to her vendors, EFT posture stripped
+  'pipeline_numbers',    // aggregate counts: pipeline, never payment posture
+  'vendor_conversation', // her vendors only, EFT messages stripped
+])
+
+/** The tool definitions this role may see. The festival owner is never even
+ *  TOLD eft_lane_activity exists: a model cannot call a tool absent from its
+ *  schema, so this is a second, independent wall in front of executeMasterTool's
+ *  authorisation check rather than a restatement of it. */
+export function toolDefsForRole(role: string) {
+  if (role === 'master') return MASTER_TOOL_DEFS
+  return MASTER_TOOL_DEFS.filter((t) => OWNER_TOOL_NAMES.has(t.name))
+}
+
 type VRow = {
   id: string; business_name: string | null; contact_name: string | null; email: string | null
   phone: string | null; status: string | null; admin_notes: string | null; paid_at: string | null
@@ -68,7 +97,7 @@ type VRow = {
 
 const DAY = 86400000
 
-function vendorSummary(r: VRow): string {
+function vendorSummary(r: VRow, ownerScoped = false): string {
   const state = parsePortalState(r.admin_notes || '')
   const pay = state.payment
   const paid = !!r.paid_at || pay?.status === 'paid'
@@ -82,7 +111,12 @@ function vendorSummary(r: VRow): string {
     const days = Math.floor((Date.now() - new Date(pay.due).getTime()) / DAY)
     if (days > 0) overdue = `, ${days} day${days === 1 ? '' : 's'} overdue`
   }
-  const eft = hasEftMarker(r.admin_notes) ? ', on the Master lane (⟦EFT⟧)'
+  // Every branch below names the EFT arrangement, which is the one thing the
+  // festival owner must never learn. She only reaches this function for vendors
+  // already inside her scope, so in practice these are all empty for her; the
+  // guard is here because "in practice" is not a wall.
+  const eft = ownerScoped ? ''
+    : hasEftMarker(r.admin_notes) ? ', on the Master lane (⟦EFT⟧)'
     : pay?.eft_submitted_at ? ', EFT proof uploaded (pending reconcile)'
     : pay?.eft_revealed_at ? ', revealed EFT details (likely paying)' : ''
   const payLine = paid
@@ -91,20 +125,32 @@ function vendorSummary(r: VRow): string {
   return `${r.business_name || 'Unnamed'} (${r.contact_name || 'no contact'}, ${r.email || 'no email'}, ${r.phone || 'no phone'}) [vendor_id ${r.id}]: application ${r.status || 'unknown'}, ${payLine}, stall ${alloc.stall || 'not allocated'}${r.preferred_booth_tier ? ` (${tierLabel(r.preferred_booth_tier)})` : ''}${eft}.`
 }
 
-async function findVendors(query: string): Promise<string> {
+async function findVendors(query: string, ownerScoped = false): Promise<string> {
   const q = (query || '').trim()
   if (!q) return 'Give me a name, business, email, or phone to search for.'
   const db = createAdminClient()
   const like = `%${q.replace(/[%_]/g, '')}%`
+  // Filter AFTER the query, not with a WHERE clause: the lane lives in markers
+  // on admin_notes plus paid_at, and vendorInOwnerScope is the single canonical
+  // predicate for it. Re-expressing that as PostgREST filters would be a second
+  // implementation of the rule, free to drift from the one every other surface
+  // uses. Over-fetch instead and let the predicate decide.
   const { data } = await db
     .from('vendor_applications')
     .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements')
     .or(`business_name.ilike.${like},contact_name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
-    .limit(12)
-  const rows = (data || []) as VRow[]
-  if (!rows.length) return `No vendor matches "${q}".`
+    .limit(ownerScoped ? 40 : 12)
+  let rows = (data || []) as VRow[]
+  if (ownerScoped) rows = rows.filter((r) => vendorInOwnerScope(r.admin_notes, r.paid_at))
+  rows = rows.slice(0, 12)
+  if (!rows.length) {
+    // Say nothing about WHY a match was withheld. "Outside your lane" tells her
+    // a lane exists (Taona 2026-07-27: "she doesnt need to know about any
+    // lane"), so a filtered-out vendor must be indistinguishable from no vendor.
+    return `No vendor matches "${q}".`
+  }
   const head = rows.length === 1 ? '1 match:' : `${rows.length} matches${rows.length === 12 ? ' (showing first 12, narrow the search)' : ''}:`
-  return `${head}\n` + rows.map((r) => `- ${vendorSummary(r)}`).join('\n')
+  return `${head}\n` + rows.map((r) => `- ${vendorSummary(r, ownerScoped)}`).join('\n')
 }
 
 async function pipelineNumbers(): Promise<string> {
@@ -113,11 +159,17 @@ async function pipelineNumbers(): Promise<string> {
   return counts.join('\n')
 }
 
-async function vendorConversation(vendorId: string): Promise<string> {
+async function vendorConversation(vendorId: string, ownerScoped = false): Promise<string> {
   const db = createAdminClient()
-  const { data: v } = await db.from('vendor_applications').select('business_name, phone, email').eq('id', vendorId).single()
+  const { data: v } = await db.from('vendor_applications').select('business_name, phone, email, admin_notes, paid_at').eq('id', vendorId).single()
   if (!v) return `No vendor with id ${vendorId}.`
-  const lines: Array<{ at: string; who: string; body: string }> = []
+  // A vendor id is guessable and the brain sees ids in find_vendors output, so
+  // re-check the scope here rather than trusting that she could only have got
+  // this id from a list we already filtered.
+  if (ownerScoped && !vendorInOwnerScope(v.admin_notes as string | null, v.paid_at as string | null)) {
+    return `No vendor with id ${vendorId}.` // same answer as absent, on purpose
+  }
+  let lines: Array<{ at: string; who: string; body: string }> = []
   const phone = (v.phone as string || '').replace(/^\+/, '')
   if (phone) {
     const { data: wa } = await db
@@ -150,7 +202,14 @@ async function vendorConversation(vendorId: string): Promise<string> {
       }
     }
   }
-  if (!lines.length) return `No conversation on file for ${v.business_name || vendorId}.`
+  // A vendor in her scope can still have EFT wording in their history: someone
+  // who asked about a bank transfer before settling by card, or the bot's own
+  // reply about it. The vendor-level check above does not catch that, so the
+  // message level gets its own pass, using the same mentionsEft predicate the
+  // inbox and the alert router use so the three cannot drift.
+  const kept = ownerScoped ? lines.filter((l) => !mentionsEft(l.body)) : lines
+  if (!kept.length) return `No conversation on file for ${v.business_name || vendorId}.`
+  lines = kept
   lines.sort((a, b) => +new Date(a.at) - +new Date(b.at))
   return `Recent thread with ${v.business_name || vendorId} (oldest first):\n` + lines.map((l) => `[${l.at.slice(0, 16).replace('T', ' ')}] ${l.who}: ${l.body}`).join('\n')
 }
@@ -197,14 +256,19 @@ async function eftLaneActivity(): Promise<string> {
  * anything) is denied before any query runs. Read-only; never sends or mutates.
  */
 export async function executeMasterTool(role: string, name: string, args: unknown): Promise<MasterToolOutcome> {
-  if (role !== 'master') {
+  // The festival owner is admitted to the allow-listed tools only, and every
+  // one of them runs owner-scoped. Any other role, and any tool she is not
+  // named for (eft_lane_activity), is refused before a query runs.
+  const isMaster = role === 'master'
+  const ownerScoped = role === 'festival_owner'
+  if (!isMaster && !(ownerScoped && OWNER_TOOL_NAMES.has(name))) {
     return { content: 'Not authorised.', isError: true }
   }
   try {
     switch (name) {
-      case 'find_vendors': return { content: await findVendors((args as { query?: string })?.query || '') }
+      case 'find_vendors': return { content: await findVendors((args as { query?: string })?.query || '', ownerScoped) }
       case 'pipeline_numbers': return { content: await pipelineNumbers() }
-      case 'vendor_conversation': return { content: await vendorConversation((args as { vendor_id?: string })?.vendor_id || '') }
+      case 'vendor_conversation': return { content: await vendorConversation((args as { vendor_id?: string })?.vendor_id || '', ownerScoped) }
       case 'eft_lane_activity': return { content: await eftLaneActivity() }
       default: return { content: `Unknown tool: ${name}`, isError: true }
     }

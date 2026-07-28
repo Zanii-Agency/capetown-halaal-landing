@@ -432,7 +432,12 @@ async function handleInbound(msg: {
     // instead of a canned hint. Read-only + master-gated (the tool wall refuses
     // any non-master caller); returns null when disabled or the LLM is
     // unavailable, so we fall through to the canned reply below.
-    if (!reply && admin.role === 'master') {
+    // The festival owner reaches the same brain over a smaller world (Taona
+    // 2026-07-28: "whenever she texts the bot u an help her with info sh needs
+    // as long as it deosnt open eft lane"). Her scoping is enforced inside
+    // runMasterAgent and executeMasterTool, not here, so this stays a routing
+    // decision and there is exactly one place the wall lives.
+    if (!reply && (admin.role === 'master' || admin.role === 'festival_owner')) {
       try {
         const brain = await runMasterAgent(admin, msg.text, { history: await recentHistory(e164) })
         if (brain?.message) reply = brain.message
