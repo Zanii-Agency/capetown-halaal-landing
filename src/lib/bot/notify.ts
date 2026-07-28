@@ -6,6 +6,7 @@
 // reused here with our approved Meta templates.
 
 import { sendTemplate, sendText, toE164 } from '@/lib/whatsapp'
+import { windowOpenFor } from '@/lib/wa-window'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
@@ -178,22 +179,34 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs, fallbackEmail?: str
   // all. It also keeps newlines and *bold*, so the alert arrives readable
   // instead of as one flattened ' · ' blob.
   //
-  // The window closes after 24h of admin silence, and canSend reports that as
-  // `skipped` rather than throwing — so the template stays as the fallback and
-  // nothing is lost when it does. `sendText` also runs the pre-send sanitiser,
-  // which the template path skips.
+  // `sendText` also runs the pre-send sanitiser, which the template path skips.
+  //
+  // CHECK THE WINDOW OURSELVES. Do not ask canSend: it short-circuits admins on
+  // an 'admin bypass' before looking at the window, so it says ALLOWED for
+  // someone who has not messaged the bot in over a month.
+  //
+  // And do NOT rely on the send failing loudly when the window is shut. Meta
+  // ACCEPTS an out-of-window free-text message with a 200 and only fails it
+  // later through the status webhook, so `sendText` returns success, this
+  // function marks it sent, and the template fallback never runs. That is not
+  // theory: it is how the festival owner's alerts died on 2026-07-28 while the
+  // logs said they had been delivered.
   const textBody = `*${args.event.replace(/_/g, ' ').toUpperCase()}*\n\n${args.body}`
   let sent = false
   let sentBody = logBody
   let messageId: string | null = null
   let failure: string | null = null
 
-  try {
-    const t = await sendText(e164, textBody)
-    if (!t.skipped) { sent = true; sentBody = textBody; messageId = t.messageId || null }
-    else failure = t.skipped
-  } catch (e) {
-    failure = (e as Error).message
+  if (await windowOpenFor(e164)) {
+    try {
+      const t = await sendText(e164, textBody)
+      if (!t.skipped) { sent = true; sentBody = textBody; messageId = t.messageId || null }
+      else failure = t.skipped
+    } catch (e) {
+      failure = (e as Error).message
+    }
+  } else {
+    failure = 'service window closed, using template'
   }
 
   if (!sent) {
