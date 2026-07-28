@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MessageCircle, X, Send, Loader2 } from 'lucide-react'
 import {
-  clampDock, parseDock, isDrag, DOCK_STORAGE_KEY, type DockPos,
+  clampDock, parseDock, isDrag, panelPosition, DOCK_STORAGE_KEY, type DockPos,
 } from '@/lib/dock-position'
 
 interface Message {
@@ -34,6 +34,8 @@ export function ChatWidget() {
   // the operator has actually moved it.
   const [dock, setDock] = useState<DockPos | null>(null)
   const [dragging, setDragging] = useState(false)
+  /** Where the panel opens, derived from the bubble. null = the CSS default. */
+  const [panel, setPanel] = useState<ReturnType<typeof panelPosition> | null>(null)
   const grabRef = useRef({ dx: 0, dy: 0, sx: 0, sy: 0 })
   /** True when the press that is ending was a drag, so it must not also open. */
   const draggedRef = useRef(false)
@@ -52,6 +54,17 @@ export function ChatWidget() {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  // Recompute the panel whenever the bubble moves or the window changes size.
+  // Derived rather than stored: the panel has no position of its own to drift
+  // out of sync with the bubble's.
+  useEffect(() => {
+    if (!dock) { setPanel(null); return }
+    const place = () => setPanel(panelPosition(dock, window.innerWidth, window.innerHeight))
+    place()
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [dock])
 
   function onDockPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
     const r = e.currentTarget.getBoundingClientRect()
@@ -180,6 +193,13 @@ export function ChatWidget() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.2 }}
+            // Follows the bubble. panelPosition anchors it above and
+            // right-aligned, flips below when there is no room, and clamps so a
+            // 380x520 window can never open half off-screen no matter which
+            // corner the bubble was dragged into.
+            style={panel
+              ? { left: panel.left, top: panel.top, width: panel.width, height: panel.height, right: 'auto', bottom: 'auto' }
+              : undefined}
             className="fixed bottom-6 right-6 z-50 w-[380px] max-w-[calc(100vw-48px)] h-[520px] max-h-[calc(100vh-48px)] bg-white rounded-2xl shadow-2xl border border-neutral-200 flex flex-col overflow-hidden"
           >
             {/* Header */}

@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  defaultDock, clampDock, isDrag, parseDock, DOCK_SIZE, DOCK_MARGIN, DRAG_THRESHOLD,
+  defaultDock, clampDock, isDrag, parseDock, panelPosition,
+  DOCK_SIZE, DOCK_MARGIN, DRAG_THRESHOLD, PANEL_GAP,
 } from './dock-position'
 
 test('the default position is exactly where the bubble used to be hard-coded', () => {
@@ -61,4 +62,51 @@ test('a corrupt stored position is ignored rather than crashing the widget', () 
 
 test('a valid stored position round-trips', () => {
   assert.deepEqual(parseDock(JSON.stringify({ x: 12, y: 34 })), { x: 12, y: 34 })
+})
+
+// ---------------------------------------------------------------------------
+// The panel follows the bubble. A launcher dragged to the left that opens its
+// window on the far right is the panel ignoring you.
+// ---------------------------------------------------------------------------
+
+test('the panel opens above the bubble, right-aligned with it', () => {
+  const p = panelPosition({ x: 1000, y: 700 }, 1440, 900)
+  assert.equal(p.left + p.width, 1000 + DOCK_SIZE, 'right edges line up')
+  assert.equal(p.top + p.height + PANEL_GAP, 700, 'sits just above the bubble')
+})
+
+test('the panel moves WITH the bubble rather than staying put', () => {
+  const right = panelPosition({ x: 1300, y: 700 }, 1440, 900)
+  const left = panelPosition({ x: 120, y: 700 }, 1440, 900)
+  assert.notEqual(right.left, left.left, 'dragging the bubble left moves the panel left')
+  assert.ok(left.left < right.left)
+})
+
+test('a bubble near the top opens the panel BELOW instead of off-screen', () => {
+  const p = panelPosition({ x: 1000, y: 30 }, 1440, 900)
+  assert.ok(p.top >= 30 + DOCK_SIZE, 'flipped to below the bubble')
+  assert.ok(p.top + p.height <= 900, 'and still fits')
+})
+
+test('the panel is always fully on screen, wherever the bubble is', () => {
+  // The whole reason this is not a naive offset: anchored straight off a bubble
+  // in any corner, a 380x520 panel would hang off the edge.
+  for (const dock of [
+    { x: 0, y: 0 }, { x: 1384, y: 0 }, { x: 0, y: 844 }, { x: 1384, y: 844 },
+    { x: 700, y: 400 },
+  ]) {
+    const p = panelPosition(dock, 1440, 900)
+    assert.ok(p.left >= 0, `left ${p.left}`)
+    assert.ok(p.top >= 0, `top ${p.top}`)
+    assert.ok(p.left + p.width <= 1440, `right edge ${p.left + p.width}`)
+    assert.ok(p.top + p.height <= 900, `bottom edge ${p.top + p.height}`)
+  }
+})
+
+test('on a viewport smaller than the panel it shrinks instead of overflowing', () => {
+  const p = panelPosition({ x: 10, y: 10 }, 320, 480)
+  assert.ok(p.width <= 320, 'narrower than the window')
+  assert.ok(p.height <= 480, 'shorter than the window')
+  assert.ok(p.left + p.width <= 320)
+  assert.ok(p.top + p.height <= 480)
 })
