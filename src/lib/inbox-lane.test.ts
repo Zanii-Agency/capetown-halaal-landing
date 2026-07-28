@@ -212,3 +212,25 @@ test('a ⟦NOEFT⟧ vendor untouched by EFT reaches the festival owner', () => {
   assert.equal(s.blocksEmail('chef@vendor.co.za'), false, 'and by email')
   assert.equal(s.blocksPhone('0760712578'), false, 'and by phone')
 })
+
+test('the scope blocks master-only senders, so every reader inherits it', () => {
+  // Added at the SCOPE, not per-endpoint. The sender rule first went into
+  // loadMailThreads alone, which sealed the three /admin/inbox/* workspaces and
+  // left /admin/support-inbox serving ABSA and Standard Bank payment notices to
+  // the festival owner. 23 endpoints touch these tables; 13 already call
+  // scope.blocks. Patching readers one at a time is how the next one is missed.
+  const s = buildLaneScope([], true, false)
+  for (const e of ['ibreply@absa.co.za', 'noreply@standardbank.co.za', 'no-reply@investec.co.za', 'dev@cthalaal.co.za']) {
+    assert.equal(s.blocksEmail(e), true, `${e} must be blocked`)
+    assert.equal(s.blocks({ email: e }), true, `${e} must be blocked via blocks()`)
+  }
+  // Her own mail and ordinary correspondence are untouched.
+  assert.equal(s.blocksEmail('capetownhalaal@gmail.com'), false)
+  assert.equal(s.blocksEmail('corporatesocialinvestment@capitecbank.co.za'), false)
+})
+
+test('the EFT admin still sees master-only senders', () => {
+  const s = buildLaneScope([], true, true)   // isEftAdmin = true
+  assert.equal(s.unrestricted, true)
+  assert.equal(s.blocksEmail('ibreply@absa.co.za'), false)
+})

@@ -16,6 +16,7 @@
 // predicate lives in ONE place (vendorCommsInEftLane) and callers pass identity.
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getEftMode, isEftAdmin, vendorInOwnerScope, mentionsEft } from '@/lib/eft'
+import { isMasterOnlySender } from '@/lib/master-only-senders'
 import { withoutMerged } from '@/lib/merge'
 
 // ── CONTENT-level wall (the read-side twin of notifyOwners' mentionsEft) ──────
@@ -139,7 +140,21 @@ export function buildLaneScope(
   return {
     unrestricted: false,
     blocksPhone: (p) => { const k = phoneKey(p); return !!k && phones.has(k) },
-    blocksEmail: (e) => !!e && emails.has(e.toLowerCase()),
+    // THE SENDER RULE LIVES HERE, NOT IN EACH READER.
+    //
+    // It was first added to loadMailThreads only, which sealed the three
+    // /admin/inbox/* workspaces and nothing else. The festival owner was reading
+    // ABSA and Standard Bank payment notices on /admin/support-inbox, a
+    // different page with its own endpoint, hours after I had "fixed" it and
+    // verified the fix against the loader I had changed.
+    //
+    // An audit of every endpoint touching support_inbox_* / wa_messages found 23
+    // of them, 13 already calling scope.blocks and NONE checking the sender.
+    // Patching 13 readers is how the fourteenth gets missed. Putting it in the
+    // scope means every existing caller inherits it and every future one does
+    // too, which is the same reason the vendor seal lives in this module rather
+    // than in the handlers.
+    blocksEmail: (e) => !!e && (emails.has(e.toLowerCase()) || isMasterOnlySender(e)),
     blocksApplicationId: (id) => !!id && ids.has(id),
     blocks(x) {
       return this.blocksPhone(x.phone) || this.blocksEmail(x.email) || this.blocksApplicationId(x.applicationId)
