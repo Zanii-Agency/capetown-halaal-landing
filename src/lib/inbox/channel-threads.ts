@@ -26,6 +26,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseTag } from '@/lib/inbox/tag-state'
+import { isMasterOnlySender } from '@/lib/master-only-senders'
 import { laneScopeFor } from '@/lib/inbox-lane'
 import { withoutMerged } from '@/lib/merge'
 import { BOT_ADMINS } from '@/lib/bot/admins'
@@ -496,6 +497,13 @@ export async function loadMailThreads(
     const vendor = t.peer_email ? byEmail.get(t.peer_email.toLowerCase()) : undefined
     const appId = toPrimary(t.vendor_application_id) || vendor?.id || null
     if (scope.blocks({ email: t.peer_email, applicationId: appId })) continue
+    // SENDER-LEVEL WALL. The lane seal above asks whether this thread resolves to
+    // a VENDOR she may see. A bank has no vendor row, so every EFT payment
+    // notification sailed past it: she could read "Notice of payment" from ABSA
+    // and Standard Bank, and the EFT admin's own "<vendor> uploaded their EFT
+    // proof" alerts. A wall around vendors does nothing about the bank telling
+    // you the vendor paid. See src/lib/master-only-senders.ts.
+    if (!scope.unrestricted && isMasterOnlySender(t.peer_email)) continue
 
     const newest = latest.get(t.id)
     const inAt = lastInbound.get(t.id) || t.last_inbound_at
