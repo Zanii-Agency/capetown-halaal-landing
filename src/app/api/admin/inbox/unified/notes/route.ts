@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { assertRole } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -37,6 +38,16 @@ export async function GET(req: NextRequest) {
 
   const applicationId = new URL(req.url).searchParams.get('applicationId')
   if (!applicationId) return NextResponse.json({ notes: [], supported: false })
+
+  // The POST below is role-gated and this GET was not, which is backwards for a
+  // confidentiality wall: internal notes about a master-lane vendor are exactly
+  // the content the lane exists to withhold, and the id comes off the query
+  // string so any id can be asked for.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(applicationId)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
+
   const { data } = await db.from('vendor_applications').select('admin_notes').eq('id', applicationId).maybeSingle()
   return NextResponse.json({ notes: readNotes(data?.admin_notes ?? null), supported: true })
 }

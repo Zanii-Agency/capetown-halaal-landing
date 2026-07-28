@@ -7,6 +7,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
+import { laneScopeFor, } from '@/lib/inbox-lane'
+import { visiblePaymentStatus } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -21,6 +23,16 @@ export async function GET(req: NextRequest) {
 
   const applicationId = new URL(req.url).searchParams.get('applicationId')
   if (!applicationId) return NextResponse.json({ context: null, supported: false })
+
+  // THE SEAL. This route takes an applicationId straight off the query string,
+  // so it answers for ANY vendor whose id the caller can name — including one
+  // the thread list deliberately withheld. A filtered list in front of an
+  // unfiltered reader is cosmetic (lib/inbox-lane.ts:6). The list is what makes
+  // this hard to reach, not this route, and "hard to reach" is not a wall.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(applicationId)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   const { data: app } = await db
     .from('vendor_applications')
@@ -42,7 +54,10 @@ export async function GET(req: NextRequest) {
       tier: app.preferred_booth_tier || null,
       sector: app.sector || null,
       payment: {
-        status: payment.status || (app.paid_at ? 'paid' : 'none'),
+        // Masked, like the four other readers of this field. 'collected' is the
+        // interim EFT state and means money the festival owner did not take;
+        // showing it to her here would undo the wall the rest of the app keeps.
+        status: visiblePaymentStatus(payment.status || (app.paid_at ? 'paid' : 'none'), user.email),
         amount: payment.amount ?? null,
         paid_at: payment.paid_at || app.paid_at || null,
       },
