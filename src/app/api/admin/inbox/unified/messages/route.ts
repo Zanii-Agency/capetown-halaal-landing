@@ -9,7 +9,13 @@ import { parseAttachmentMarker } from '@/lib/email/attachments'
 import { stripRfc822Headers } from '@/lib/inbox/email-body'
 import { splitQuotedText, splitQuotedHtml } from '@/lib/inbox/quote'
 import { sanitizeEmailHtml } from '@/lib/sanitize'
-import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
+import { hidesEftContent, laneScopeFor } from '@/lib/inbox-lane'
+import { ownerCutoff, applyOwnerCutoff } from '@/lib/owner-view'
+
+/** The one message a handed-over vendor shows the festival owner in place of the
+ *  real confirmation. Static by design: it states the fact she needs (payment
+ *  received) and carries none of how it arrived. */
+const OWNER_HANDOVER_BODY = 'Payment received. Their place at Young at Heart Festival 2026 is reserved.'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -212,6 +218,39 @@ export async function GET(req: NextRequest) {
   }
 
   comms.sort((a, b) => +new Date(a.at) - +new Date(b.at))
+
+  // PER-VENDOR VIEW CUTOFF. A vendor handed to the festival owner mid-conversation
+  // (⟦OWNERCUT:<iso>⟧) shows her everything up to the handover, one static
+  // confirmation in place of the real one, and nothing after. The real thread is
+  // untouched underneath and the EFT admin still reads all of it. See
+  // src/lib/owner-view.ts for why this scopes a view instead of rewriting history.
+  //
+  // Applied HERE, in the reader, not only in the list. The list dropping a
+  // message while this endpoint still served it is exactly the cosmetic-seal
+  // failure inbox-lane.ts warns about in its own header.
+  if (hidesEftContent(user.email)) {
+    // Resolve the vendor the same way the lane check above does: by whichever
+    // identifier this request carried.
+    let q = db.from('vendor_applications').select('admin_notes')
+    q = email ? q.ilike('email', email) : q.ilike('phone', `%${phone.replace(/\D/g, '').slice(-9)}%`)
+    const { data: vs } = await q.limit(5)
+    const cut = ((vs || []) as Array<{ admin_notes: string | null }>)
+      .map((v) => ownerCutoff(v.admin_notes))
+      .find(Boolean) ?? null
+    if (cut) {
+      const kept = applyOwnerCutoff(comms, (c) => c.at, cut, true)
+      comms.length = 0
+      comms.push(...kept, {
+        id: `ownercut:${cut}`,
+        channel: 'email',
+        direction: 'out',
+        body: OWNER_HANDOVER_BODY,
+        at: cut,
+        from: 'Young at Heart Festival',
+        subject: 'Payment received',
+      })
+    }
+  }
   // NO CONTENT STRIP. The vendor-level gate is the 403 above: if the viewer got
   // this far, this conversation is theirs to read in full (Taona 2026-07-27,
   // "show her everything from her own vendors"). The old in-thread filter
