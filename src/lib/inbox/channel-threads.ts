@@ -328,15 +328,27 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
   // wa_threads table, DDL is blocked), so /inbox/unified/status writes its star
   // onto the VENDOR's vendor_tickets row. Read it back the same way, keyed by
   // application id, or a starred vendor chat shows no star.
+  // Same shape as the mail loader: intersect in memory rather than sending a few
+  // hundred UUIDs through a GET query string. 200+ ids is roughly 8KB of URL,
+  // which is where `fetch failed` starts — and that failure took a whole mailbox
+  // silently to zero before it was caught.
   const starredApps = new Set<string>()
-  const appIds = [...threads.values()].map((t) => t.application_id).filter(Boolean) as string[]
-  for (let i = 0; i < appIds.length; i += 1000) {
-    const { data } = await db
-      .from('vendor_tickets')
-      .select('vendor_application_id, tag')
-      .in('vendor_application_id', appIds.slice(i, i + 1000))
-    for (const r of (data || []) as Array<{ vendor_application_id: string | null; tag: string | null }>) {
-      if (r.vendor_application_id && parseTag(r.tag).starred) starredApps.add(r.vendor_application_id)
+  const wantedApps = new Set([...threads.values()].map((t) => t.application_id).filter(Boolean) as string[])
+  if (wantedApps.size) {
+    for (let page = 0; page < 10; page++) {
+      const { data, error } = await db
+        .from('vendor_tickets')
+        .select('vendor_application_id, tag')
+        .order('id', { ascending: true })
+        .range(page * 1000, page * 1000 + 999)
+      if (error) { console.error('[channel-threads] vendor_tickets page failed:', error.message); break }
+      if (!data || data.length === 0) break
+      for (const r of data as Array<{ vendor_application_id: string | null; tag: string | null }>) {
+        if (r.vendor_application_id && wantedApps.has(r.vendor_application_id) && parseTag(r.tag).starred) {
+          starredApps.add(r.vendor_application_id)
+        }
+      }
+      if (data.length < 1000) break
     }
   }
 
@@ -448,16 +460,31 @@ export async function loadMailThreads(
   const wanted = [...owner.entries()].filter(([, b]) => b === mailbox).map(([id]) => id)
   if (!wanted.length) return []
 
-  // CHUNK, do not slice. `.in('id', wanted.slice(0, 1000))` was a second silent
-  // cap sitting behind the first: once the paging above stopped hiding threads,
-  // this would have started hiding them instead, and only past the 1000th.
+  // DO NOT put the wanted ids in an `.in()` FILTER. That was `.in('id',
+  // wanted.slice(0, 1000))`, and once the paging above started surfacing every
+  // thread it handed 501 UUIDs to a GET query string — about 20KB of URL — and
+  // the request died with `TypeError: fetch failed`. The old code destructured
+  // only `data`, so the throw was swallowed and loadMailThreads returned ZERO
+  // support threads while gmail (77 ids, a short URL) kept working. Fixing the
+  // truncation turned a partial list into a silent total blackout of one
+  // mailbox, which is worse than the bug it replaced.
+  //
+  // Page the table and intersect in memory instead: no URL length to exceed, no
+  // chunk size to tune, and fewer round trips than chunking would need.
+  const wantedSet = new Set(wanted)
   const threadRows: Array<Record<string, unknown>> = []
-  for (let i = 0; i < wanted.length; i += 1000) {
-    const { data } = await db
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data, error } = await db
       .from('support_inbox_threads')
       .select('id, peer_email, peer_name, subject, status, unread_count, last_inbound_at, last_handled_at, vendor_application_id, tag')
-      .in('id', wanted.slice(i, i + 1000))
-    if (data) threadRows.push(...data)
+      .order('id', { ascending: true })
+      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
+    // LOUD, not silent. This read failing used to be indistinguishable from an
+    // empty mailbox, which is exactly how the blackout above went unnoticed.
+    if (error) { console.error('[channel-threads] thread page failed:', error.message); break }
+    if (!data || data.length === 0) break
+    for (const t of data) if (wantedSet.has(t.id as string)) threadRows.push(t)
+    if (data.length < PAGE_SIZE) break
   }
 
   const out: ChannelThread[] = []
