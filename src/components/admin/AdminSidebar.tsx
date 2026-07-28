@@ -212,11 +212,17 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
       <div className={cn('border-b border-neutral-200 relative', collapsed ? 'px-2 py-3' : 'px-4 py-4')}>
         {collapsed ? (
           <div className="flex justify-center">
+            {/* logo-mark.png, NOT logo.png. The full logo is a 1732x2310
+                portrait canvas whose badge occupies 43.8% of the width and
+                32.8% of the height, so object-contain in a square box rendered
+                the artwork at 13.1px and left 89.2% of the box empty. The mark
+                is that badge cropped square (measured alpha bbox 759x758) at
+                512px. /logo.png stays as-is: vendors download it for print. */}
             <Image
-              src="/logo.png"
+              src="/logo-mark.png"
               alt="Young at Heart"
-              width={48}
-              height={48}
+              width={96}
+              height={96}
               priority
               className="h-12 w-12 object-contain"
             />
@@ -224,10 +230,10 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
         ) : (
           <div className="flex items-center gap-2.5">
             <Image
-              src="/logo.png"
+              src="/logo-mark.png"
               alt="Young at Heart"
-              width={48}
-              height={48}
+              width={96}
+              height={96}
               priority
               className="h-10 w-10 object-contain flex-shrink-0"
             />
