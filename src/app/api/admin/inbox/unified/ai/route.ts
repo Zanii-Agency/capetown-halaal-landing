@@ -27,6 +27,7 @@ const client = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null
 const ACTIONS = [
   'smart_reply',
   'tone_adjust',
+  'spin',
   'follow_up',
   'summarize',
   'attachments',
@@ -39,6 +40,9 @@ const bodySchema = z.object({
   phone: z.string().max(30).optional(),
   email: z.string().email().max(160).optional(),
   draft: z.string().max(4000).optional(),
+  // 'spin' rewrites the operator's own text for the surface it is going out on,
+  // so it is the one action that must know the channel.
+  channel: z.enum(['whatsapp', 'email']).optional(),
 })
 
 interface Turn { role: 'vendor' | 'team'; channel: 'whatsapp' | 'email'; text: string; at: string }
@@ -113,7 +117,7 @@ function lastInbound(turns: Turn[]): string | null {
   return null
 }
 
-function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean): { system: string; user: string } | { error: string } {
+function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean, channel: 'whatsapp' | 'email' = 'email'): { system: string; user: string } | { error: string } {
   const convo = transcript(turns)
   const base = `${hardFacts(eftOn)}\n\n${STYLE}`
   switch (action) {
@@ -125,6 +129,34 @@ function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean)
     case 'tone_adjust': {
       if (!draft.trim()) return { error: 'Type a draft reply first, then adjust its tone.' }
       return { system: `You rewrite a draft reply to be warmer and clearer while keeping the meaning and all facts. Output the rewritten reply only.\n\n${base}`, user: `DRAFT:\n${draft}\n\nRewrite it warmer, clearer, and a touch more professional. Keep it short.` }
+    }
+    // SPIN. The operator writes the message; this rewrites it for the surface it
+    // is going out on. Distinct from smart_reply, which invents a reply from the
+    // thread: here the operator's INTENT is the input and must survive intact.
+    //
+    // Channel-shaped on purpose (Taona 2026-07-28: "channel-appropriate version
+    // for each"). A WhatsApp message and an email are not the same message with
+    // different padding: one is a chat turn, the other is correspondence.
+    case 'spin': {
+      if (!draft.trim()) return { error: 'Type your message first, then spin it.' }
+      const shape = channel === 'whatsapp'
+        ? `TARGET: WhatsApp. Write it as a chat message. No subject line, no "Dear", no formal sign-off. Short sentences, one idea per line, blank line between ideas. You may use *single asterisks* for emphasis, which is how WhatsApp renders bold. Contractions are fine. Aim under 90 words.`
+        : `TARGET: email. Write it as correspondence. Open with a greeting on its own line, close with "Warm regards," then "The Young at Heart Festival Team" on the next line. Full sentences and complete paragraphs. Never use WhatsApp markup like *asterisks*. Aim under 160 words.`
+      return {
+        system: `You rewrite a festival team member's own message so it reads well on the channel it is being sent on. Output the rewritten message ONLY, with no preamble, no explanation, and no quotes around it.
+
+RULES THAT OVERRIDE EVERYTHING:
+- Keep the operator's MEANING and every fact, name, figure, date and link exactly. You are rewriting, not answering.
+- Fix spelling, grammar and obvious typos, including in email addresses and domains.
+- Do NOT add commitments, dates, prices, deadlines or promises that are not already in their text.
+- Do NOT add banking details, account numbers or branch codes. If they mention paying, point to the portal and stop there.
+- If their text contains a factual error about the festival that contradicts the facts below, correct it.
+
+${shape}
+
+${base}`,
+        user: `THE OPERATOR WROTE:\n${draft}\n\nRewrite it for the target channel, keeping their meaning and facts intact.`,
+      }
     }
     case 'follow_up':
       return { system: `You write a short proactive follow-up to move this conversation forward (e.g. nudge to apply, pay, send a halaal certificate, or confirm details). Output the message only.\n\n${base}`, user: `CONVERSATION:\n${convo}\n\nWrite a helpful follow-up nudge appropriate to where this conversation stands.` }
@@ -167,7 +199,7 @@ export async function POST(req: NextRequest) {
   const hide = hidesEftContent(gate.adminUser.email)
   const turns = stripEftMessages(await loadThread(db, body.phone, body.email), (t) => t.text, hide)
   const eftOn = await getEftMode()
-  const prompt = promptFor(body.action, turns, body.draft || '', eftOn)
+  const prompt = promptFor(body.action, turns, body.draft || '', eftOn, body.channel ?? (body.phone ? 'whatsapp' : 'email'))
   if ('error' in prompt) return NextResponse.json({ ok: false, message: prompt.error }, { status: 200 })
 
   try {
@@ -185,7 +217,7 @@ export async function POST(req: NextRequest) {
     const dated = guardUngroundedDates(clean, `${prompt.system}\n${prompt.user}`)
     if (dated.replaced) console.warn('[inbox/ai] dropped ungrounded date(s):', dated.ungrounded.join(', '))
     // reply/follow-up/tone/attachments fill the composer; summary/status show in a strip.
-    const fillsComposer = ['smart_reply', 'tone_adjust', 'follow_up'].includes(body.action)
+    const fillsComposer = ['smart_reply', 'tone_adjust', 'spin', 'follow_up'].includes(body.action)
     return NextResponse.json({ ok: true, action: body.action, text: dated.text, fillsComposer })
   } catch (err) {
     console.error('[inbox/ai] error', err)

@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Send, Loader2, Paperclip, Sparkles, X, MessageSquareQuote, FolderOpen } from 'lucide-react'
+import { Send, Loader2, Paperclip, Sparkles, X, MessageSquareQuote, FolderOpen, RefreshCw } from 'lucide-react'
 
 export interface SendResult {
   ok: boolean
@@ -50,6 +50,9 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [aiBusy, setAiBusy] = useState(false)
+  const [spinBusy, setSpinBusy] = useState(false)
+  /** The operator's own words before the last spin, so it can be undone. */
+  const [preSpin, setPreSpin] = useState<string | null>(null)
   const [windowClosed, setWindowClosed] = useState(false)
   const [file, setFile] = useState<{ name: string; type: string; b64: string } | null>(null)
   const [canned, setCanned] = useState<Canned[]>([])
@@ -174,6 +177,46 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
     }
   }
 
+  /**
+   * SPIN. Rewrites what the OPERATOR typed for the channel it is going out on,
+   * rather than inventing a reply from the thread the way aiDraft does. Taona
+   * 2026-07-28: "click spin on my own text and then ai rewrites on all
+   * platforms for me and samreen".
+   *
+   * It lives in the shared Composer, so it is on WhatsApp, Support Email and
+   * Gmail at once and for both operators, with no per-surface wiring to forget.
+   *
+   * The previous text is kept so one click is undoable: a rewrite that loses the
+   * operator's phrasing with no way back is worse than no rewrite.
+   */
+  async function spin() {
+    const draft = text.trim()
+    if (!draft) { onError('Type your message first, then spin it.'); return }
+    setSpinBusy(true)
+    try {
+      const r = await fetch('/api/admin/inbox/unified/ai', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'spin',
+          draft,
+          channel,
+          ...(phone ? { phone } : {}),
+          ...(email ? { email } : {}),
+        }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!j.ok) throw new Error(j.message || 'Could not spin that.')
+      if (!j.text?.trim()) throw new Error('Spin came back empty. Your text is unchanged.')
+      setPreSpin(draft)
+      setText(j.text)
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setSpinBusy(false)
+    }
+  }
+
   const isEmail = channel === 'email'
 
   return (
@@ -250,6 +293,26 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
             <button onClick={aiDraft} disabled={aiBusy} title="Draft a reply with AI"
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-50">
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            </button>
+            {/* Spin rewrites YOUR text for this channel. Undo restores your own
+                words, so the rewrite is never a one-way door. */}
+            {preSpin !== null && !spinBusy && (
+              <button
+                onClick={() => { setText(preSpin); setPreSpin(null) }}
+                title="Undo the spin and restore what you wrote"
+                className="h-7 px-2 grid place-items-center rounded-md text-[11px] font-semibold text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
+              >
+                Undo
+              </button>
+            )}
+            <button
+              onClick={spin}
+              disabled={spinBusy || !text.trim()}
+              title={isEmail ? 'Spin: rewrite your text as an email' : 'Spin: rewrite your text for WhatsApp'}
+              className="h-7 px-2 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-neutral-500 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-40"
+            >
+              {spinBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Spin
             </button>
           </div>
 
