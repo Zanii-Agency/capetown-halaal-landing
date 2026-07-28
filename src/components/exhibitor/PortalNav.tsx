@@ -86,10 +86,12 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3">
         <div className="flex items-center gap-4 lg:gap-6 bg-white border border-neutral-200/80 rounded-2xl shadow-[0_6px_24px_rgba(20,15,17,0.06)] px-4 min-h-[72px] py-2.5">
           <a href="/exhibitor/portal" className="flex items-center gap-3 min-h-[3.5rem] shrink-0 pr-3 lg:pr-5 border-r border-neutral-100">
+            {/* logo-mark.png: logo.png is 89% empty canvas, so h-10 w-auto
+                rendered 13px of badge in a 40px slot. See components/logo.tsx. */}
             <img
-              src="/logo.png"
+              src="/logo-mark.png"
               alt="Young at Heart"
-              className="h-10 w-auto object-contain flex-shrink-0"
+              className="h-10 w-10 object-contain flex-shrink-0"
             />
             <span className="hidden lg:flex flex-col justify-center leading-tight">
               <span className="block font-bold text-neutral-900 text-sm">Young at Heart</span>
