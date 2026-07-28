@@ -54,7 +54,17 @@ export function VendorTimeline({ applicationId }: { applicationId: string }) {
         `/api/admin/comms/timeline?contactId=${encodeURIComponent(applicationId)}&limit=${PAGE}&offset=${offset}`,
         { cache: 'no-store' },
       )
-      if (r.status === 403) throw new Error('This vendor is outside your lane.')
+      // A 403 here means the lane withheld this vendor. It must render as an
+      // ORDINARY EMPTY HISTORY, never as a refusal. "This vendor is outside your
+      // lane" told the festival owner that a lane exists, who is on it, and that
+      // there is something she is not being shown — Taona 2026-07-28: "she
+      // doesnt need to know about any lane". A wall that announces itself is not
+      // a wall, it is a signpost to what it hides. Standard access-control
+      // practice: an unauthorised read is indistinguishable from an empty one.
+      if (r.status === 403) {
+        setRows([]); setTotal(0); setHasMore(false); setError(null)
+        return
+      }
       if (!r.ok) throw new Error(`Could not load the history (${r.status})`)
       const j = await r.json()
       setRows((prev) => (offset === 0 ? j.rows || [] : [...prev, ...(j.rows || [])]))

@@ -87,7 +87,17 @@ export function WhatsAppWorkspace() {
     if (!opts?.silent) { setMsgLoading(true); setMsgError(null) }
     try {
       const r = await fetch(`/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}`, { cache: 'no-store' })
-      if (r.status === 403) throw new Error('This conversation is outside your lane.')
+      // Same rule as VendorTimeline: a lane refusal renders as an EMPTY
+      // conversation, never as a message naming the lane. Telling the viewer
+      // "outside your lane" discloses that a wall exists and that this specific
+      // person is behind it, which is the one thing the wall must not reveal
+      // (Taona 2026-07-28: "she doesnt need to know about any lane"). In
+      // practice the list already withholds these threads, so this path is the
+      // belt to that braces — it must not be the thing that talks.
+      if (r.status === 403) {
+        setMessages([]); setHasMore(false); setMsgError(null)
+        return
+      }
       if (!r.ok) throw new Error(`Could not load this conversation (${r.status})`)
       const j = await r.json()
       const next: CommItem[] = j.messages || []
