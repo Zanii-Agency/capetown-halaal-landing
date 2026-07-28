@@ -153,14 +153,9 @@ export function buildLaneScope(
 export async function laneScopeFor(viewerEmail: string | null | undefined): Promise<LaneScope> {
   if (isEftAdmin(viewerEmail)) return ALLOW_ALL
   const globalOn = await getEftMode()
-  const { data, error } = await createAdminClient()
-    .from('vendor_applications')
-    .select('id, phone, email, admin_notes, paid_at, status')
-    .limit(5000)
-  if (error) {
-    // Fail closed: block nothing-resolvable rather than expose the lane. Callers
-    // treat a blocking scope as 403, which is the safe direction for a read.
-    console.error('[inbox-lane] scope load failed, failing closed:', error.message)
+
+  const shut = (why: string): LaneScope => {
+    console.error(`[inbox-lane] scope load failed, failing closed: ${why}`)
     return {
       unrestricted: false,
       blocksPhone: () => true,
@@ -169,8 +164,44 @@ export async function laneScopeFor(viewerEmail: string | null | undefined): Prom
       blocks: () => true,
     }
   }
+
+  // PAGE, AND PROVE THE PAGING WAS COMPLETE.
+  //
+  // This was `.limit(5000)`, which PostgREST silently truncates to 1000 on this
+  // project (db-max-rows) — the same truncation both thread loaders were
+  // rewritten to kill. Here it was far worse than a short list. buildLaneScope
+  // returns a membership test over BLOCKED vendors, so a vendor truncated away
+  // is indistinguishable from a vendor who was never in the lane: blocks()
+  // returns false and they become readable by the festival owner on every
+  // channel and every sealed endpoint at once. The seal failed OPEN.
+  //
+  // The error branch below could not save it either, because a max-rows
+  // truncation is HTTP 206, not an error, so `error` is null and the fail-closed
+  // path never fired. Hence the explicit count check: a wall that cannot prove it
+  // saw every row must refuse to answer "not blocked".
+  const db = createAdminClient()
+  const rows: LaneVendorRow[] = []
+  const PAGE = 1000
+  let total: number | null = null
+
+  for (let page = 0; page < 25; page++) {
+    const from = page * PAGE
+    const { data, error, count } = await db
+      .from('vendor_applications')
+      .select('id, phone, email, admin_notes, paid_at, status', { count: 'exact' })
+      .order('id', { ascending: true })   // stable order, or pages overlap and skip
+      .range(from, from + PAGE - 1)
+    if (error) return shut(error.message)
+    if (count !== null) total = count
+    rows.push(...((data || []) as LaneVendorRow[]))
+    if (!data || data.length < PAGE) break
+  }
+
+  if (total !== null && rows.length < total) {
+    return shut(`loaded ${rows.length} of ${total} vendor rows; refusing to seal on a partial set`)
+  }
   // Merged duplicates carry the primary's identifiers but not its payment
   // state, so a stale subordinate could otherwise block (or expose) a vendor the
   // primary row governs. The primary decides.
-  return buildLaneScope(withoutMerged(data as LaneVendorRow[]), globalOn, false)
+  return buildLaneScope(withoutMerged(rows), globalOn, false)
 }
