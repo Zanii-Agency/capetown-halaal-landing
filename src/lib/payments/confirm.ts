@@ -404,7 +404,14 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
   // the first paid transition, and only if no logo is on file yet. Best-effort,
   // NEVER throws into the money path. Weekly re-nudges are handled by the
   // /api/cron/logo-reminders sweep until the logo lands.
-  if (!wasPaidBefore && !before.profile?.logo_path) {
+  // GATED ON notifyVendor TOO. It was not, and on 2026-07-28 a settlement run
+  // with notifyVendor:false still emailed the vendor "One step left: add your
+  // logo to go live". The flag is documented as "skip the VENDOR email +
+  // WhatsApp"; a caller reading that has every reason to believe nothing reaches
+  // the vendor, and every OTHER vendor-facing send here honours it. A flag that
+  // covers two of three outbound paths is worse than no flag, because it is
+  // trusted.
+  if (input.notifyVendor !== false && !wasPaidBefore && !before.profile?.logo_path) {
     try {
       const { sendLogoReminder } = await import('@/lib/logo-reminder')
       await sendLogoReminder({
