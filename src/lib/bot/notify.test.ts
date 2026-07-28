@@ -61,9 +61,15 @@ test('alerts about an UNPAID vendor never reach the festival owner', () => {
   const withheld = (notes: string) => isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: notes }), true)
   assert.equal(withheld('just a note'), true, 'plain unpaid')
   assert.equal(withheld('⟦EFT⟧'), true, 'on the EFT lane')
-  // Changed 2026-07-26: ⟦NOEFT⟧ used to hand an UNPAID vendor back to her. Being
-  // excluded from the EFT lane is not the same as having paid.
-  assert.equal(withheld(withNoEftMarker('note')), true, '⟦NOEFT⟧ but still unpaid')
+  // ⟦NOEFT⟧ REVERSED TWICE, so the history is worth keeping. 2026-07-26 it was
+  // made to withhold ("excluded from the EFT lane is not the same as having
+  // paid"). 2026-07-28 Taona reversed it: "If excluded on master lane, it
+  // belongs to samreen" — the wall hides an EFT ARRANGEMENT, and an excluded
+  // vendor has none, so withholding them only hid an ordinary vendor from the
+  // person meant to handle her. The 07-26 concern is still honoured by the
+  // touchedEft guard in vendorInOwnerScope: a vendor who actually engaged with
+  // EFT stays on the master lane whatever the marker says.
+  assert.equal(withheld(withNoEftMarker('note')), false, '⟦NOEFT⟧ and untouched by EFT is HERS')
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected', eft_collected_at: PAID_AT } })
   assert.equal(withheld(collected), true, "'collected' is interim, not paid")
   assert.equal(withheld(updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: PAID_AT } })), true, 'proof uploaded, not yet settled')

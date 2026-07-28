@@ -59,8 +59,11 @@ test('everyone else is blocked — unpaid, EFT-settled, and ⟦NOEFT⟧-but-unpa
     v({ id: 'eft-lane', admin_notes: '⟦EFT⟧', email: 'lane@x.co', phone: '0222222222' }),
     // Settled by EFT: used to become hers the moment paid_at was written.
     v({ id: 'eft-paid', admin_notes: paidVia('eft'), paid_at: '2026-07-19T00:00:00Z', email: 'eftpaid@x.co', phone: '0333333333' }),
-    // Excluded from the EFT lane is NOT the same as having paid.
-    v({ id: 'noeft', admin_notes: withNoEftMarker('note'), email: 'noeft@x.co', phone: '0444444444' }),
+    // ⟦NOEFT⟧ moved OUT of this list on 2026-07-28: excluded from EFT now means
+    // hers ("If excluded on master lane, it belongs to samreen"). It has its own
+    // test below. A ⟦NOEFT⟧ vendor who HAS touched EFT still belongs here, which
+    // the next case covers.
+    v({ id: 'noeft-but-collected', admin_notes: withNoEftMarker(updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })), email: 'noeftcoll@x.co', phone: '0444444444' }),
     v({ id: 'collected', admin_notes: updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }), email: 'coll@x.co', phone: '0555555555' }),
   ]
   const s = buildLaneScope(blocked, true, false)
@@ -198,4 +201,14 @@ test('an UNCLASSIFIABLE row fails CLOSED, even carrying ⟦EFT⟧', () => {
 test('an APPROVED unpaid vendor stays blocked regardless of status widening', () => {
   const s = buildLaneScope([v({ id: 'appr', status: 'approved' })], true, false)
   assert.equal(s.blocksApplicationId('appr'), true)
+})
+
+test('a ⟦NOEFT⟧ vendor untouched by EFT reaches the festival owner', () => {
+  // Taona 2026-07-28: "If excluded on master lane, it belongs to samreen."
+  // Telkom, Treacle and Tart, Islamic Relief SA and Call-A-Braai were in this
+  // state when the rule changed.
+  const s = buildLaneScope([v({ id: 'noeft', admin_notes: withNoEftMarker('note') })], true, false)
+  assert.equal(s.blocksApplicationId('noeft'), false, 'excluded-from-EFT is hers')
+  assert.equal(s.blocksEmail('chef@vendor.co.za'), false, 'and by email')
+  assert.equal(s.blocksPhone('0760712578'), false, 'and by phone')
 })

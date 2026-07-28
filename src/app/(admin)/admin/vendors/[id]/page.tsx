@@ -2,6 +2,7 @@ import { redirect, notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
+import { visiblePaymentStatus } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
 import { Vendor360 } from './Vendor360'
 
@@ -44,7 +45,24 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   if (!app) notFound()
 
   const a = app as Record<string, unknown>
-  const portal = parsePortalState((a.admin_notes as string) || '')
+  const portalRaw = parsePortalState((a.admin_notes as string) || '')
+  // MASK THE PAYMENT STATE FOR THE VIEWER. The vendor LIST already did this
+  // (admin/vendors/page.tsx) and this detail page did not, so opening a profile
+  // showed the raw state: an EFT-collected vendor read as 'collected' to the
+  // festival owner, which is precisely the arrangement the master lane hides.
+  // Taona 2026-07-28: "for dev@cthalaal.co.za this is correct, for samreen it
+  // shouldnt be". visiblePaymentStatus collapses 'collected' to 'none' for
+  // everyone except the EFT admin.
+  const portal = {
+    ...portalRaw,
+    payment: portalRaw.payment
+      ? {
+          ...portalRaw.payment,
+          status: visiblePaymentStatus(portalRaw.payment.status, user.email) as
+            NonNullable<typeof portalRaw.payment>['status'],
+        }
+      : portalRaw.payment,
+  }
   const { stall } = parseAllocation((a.admin_notes as string) || '')
 
   const phoneRaw = ((a.phone as string) || '').trim()

@@ -184,9 +184,81 @@ test('vendorInOwnerScope: the festival owner only ever sees vendors who paid thr
 test('vendorInOwnerScope: every unpaid state is outside her world', () => {
   assert.equal(vendorInOwnerScope('just a note', null), false, 'plain unpaid')
   assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, 'on the EFT lane')
-  assert.equal(vendorInOwnerScope(withNoEftMarker('note'), null), false, '⟦NOEFT⟧ but still unpaid')
+  // ⟦NOEFT⟧ deliberately NOT asserted here any more. 2026-07-26 it handed an
+  // unpaid vendor to the master ("excluded from EFT is not the same as paid").
+  // 2026-07-28 Taona reversed it: "If excluded on master lane, it belongs to
+  // samreen." The master lane hides an EFT arrangement and an excluded vendor
+  // has none. Covered by its own tests below, including the guard that keeps an
+  // EFT-touched vendor on the master lane regardless of the marker.
   // 'collected' is the EFT interim state and never sets paid_at: still not hers.
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })
   assert.equal(vendorInOwnerScope(collected, null), false)
   assert.equal(vendorInOwnerScope(null, null), false)
+})
+
+// ---------------------------------------------------------------------------
+// ⟦NOEFT⟧ hands the vendor to the festival owner — Taona 2026-07-28: "If
+// excluded on master lane, it belongs to samreen." The master lane hides an EFT
+// ARRANGEMENT; a vendor excluded from EFT has none.
+// ---------------------------------------------------------------------------
+
+test('an excluded, unpaid vendor who never touched EFT is HERS', () => {
+  // Telkom, Treacle and Tart, Islamic Relief SA, Call-A-Braai on 2026-07-28.
+  assert.equal(vendorInOwnerScope(withNoEftMarker('note')), true)
+})
+
+test('exclusion does NOT expose a vendor already collected via EFT', () => {
+  // The marker says what happens next, not what already happened. Y&K gifts and
+  // toys sat at 'collected' the day this rule was written; handing that over
+  // would leak the settlement the wall exists to hide.
+  const collected = withNoEftMarker(
+    updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }))
+  assert.equal(vendorInOwnerScope(collected), false)
+})
+
+test('exclusion does NOT expose a vendor who saw the bank details or sent proof', () => {
+  const revealed = withNoEftMarker(
+    updatePortalStateImpl('note', { v: 1, payment: { eft_revealed_at: '2026-07-27T11:27:22Z' } }))
+  assert.equal(vendorInOwnerScope(revealed), false, 'revealed the details')
+
+  const submitted = withNoEftMarker(
+    updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-27T21:32:00Z' } }))
+  assert.equal(vendorInOwnerScope(submitted), false, 'uploaded proof')
+})
+
+test('exclusion does NOT expose a vendor settled by EFT or manual card', () => {
+  for (const method of ['eft', 'manual_card']) {
+    const paid = withNoEftMarker(
+      updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method } as never }))
+    assert.equal(vendorInOwnerScope(paid, '2026-07-19T00:00:00Z'), false, method)
+  }
+})
+
+test('exclusion never puts a vendor back INTO the EFT lane', () => {
+  // Both walls must agree: excluded means she can see them AND they see no bank
+  // details, even with global mode on.
+  const n = withNoEftMarker('note')
+  assert.equal(vendorInOwnerScope(n), true, 'visible to her')
+  assert.equal(vendorInEftLane(n, true), false, 'still no bank details')
+})
+
+// ---------------------------------------------------------------------------
+// The vendor PROFILE payment state. Taona 2026-07-28, on seeing Y&K read
+// "Payment pending" directly above "R4 800 collected": "for dev@cthalaal.co.za
+// this is correct, for samreen it shouldnt be."
+// ---------------------------------------------------------------------------
+
+test('visiblePaymentStatus: only the EFT admin sees a collected payment', () => {
+  assert.equal(visiblePaymentStatus('collected', EFT_ADMIN_EMAIL), 'collected', 'master sees the truth')
+  assert.equal(visiblePaymentStatus('collected', 'capetownhalaal@gmail.com'), 'none', 'owner must not')
+  assert.equal(visiblePaymentStatus('collected', null), 'none', 'unknown viewer must not')
+})
+
+test('visiblePaymentStatus leaves every other state untouched for everyone', () => {
+  // Masking must be surgical: hiding 'paid' from her would break her own view of
+  // the vendors she settled.
+  for (const s of ['paid', 'waived', 'pending', 'none', 'deferred']) {
+    assert.equal(visiblePaymentStatus(s, 'capetownhalaal@gmail.com'), s, s)
+    assert.equal(visiblePaymentStatus(s, EFT_ADMIN_EMAIL), s, s)
+  }
 })

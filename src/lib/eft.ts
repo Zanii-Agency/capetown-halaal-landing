@@ -249,6 +249,28 @@ export function vendorInOwnerScope(
   if (OWNERVIS_RE.test(adminNotes || '')) return true
 
   const p = parsePortalState(adminNotes).payment
+
+  // EXCLUDED FROM EFT MEANS HERS. Taona 2026-07-28: "If excluded on master lane,
+  // it belongs to samreen." The master lane exists to hide an EFT ARRANGEMENT.
+  // A vendor carrying ⟦NOEFT⟧ has none by definition, so there is nothing to
+  // withhold and keeping them on the master lane only hides an ordinary vendor
+  // from the person meant to handle them.
+  //
+  // GUARDED, though, and this is the part that is not obvious. The marker says
+  // what happens NEXT, not what already happened. Add ⟦NOEFT⟧ to someone who has
+  // already paid by EFT, or who is sitting at 'collected' awaiting settlement
+  // (Y&K gifts and toys is in exactly that state today), and an unguarded
+  // hand-over would expose the settlement this wall was built to hide. So the
+  // hand-over applies only to a vendor who never touched EFT at all: no interim
+  // collection, no revealed bank details, no uploaded proof, no EFT/manual
+  // settlement.
+  const touchedEft =
+    p?.status === 'collected'
+    || !!p?.eft_revealed_at
+    || !!p?.eft_submitted_at
+    || MASTER_ONLY_METHODS.has(String(p?.method || ''))
+  if (hasNoEftMarker(adminNotes) && !touchedEft) return true
+
   // 'collected' is the EFT interim state and never sets paid_at, so it correctly
   // fails this test and stays with the master until a real settlement lands.
   if (!paidAt && p?.status !== 'paid') return false
