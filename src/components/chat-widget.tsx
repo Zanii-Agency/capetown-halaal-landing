@@ -4,6 +4,9 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MessageCircle, X, Send, Loader2 } from 'lucide-react'
+import {
+  clampDock, parseDock, isDrag, DOCK_STORAGE_KEY, type DockPos,
+} from '@/lib/dock-position'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -24,6 +27,65 @@ export function ChatWidget() {
       ? 'vendor'
       : 'public'
   const [open, setOpen] = useState(false)
+
+  // ── Draggable dock ───────────────────────────────────────────────────────
+  // null means "wherever the CSS puts it" (bottom-6 right-6), so the very first
+  // render is identical to before and nothing jumps. A position only exists once
+  // the operator has actually moved it.
+  const [dock, setDock] = useState<DockPos | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const grabRef = useRef({ dx: 0, dy: 0, sx: 0, sy: 0 })
+  /** True when the press that is ending was a drag, so it must not also open. */
+  const draggedRef = useRef(false)
+
+  useEffect(() => {
+    const saved = parseDock(localStorage.getItem(DOCK_STORAGE_KEY))
+    if (saved) setDock(clampDock(saved, window.innerWidth, window.innerHeight))
+  }, [])
+
+  // Re-clamp on resize. A bubble parked at the right edge of a wide window ends
+  // up outside a narrow one, and something you cannot see is something you
+  // cannot drag back.
+  useEffect(() => {
+    const onResize = () =>
+      setDock((p) => (p ? clampDock(p, window.innerWidth, window.innerHeight) : p))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  function onDockPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
+    const r = e.currentTarget.getBoundingClientRect()
+    grabRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY }
+    draggedRef.current = false
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setDragging(true)
+  }
+
+  function onDockPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragging) return
+    const { dx, dy, sx, sy } = grabRef.current
+    if (!draggedRef.current && !isDrag(e.clientX - sx, e.clientY - sy)) return
+    draggedRef.current = true
+    setDock(clampDock(
+      { x: e.clientX - dx, y: e.clientY - dy },
+      window.innerWidth, window.innerHeight,
+    ))
+  }
+
+  function onDockPointerUp() {
+    if (!dragging) return
+    setDragging(false)
+    // Persist only a real move. A plain click must not silently pin the bubble
+    // to coordinates the operator never chose.
+    if (draggedRef.current) {
+      setDock((p) => {
+        if (p) { try { localStorage.setItem(DOCK_STORAGE_KEY, JSON.stringify(p)) } catch { /* private mode */ } }
+        return p
+      })
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: isAdmin ? WELCOME_ADMIN : WELCOME_PUBLIC },
   ])
@@ -80,16 +142,30 @@ export function ChatWidget() {
 
   return (
     <>
-      {/* Floating Button */}
+      {/* Floating Button — DRAGGABLE.
+          It sat at a fixed bottom-right and covered the inbox composer's Send
+          button. Reserving space inside the composer fixed that one collision by
+          narrowing the reply box for everyone forever, so instead the bubble
+          moves: drag it anywhere, it stays there, and it is clamped back into
+          view on resize. Taona 2026-07-28: "put it back and just make the chat
+          thing moveable". */}
       <AnimatePresence>
         {!open && (
           <motion.button
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
-            onClick={() => setOpen(true)}
+            onPointerDown={onDockPointerDown}
+            onPointerMove={onDockPointerMove}
+            onPointerUp={onDockPointerUp}
+            onPointerCancel={onDockPointerUp}
+            onClick={() => { if (!draggedRef.current) setOpen(true) }}
+            style={dock
+              ? { left: dock.x, top: dock.y, right: 'auto', bottom: 'auto', touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }
+              : { touchAction: 'none', cursor: 'grab' }}
             className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-[#cd2653] text-white shadow-lg shadow-[#cd2653]/25 flex items-center justify-center hover:bg-[#b01f45] transition-colors"
-            aria-label="Open chat"
+            aria-label="Open chat. Drag to move."
+            title="Drag to move"
           >
             <MessageCircle className="w-6 h-6" />
           </motion.button>

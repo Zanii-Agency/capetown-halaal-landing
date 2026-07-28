@@ -256,15 +256,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
         </div>
       )}
 
-      {/* RESERVE THE BOTTOM-RIGHT CORNER. The festival chat widget is a fixed
-          FAB at `bottom-6 right-6 w-14 h-14` (chat-widget.tsx) with z-50, so it
-          owns the last 80px of the viewport on EVERY admin page. Send sits at
-          the far right of this row and was disappearing underneath it, which
-          the Undo and Spin buttons made worse by pushing the row wider.
-          Reserving 80px here is the honest fix: the FAB is a real, deliberate
-          admin feature (it has its own WELCOME_ADMIN surface), so the composer
-          works around it rather than the other way round. */}
-      <div className="flex items-end gap-2 pr-20">
+      <div className="flex items-end gap-2">
         <div className="relative flex-1">
           <textarea
             ref={box}
