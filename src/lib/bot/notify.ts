@@ -5,7 +5,7 @@
 // Pattern source: project_nisria_notifications (lib/notify.ts). Same shape,
 // reused here with our approved Meta templates.
 
-import { sendTemplate, toE164 } from '@/lib/whatsapp'
+import { sendTemplate, sendText, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
@@ -143,12 +143,7 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs, fallbackEmail?: str
   const e164 = toE164(admin.phone)
   const firstName = admin.name.split(/\s+/)[0]
 
-  // ALWAYS use the approved template for owner alerts (KT #206651). Owner alerts
-  // are business-initiated (a system event, not a reply to the admin's own
-  // inbound), so riding the 24h free-text `sendText` branch just because the
-  // admin happened to message the bot recently is what tripped Meta's pacing
-  // throttle and dropped 86% of them. An approved template is not pacing-capped
-  // the same way. The email backstop below covers the rest.
+  // Template params reject newlines, so the template path flattens to ' · '.
   const logBody = `${args.event.replace(/_/g, ' ').toUpperCase()} - ${args.body.replace(/\s*\n\s*/g, ' · ')}`
 
   // Multiplicity guard: the same owner alert often fires several times (the
@@ -167,19 +162,59 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs, fallbackEmail?: str
     return // duplicate owner alert within 5 min, already delivered
   }
 
+  // FREE TEXT FIRST, TEMPLATE ONLY AS THE FALLBACK.
+  //
+  // This reverses "ALWAYS use the approved template" (KT #206651), and the
+  // reversal is the point. That note blamed the 86% silent-drop rate on riding
+  // the 24h free-text window, but the template it moved everything onto is
+  // `festival_announcement` sent as category:'marketing' — and the per-recipient
+  // MARKETING TEMPLATE FREQUENCY CAP is precisely what Meta rejects with
+  // "healthy ecosystem engagement", the string in that diagnosis. The old fix
+  // named the wrong cause and moved owner alerts onto the one channel Meta rate
+  // limits hardest. On 2026-07-28 a vendor opened the EFT bank details and the
+  // master alert never arrived; that is this bug.
+  //
+  // A free-text message inside the 24h service window is not template-capped at
+  // all. It also keeps newlines and *bold*, so the alert arrives readable
+  // instead of as one flattened ' · ' blob.
+  //
+  // The window closes after 24h of admin silence, and canSend reports that as
+  // `skipped` rather than throwing — so the template stays as the fallback and
+  // nothing is lost when it does. `sendText` also runs the pre-send sanitiser,
+  // which the template path skips.
+  const textBody = `*${args.event.replace(/_/g, ' ').toUpperCase()}*\n\n${args.body}`
+  let sent = false
+  let sentBody = logBody
+  let messageId: string | null = null
+  let failure: string | null = null
+
   try {
-    const res = await sendTemplate(e164, 'festival_announcement', [firstName, logBody], { category: 'marketing' })
-    await db.from('wa_messages').insert({
-      direction: 'out',
-      wa_phone: e164,
-      body: logBody,
-      status: res.skipped ? 'failed' : 'sent',
-      provider_message_id: res.messageId || null,
-      error: res.skipped || null,
-    })
+    const t = await sendText(e164, textBody)
+    if (!t.skipped) { sent = true; sentBody = textBody; messageId = t.messageId || null }
+    else failure = t.skipped
   } catch (e) {
-    console.error('[notify] deliver failed', admin.name, (e as Error).message)
+    failure = (e as Error).message
   }
+
+  if (!sent) {
+    try {
+      const res = await sendTemplate(e164, 'festival_announcement', [firstName, logBody], { category: 'marketing' })
+      if (!res.skipped) { sent = true; messageId = res.messageId || null; failure = null }
+      else failure = res.skipped
+    } catch (e) {
+      failure = (e as Error).message
+      console.error('[notify] deliver failed', admin.name, failure)
+    }
+  }
+
+  await db.from('wa_messages').insert({
+    direction: 'out',
+    wa_phone: e164,
+    body: sentBody,
+    status: sent ? 'sent' : 'failed',
+    provider_message_id: messageId,
+    error: sent ? null : failure,
+  }).then(() => {}, () => {}) // logging must never break the alert
 
   // Email backstop: WhatsApp owner alerts get frequency-capped by Meta and drop
   // silently (the failure is async, set later by a status webhook), so the WA
@@ -217,8 +252,15 @@ export function selectNotifyTargets(
   return admins.filter((a) => {
     if (opts.excludeNorm && toE164(a.phone) === opts.excludeNorm) return false
     if (opts.eftContent && a.role === 'festival_owner') return false
+    // THE MIRROR. Taona 2026-07-28: "make sure I have a mirror of what goes to
+    // samreen". The master is a target of every alert, whatever the audience, so
+    // there is no message she receives that he does not. Placed ABOVE the
+    // audience switch rather than inside it so a future audience value cannot
+    // cut him out by forgetting to name him. `exclude` still wins (it is how we
+    // skip the admin who just replied to their own message).
+    if (a.role === 'master') return true
+    // Everyone below is NOT the master, so a 'master' audience excludes them.
     if (opts.audience === 'all') return true
-    if (opts.audience === 'master') return a.role === 'master'
     if (opts.audience === 'festival_owner') return a.role === 'festival_owner'
     return false
   })
@@ -250,8 +292,12 @@ export async function notifyOwners(args: NotifyArgs): Promise<void> {
   if (targets.length === 0) {
     console.warn(JSON.stringify({ at: 'notify', warn: 'no_targets', event: args.event, audience, eftContent }))
   }
-  // Master has no email in BOT_ADMINS; under EFT mode give its email backstop a
-  // home (the EFT admin's monitored CTH inbox) so a master-only alert still lands.
-  const fallbackEmail = eftOn ? EFT_ADMIN_EMAIL : undefined
+  // Master has no email in BOT_ADMINS (festival ops mail must not route to an
+  // agency address), so give its backstop a home at the EFT admin's monitored
+  // CTH inbox. This was gated on `eftOn`, which meant that with global EFT mode
+  // off the master had exactly ONE delivery path, WhatsApp, on a channel Meta
+  // drops silently. Ungated: dev@cthalaal.co.za is a CTH address, so this is
+  // within the project-isolation rule in either mode.
+  const fallbackEmail = EFT_ADMIN_EMAIL
   await Promise.all(targets.map((a) => deliverOne(a, args, fallbackEmail)))
 }

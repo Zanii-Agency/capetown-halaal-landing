@@ -21,10 +21,13 @@ test('EFT-content alerts never reach the festival owner, in any mode', () => {
     roles(selectNotifyTargets(BOT_ADMINS, { audience: 'all', excludeNorm: null, eftContent: true })),
     ['master'],
   )
-  // Even when the alert was explicitly addressed to the owner, EFT content wins.
+  // Even when the alert was explicitly addressed to the owner, EFT content wins
+  // and she is dropped. It now falls through to the master rather than reaching
+  // NOBODY, which is what this combination used to do: an EFT-scoped alert
+  // addressed to her was silently discarded.
   assert.deepEqual(
-    selectNotifyTargets(BOT_ADMINS, { audience: 'festival_owner', excludeNorm: null, eftContent: true }),
-    [],
+    roles(selectNotifyTargets(BOT_ADMINS, { audience: 'festival_owner', excludeNorm: null, eftContent: true })),
+    ['master'],
   )
 })
 
@@ -37,8 +40,35 @@ test('non-EFT alerts route normally', () => {
     roles(selectNotifyTargets(BOT_ADMINS, { audience: 'master', excludeNorm: null, eftContent: false })),
     ['master'],
   )
+  // THE MIRROR: an alert addressed to the festival owner reaches the master too.
   assert.deepEqual(
     roles(selectNotifyTargets(BOT_ADMINS, { audience: 'festival_owner', excludeNorm: null, eftContent: false })),
+    ['festival_owner', 'master'],
+  )
+})
+
+test('the master mirrors everything the festival owner receives', () => {
+  // Taona 2026-07-28: "make sure I have a mirror of what goes to samreen".
+  // For every combination of audience and EFT scope, if she is a target he is.
+  for (const audience of ['all', 'master', 'festival_owner'] as const) {
+    for (const eftContent of [true, false]) {
+      const got = selectNotifyTargets(BOT_ADMINS, { audience, excludeNorm: null, eftContent })
+      const hers = got.some((a) => a.role === 'festival_owner')
+      const his = got.some((a) => a.role === 'master')
+      assert.equal(his, true, `master must always be a target (${audience}, eft=${eftContent})`)
+      if (hers) assert.equal(his, true, `unmirrored alert (${audience}, eft=${eftContent})`)
+    }
+  }
+})
+
+test('exclude still wins over the mirror, so nobody is alerted about their own reply', () => {
+  const master = BOT_ADMINS.find((a) => a.role === 'master')!
+  assert.deepEqual(
+    roles(selectNotifyTargets(BOT_ADMINS, {
+      audience: 'all',
+      excludeNorm: toE164(master.phone),
+      eftContent: false,
+    })),
     ['festival_owner'],
   )
 })

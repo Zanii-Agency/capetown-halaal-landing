@@ -55,6 +55,12 @@ export default function AdminLoginPage() {
         return
       }
 
+      // Record where this sign-in came from. Sends no body: the route reads the
+      // identity from the cookie just set and the IP from the edge headers, so
+      // nothing here is client-controlled. Fire and forget, never awaited and
+      // never surfaced: a logging failure must not hold up or fail a login.
+      fetch('/api/admin/login-log', { method: 'POST' }).catch(() => {})
+
       // Redirect to dashboard (layout will verify admin status)
       router.push('/admin')
       router.refresh()

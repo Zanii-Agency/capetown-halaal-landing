@@ -17,7 +17,7 @@ import { getRole } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 
-type EventCategory = 'all' | 'approvals' | 'messages' | 'documents' | 'payments' | 'mass_send'
+type EventCategory = 'all' | 'approvals' | 'messages' | 'documents' | 'payments' | 'mass_send' | 'logins'
 
 // Prefix-matched (Postgres ILIKE) categories for SITE_EVENTS. Each category
 // lists one or more prefixes to match the event_type against. Covers both the
@@ -30,6 +30,8 @@ const CATEGORY_PREFIXES: Record<Exclude<EventCategory, 'all'>, string[]> = {
   documents:  ['vendor_doc_', 'document_'],
   payments:   ['payment_', 'checkout_'],
   mass_send:  ['broadcast_', 'mass_', 'verification_blast'],
+  // Admin sign-ins, with the IP and city they came from (lib/admin-login-log.ts).
+  logins:     ['admin_login'],
 }
 
 // Exact-match categories for VENDOR_APPLICATION_EVENTS. These event_type values
