@@ -129,7 +129,17 @@ export function ThreadList({
             className="w-full pl-8 pr-3 py-2 text-sm rounded-lg bg-neutral-100 focus:bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900/10"
           />
         </div>
-        <div className="mt-2 flex items-center gap-1">
+        {/* Six tabs carrying counts are wider than the thread column, and this
+            row had neither wrap nor shrink control: the last tab was clipped
+            mid-word, and each button compressed below its content width and
+            wrapped its own label above its own count. That stacking is what
+            made it read as broken rather than merely tight.
+            WRAP rather than scroll sideways. A scrolling strip would keep one
+            line but hide two of the six filters behind a gesture with nothing
+            on screen to suggest they exist; these are the primary controls for
+            the list below. Wrapping costs one short row and can never clip.
+            Same treatment as the activity feed's chip row. */}
+        <div className="mt-2 flex flex-wrap items-center gap-1">
           {([
             ['all', 'All', threads.length],
             ['waiting', 'Waiting', pinnedCount],
@@ -144,7 +154,7 @@ export function ThreadList({
               key={k}
               onClick={() => onFilter(k)}
               aria-pressed={filter === k}
-              className={`px-2 py-1 text-xs font-medium rounded-md transition-colors ${
+              className={`shrink-0 whitespace-nowrap px-2 py-1 text-xs font-medium rounded-md transition-colors ${
                 filter === k ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'
               }`}
             >
