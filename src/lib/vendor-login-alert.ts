@@ -22,6 +22,7 @@ export async function recordVendorLogin(
   db: SupabaseClient,
   headers: Headers,
   user: { id: string; email?: string | null },
+  source = 'portal',
 ): Promise<void> {
   try {
     const email = (user.email || '').toLowerCase()
@@ -59,7 +60,7 @@ export async function recordVendorLogin(
         application_id: appId,
         business_name: app.business_name,
         ip: facts.ip, city: facts.city, region: facts.region, country: facts.country,
-        place,
+        place, source,
       },
     })
 
@@ -97,7 +98,7 @@ export async function recordVendorLogin(
     const body = buildLoginAlert({
       businessName: String(app.business_name || 'A vendor'),
       contactName: (app.contact_name as string) || null,
-      place, ip: facts.ip, activity,
+      place, ip: facts.ip, activity, source,
     })
 
     // MASTER ONLY. This is Taona watching his own platform, and the summary

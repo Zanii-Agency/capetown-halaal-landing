@@ -73,8 +73,8 @@ export async function POST(req: NextRequest) {
   // Awaited so the alert is not cut off by the serverless function freezing
   // after the response, but wrapped so telemetry can never fail a sign-in.
   try {
-    const { recordVendorLogin } = await import('@/lib/vendor-login-alert')
-    await recordVendorLogin(admin, req.headers, data.user)
+    const { announceLogin } = await import('@/lib/login-announce')
+    await announceLogin(admin, req.headers, data.user, 'vendor form')
   } catch (e) {
     console.error('[exhibitor-login] telemetry failed:', (e as Error).message)
   }

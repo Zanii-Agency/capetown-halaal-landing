@@ -123,6 +123,8 @@ export function buildLoginAlert(args: {
   place: string
   ip: string | null
   activity: VendorActivityInput
+  /** How they got in: the reset link and the login form are different stories. */
+  source?: string
 }): string {
   const issues = vendorIssues(args.activity)
   const actions = vendorActions(args.activity)
@@ -130,7 +132,7 @@ export function buildLoginAlert(args: {
 
   const lines = [
     `*${who}* just logged in.`,
-    `${args.place}${args.ip ? ` · ${args.ip}` : ''} · ${loginContext(args.activity.priorLogins)}`,
+    `${args.place}${args.ip ? ` · ${args.ip}` : ''} · ${loginContext(args.activity.priorLogins)}${args.source ? ` · via ${args.source}` : ''}`,
   ]
   if (issues.length) lines.push('', '*Issues:*', ...issues.slice(0, 5).map((i) => `• ${i}`))
   lines.push('', `*Progress:* ${actions.length ? actions.join(', ') : 'nothing completed yet'}`)

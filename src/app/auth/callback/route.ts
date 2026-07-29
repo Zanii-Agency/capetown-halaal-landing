@@ -36,6 +36,23 @@ function resetErrorMessage(raw: string): string {
   return `Reset link could not be verified: ${raw}. Please request a fresh email.`
 }
 
+// Both success paths below establish a session, and until 2026-07-29 neither
+// announced it. Raeesa Jenkins signed in through here minutes after her email
+// was repaired and nothing said so. announceLogin resolves admin vs vendor
+// itself, so this covers both. Best-effort: never block the redirect.
+async function announce(req: NextRequest, source: 'reset link') {
+  try {
+    const supa = await createClient()
+    const { data: { user } } = await supa.auth.getUser()
+    if (!user) return
+    const { createAdminClient } = await import('@/lib/supabase/admin')
+    const { announceLogin } = await import('@/lib/login-announce')
+    await announceLogin(createAdminClient(), req.headers, user, source)
+  } catch (e) {
+    console.error('[auth/callback] announce failed:', (e as Error).message)
+  }
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const tokenHash = url.searchParams.get('token_hash')
@@ -68,6 +85,7 @@ export async function GET(req: NextRequest) {
       u.searchParams.set('err', resetErrorMessage(error.message))
       return NextResponse.redirect(u)
     }
+    await announce(req, 'reset link')
     return NextResponse.redirect(new URL(next, url.origin))
   }
 
@@ -79,6 +97,7 @@ export async function GET(req: NextRequest) {
       u.searchParams.set('err', resetErrorMessage(error.message))
       return NextResponse.redirect(u)
     }
+    await announce(req, 'reset link')
     return NextResponse.redirect(new URL(next, url.origin))
   }
 

@@ -41,6 +41,15 @@ export default function LoginPage() {
       return
     }
 
+    // Announce the sign-in. This form signs in CLIENT-SIDE and never touches
+    // /api/exhibitor/login, so it was the one vendor door that recorded nothing
+    // at all. Sends no body: the route reads identity from the cookie just set
+    // and the IP from the edge headers. Awaited so the request is not killed by
+    // the navigation below, but never allowed to block the redirect.
+    try {
+      await fetch('/api/admin/login-log', { method: 'POST' })
+    } catch { /* telemetry must never cost a vendor their login */ }
+
     // Redirect to exhibitor portal on success
     window.location.href = '/exhibitor'
   }
