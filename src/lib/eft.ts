@@ -351,6 +351,126 @@ export function mentionsEft(text: string | null | undefined): boolean {
   return EFT_MENTION_RE.test(text || '')
 }
 
+// ── THE WIDER, READ-ONLY PREDICATE ───────────────────────────────────────────
+//
+// mentionsEft above stays NARROW on purpose and must not be widened: four write
+// paths (reply/route.ts x3, email-concierge.ts) feed it to markVendorToldEft,
+// which MOVES A VENDOR ONTO THE MASTER LANE. Widen that and an admin typing
+// "your transfer came through" silently pulls a vendor out of the festival
+// owner's world. A predicate that hides and a predicate that reassigns
+// ownership cannot be the same function.
+//
+// This one only ever HIDES. Taona 2026-07-29: "what guard can u put that says
+// when someone mentioned paid via eft, trasnfered, sent pop, etc".
+//
+// It exists because the narrow one is three phrases, and of eleven realistic
+// paraphrases probed against live data, NINE walked straight through: "I did
+// the transfer this morning", "deposited into your account", "sent it from my
+// FNB", "please send banking details".
+//
+// THE REFUSAL CARVE-OUT IS NOT A NICETY.
+//
+// Most matches in her threads today are the bot DECLINING: "stall fees are paid
+// by card only through Yoco, so there aren't any banking details". Hiding those
+// is worse than useless. She would see a vendor ask for bank details and no
+// answer, conclude nobody replied, and answer it herself, possibly wrongly. The
+// refusal is the single most reassuring thing in the thread, so it stays.
+// (A) Explicit vocabulary, and (B) an assertion that money ALREADY MOVED outside
+// the card lane. These are what betray the arrangement: you cannot have
+// transferred to an account you were never given.
+const MOVEMENT_ASSERTED_RE = new RegExp([
+  '\\b(eft|efts|eft\\047d)\\b',
+  '\\bbank\\s*transfer\\b',
+  '\\bproof\\s*of\\s*payment\\b',
+  // "POP attached" AND "sent POP". The evidence word can sit on either side, so
+  // the check runs both ways; a one-sided lookahead missed "sent POP" outright.
+  // Never bare \bpop\b, which would eat "popped up" and "pop-up stall".
+  '\\bpop\\b[^a-z]{0,14}(attach|sent|send|here|below|proof|confirm)',
+  '(attach|sent|send|here|below|proof|emailed?)[^a-z]{0,14}\\bpop\\b',
+  '\\b(transferred|transfered|transferring|transfering)\\b',
+  // The NOUN, as in "I did the transfer this morning". Requires a determiner or
+  // an action verb so "transfer of ownership" style prose does not match.
+  '\\b(did|made|done|completed|processed)\\s+(the|a|an|my)?\\s*transfer\\b',
+  '\\b(the|my|that)\\s+transfer\\b',
+  '\\bdeposited\\s+(it\\s+)?(in|into)\\b',
+  '\\bbank\\s+deposit\\b',
+  '\\bpaid?\\s+(it\\s+)?(directly\\s+)?into\\b',
+  '\\bpay(ing)?\\s+(directly\\s+)?into\\s+(your|the|ur)\\b',
+  '\\bsent\\s+(the\\s+|you\\s+the\\s+)?(money|funds|payment)\\b',
+  '\\b(payshap|ozow|snapscan|instant\\s*eft)\\b',
+].join('|'), 'i')
+
+// (C) Actual coordinates. A branch code or an account number is the thing
+// itself, so it hides whatever sentence surrounds it.
+const COORDINATES_RE = new RegExp([
+  '\\baccount\\s*(number|nr|no\\b)',
+  '\\bbranch\\s*code\\b',
+  '\\b(fnb|absa|nedbank|capitec|standard\\s*bank|tymebank)\\b[^.!?\\n]{0,40}\\d{6,}',
+].join('|'), 'i')
+
+// A bare long digit run was tried here and had to be removed: South African
+// mobile numbers are 11 digits with the country code, so it hid every
+// "WA opt-in: ... subscribed at +2767..." alert in her feed. The actual account
+// number is matched EXACTLY instead, which cannot false-positive at all.
+function containsRealBankValues(text: string): boolean {
+  const d = getEftBankDetails()
+  for (const v of [d.accountNumber, d.branchCode]) {
+    const s = String(v || '').replace(/\s/g, '')
+    if (s.length >= 5 && text.replace(/\s/g, '').includes(s)) return true
+  }
+  return false
+}
+
+// (D) Bank-detail TOPIC words. On their own these are usually a vendor ASKING,
+// which is safe and must stay visible, so they only hide when something is
+// being handed over.
+const TOPIC_RE = /\b(bank|banking)\s*(details|detail|info|information)\b|\baccount\s*details\b/i
+const HANDOVER_RE = new RegExp([
+  '\\b(here\\s+(is|are)|attached|as\\s+follows|below\\s+are|these\\s+are)\\b',
+  '\\bdetails\\s*(are|:)',
+  '\\b(sending|sent|share[sd]?|shared|provided|forwarded)\\b',
+].join('|'), 'i')
+
+// Phrases that mean "we do NOT do that", which make a match safe to show.
+const CARD_ONLY_RE = new RegExp([
+  '\\bcard\\s*only\\b',
+  '\\bonly\\s+(by|via|through|with)\\s+(card|yoco)\\b',
+  '\\bpaid?\\s+by\\s+card\\s+only\\b',
+  "\\b(aren'?t|are\\s*not|no)\\s+(any\\s+)?bank(ing)?\\s*details\\b",
+  "\\b(can'?t|cannot|can\\s*not|not\\s+able\\s+to|do\\s*n[o']t|unable\\s+to)\\b[^.!?]{0,40}\\b(give|share|provide|send|hand)\\b[^.!?]{0,30}\\b(bank|banking|account|payment)\\b",
+  '\\bno\\s+(other|alternative)\\s+payment\\s+method\\b',
+].join('|'), 'i')
+
+/** True when this text would reveal that money moved, or could move, outside
+ *  the card lane. HIDE-SIDE ONLY: never wire this to markVendorToldEft or to
+ *  anything else that writes.
+ *
+ *  Returns false for a refusal even when the wording matches, so the bot's
+ *  card-only answers stay visible and her conversations keep both halves. */
+export function revealsPaymentArrangement(text: string | null | undefined): boolean {
+  const t = text || ''
+  if (!t) return false
+
+  // A refusal is safe whatever words it uses, and showing it is actively
+  // valuable: it is the answer to the question above it.
+  if (CARD_ONLY_RE.test(t)) return false
+
+  // Coordinates are the thing itself.
+  if (containsRealBankValues(t)) return true
+  if (COORDINATES_RE.test(t)) return true
+
+  // An assertion that money already moved.
+  if (MOVEMENT_ASSERTED_RE.test(t)) return true
+
+  // Bank-detail topic words hide only when something is being HANDED OVER.
+  // "Please send banking details" is a vendor asking, and hiding it while
+  // showing the bot's refusal would leave her an answer with no question,
+  // which reads as a bug and invites her to answer it herself.
+  if (TOPIC_RE.test(t) && HANDOVER_RE.test(t)) return true
+
+  return false
+}
+
 /** When a reply that tells a vendor about EFT is SENT to them, move that vendor
  *  onto the Master lane by adding the ⟦EFT⟧ marker (Taona 2026-07-24: "any vendor
  *  told by the bot they can pay via EFT must move their comms to the master lane").

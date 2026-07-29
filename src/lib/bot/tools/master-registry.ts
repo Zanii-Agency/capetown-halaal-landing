@@ -17,7 +17,7 @@ import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { segmentCount, SEGMENT_LABELS, type SegmentKey } from '@/lib/bot/segments'
-import { hasEftMarker, vendorInOwnerScope, mentionsEft } from '@/lib/eft'
+import { hasEftMarker, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
 
 export const MASTER_TOOL_DEFS = [
   {
@@ -207,7 +207,7 @@ async function vendorConversation(vendorId: string, ownerScoped = false): Promis
   // reply about it. The vendor-level check above does not catch that, so the
   // message level gets its own pass, using the same mentionsEft predicate the
   // inbox and the alert router use so the three cannot drift.
-  const kept = ownerScoped ? lines.filter((l) => !mentionsEft(l.body)) : lines
+  const kept = ownerScoped ? lines.filter((l) => !revealsPaymentArrangement(l.body)) : lines
   if (!kept.length) return `No conversation on file for ${v.business_name || vendorId}.`
   lines = kept
   lines.sort((a, b) => +new Date(a.at) - +new Date(b.at))

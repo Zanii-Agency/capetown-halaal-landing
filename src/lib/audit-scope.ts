@@ -22,7 +22,7 @@
 //
 // Same shape as the inbox: a vendor gate, then a message-level gate.
 
-import { mentionsEft } from '@/lib/eft'
+import { revealsPaymentArrangement } from '@/lib/eft'
 
 /** Audit rows that describe lane MECHANICS rather than vendor activity. These
  *  are withheld from the festival owner whoever they are about, because the
@@ -83,7 +83,7 @@ export function hiddenFromOwner(row: AuditRow, vendorInScope: boolean | undefine
   // manually by admin (eft)." on vendors who ARE hers.
   const text = [type, asText(row.note), asText(row.before_value),
     asText(row.after_value), asText(row.metadata)].join(' ')
-  if (mentionsEft(text)) return true
+  if (revealsPaymentArrangement(text)) return true
 
   return vendorInScope !== true
 }
@@ -95,5 +95,5 @@ export function siteEventHiddenFromOwner(row: AuditRow): boolean {
   const type = row.event_type || ''
   if (MASTER_ONLY_EVENT_TYPES.has(type)) return true
   if (isLaneMechanicsEvent(type)) return true
-  return mentionsEft([type, asText(row.note), asText(row.metadata)].join(' '))
+  return revealsPaymentArrangement([type, asText(row.note), asText(row.metadata)].join(' '))
 }

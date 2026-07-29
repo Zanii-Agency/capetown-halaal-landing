@@ -15,7 +15,7 @@
 // than by remembering to re-derive it. Same shape as the notifyOwners gate: the
 // predicate lives in ONE place (vendorCommsInEftLane) and callers pass identity.
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode, isEftAdmin, vendorInOwnerScope, mentionsEft } from '@/lib/eft'
+import { getEftMode, isEftAdmin, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
 import { isMasterOnlySender } from '@/lib/master-only-senders'
 import { withoutMerged } from '@/lib/merge'
 
@@ -42,7 +42,7 @@ export function stripEftMessages<T>(rows: T[] | null | undefined, body: (row: T)
   if (!hide) return [...list]
   return list.filter((r) => {
     const t = body(r)
-    return !mentionsEft(typeof t === 'string' ? t : null)
+    return !revealsPaymentArrangement(typeof t === 'string' ? t : null)
   })
 }
 

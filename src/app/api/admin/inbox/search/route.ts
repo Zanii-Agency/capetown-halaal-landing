@@ -10,7 +10,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveContact } from '@/lib/contacts/resolve'
 import { hidesEftContent, laneScopeFor } from '@/lib/inbox-lane'
-import { mentionsEft } from '@/lib/eft'
+import { revealsPaymentArrangement } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -83,7 +83,7 @@ export async function GET(req: Request) {
       data: Array<{ id: string; body: string; wa_phone: string; created_at: string }> | null
     }
     for (const row of data ?? []) {
-      if (scope.blocksPhone(row.wa_phone) || (hide && mentionsEft(row.body))) continue
+      if (scope.blocksPhone(row.wa_phone) || (hide && revealsPaymentArrangement(row.body))) continue
       const tk = `wa:${row.wa_phone}`
       if (seen.has(tk)) continue
       const { data: thread } = (await supabase
@@ -139,7 +139,7 @@ export async function GET(req: Request) {
       // BOTH ends. A message is walled if EITHER party is in the master lane:
       // inbound is caught by from_address, outbound only by to_address.
       if (scope.blocksEmail(row.from_address) || scope.blocksEmail(row.to_address)
-        || (hide && (mentionsEft(row.body) || mentionsEft(row.subject)))) continue
+        || (hide && (revealsPaymentArrangement(row.body) || revealsPaymentArrangement(row.subject)))) continue
       if (!row.thread_id || seen.has(`mail:${row.thread_id}`)) continue
       seen.add(`mail:${row.thread_id}`)
       const resolved = await resolveContact({ email: row.from_address, supabase })

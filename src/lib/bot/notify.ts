@@ -10,7 +10,7 @@ import { windowOpenFor } from '@/lib/wa-window'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
-import { getEftMode, EFT_ADMIN_EMAIL, mentionsEft, vendorInOwnerScope } from '@/lib/eft'
+import { getEftMode, EFT_ADMIN_EMAIL, revealsPaymentArrangement, vendorInOwnerScope } from '@/lib/eft'
 
 // EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
 // alerts; production regressed to 86% of owner WhatsApp sends dropped with
@@ -113,7 +113,7 @@ export function isEftScopedAlert(
     // was written, which is exactly what she must not get.
     return !vendorInOwnerScope(asStr(vendor.admin_notes), asStr(vendor.paid_at))
   }
-  return mentionsEft(args.body) || args.eftScoped === true
+  return revealsPaymentArrangement(args.body) || args.eftScoped === true
 }
 
 // Best-effort: a miss or a throw returns null, which degrades to the heuristics

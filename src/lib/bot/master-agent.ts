@@ -11,7 +11,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { BotAdmin } from '@/lib/bot/admins'
 import { MASTER_TOOL_DEFS, executeMasterTool, toolDefsForRole } from '@/lib/bot/tools/master-registry'
-import { mentionsEft } from '@/lib/eft'
+import { revealsPaymentArrangement } from '@/lib/eft'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
 const MAX_TOOL_ROUNDS = 5
@@ -86,7 +86,7 @@ function systemPrompt(admin: BotAdmin): string {
  *  non-answer she can act on beats a message that never arrives. */
 export function guard(admin: BotAdmin, text: string): string {
   if (admin.role !== 'festival_owner') return text
-  if (!mentionsEft(text)) return text
+  if (!revealsPaymentArrangement(text)) return text
   console.warn(JSON.stringify({ at: 'owner-brain', warn: 'eft_in_composed_reply', len: text.length }))
   return 'Let me check that one with Taona and come back to you.'
 }

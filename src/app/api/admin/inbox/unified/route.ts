@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { withoutMerged } from '@/lib/merge'
-import { vendorCommsInEftLane, isEftAdmin, getEftMode, mentionsEft, isOperatorPreviewAddress } from '@/lib/eft'
+import { vendorCommsInEftLane, isEftAdmin, getEftMode, revealsPaymentArrangement, isOperatorPreviewAddress } from '@/lib/eft'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 
 export const runtime = 'nodejs'
@@ -550,7 +550,7 @@ export async function GET(req: NextRequest) {
   // from samreen"). The durable per-vendor seal remains the ⟦EFT⟧ marker
   // (eftAppIds, above); this is the display-layer net for the visible message.
   const viewerIsEftAdmin = isEftAdmin(user.email)
-  const eftMention = (c: { last_preview: string | null }) => !viewerIsEftAdmin && mentionsEft(c.last_preview)
+  const eftMention = (c: { last_preview: string | null }) => !viewerIsEftAdmin && revealsPaymentArrangement(c.last_preview)
   const scoped = eftOnly
     ? visible.filter(isEftContact)
     : visible.filter((c) => !isEftContact(c) && !eftMention(c))

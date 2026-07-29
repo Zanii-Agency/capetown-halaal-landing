@@ -12,7 +12,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker, EMAIL_ATTACHMENTS_BUCKET } from '@/lib/email/attachments'
 import { hidesEftContent, laneScopeFor } from '@/lib/inbox-lane'
-import { mentionsEft } from '@/lib/eft'
+import { revealsPaymentArrangement } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     if (
       scope.blocksEmail(row?.from_address) ||
       scope.blocksEmail(row?.to_address) ||
-      (hidesEftContent(user.email) && mentionsEft(`${row?.subject || ''}\n${row?.body_text || ''}`))
+      (hidesEftContent(user.email) && revealsPaymentArrangement(`${row?.subject || ''}\n${row?.body_text || ''}`))
     ) {
       return NextResponse.json({ error: 'forbidden' }, { status: 403 })
     }
@@ -93,8 +93,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   if (
     waScope.blocksPhone(row?.wa_phone as string | null) ||
     (hidesEftContent(user.email) &&
-      (mentionsEft(row?.body as string | null) ||
-        mentionsEft(media?.caption) ||
+      (revealsPaymentArrangement(row?.body as string | null) ||
+        revealsPaymentArrangement(media?.caption) ||
         /eft-proof/i.test(media?.storage_path || '')))
   ) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
