@@ -103,6 +103,25 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'get_payment_due_date',
+    description: "Return THIS vendor's exact stall fee payment due date and how many days remain. Call whenever a verified vendor asks when their payment is due, what their deadline is, or when they were approved. Do NOT escalate this to a human, the date is computed from their own approval date.",
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
+    name: 'withdraw_application',
+    description: "Withdraw THIS vendor from the festival, releasing their stall. Call ONLY after the vendor has said why they are leaving AND has explicitly confirmed they want to go ahead. Pass their reason in `reason` and set `confirmed` true only when they have confirmed in their own words. If they have not given a reason yet, ask them why first and do not call this.",
+    strict: true,
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        reason: { type: 'string', description: "Why they are withdrawing, in their own words" },
+        confirmed: { type: 'boolean', description: 'True ONLY when the vendor has explicitly confirmed after being asked' },
+      },
+      required: ['reason', 'confirmed'],
+    },
+  },
+  {
     name: 'escalate_to_human',
     description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call when a verified vendor has a request or question you cannot resolve with the other tools. Pass a one-line summary in `note`.",
     strict: true,
@@ -448,6 +467,85 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
   return `Done. I have submitted your request to change from ${currentTier} to "${clean}". The team will review it (stall changes affect pricing and placement, so a person confirms them) and get back to you. You can also track it in your portal.`
 }
 
+
+// Four vendors asked a HUMAN for this in the last nine days. The date is
+// reviewed_at + 30, the same computePaymentDue the dashboard and the payments
+// page already use, so there was never anything to escalate: the bot simply had
+// no tool and could not see it.
+async function getPaymentDueDate(vendorId: string): Promise<string> {
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not load your application just now. Please try again shortly.'
+  const { computePaymentDue, daysUntil, fmtDate } = await import('@/lib/exhibitor-paygate')
+  const due = computePaymentDue(row as { payment_due_date?: string | null; reviewed_at?: string | null })
+  if (!due) return 'I do not have a payment due date on your account yet. The team will confirm it with you.'
+  const st = parsePortalState((row as { admin_notes?: string }).admin_notes || '')
+  if (st.payment?.status === 'paid' || st.payment?.status === 'collected') {
+    return `Your stall fee is settled, thank you, so there is nothing outstanding. Your original due date was ${fmtDate(due)}.`
+  }
+  const n = daysUntil(due) ?? 0
+  const when = n < 0
+    ? `That was ${Math.abs(n)} day${Math.abs(n) === 1 ? '' : 's'} ago, so it is overdue.`
+    : n === 0 ? 'That is today.'
+    : `That is ${n} day${n === 1 ? '' : 's'} from now.`
+  return `Your stall fee is due on ${fmtDate(due)}. ${when} You can pay in your portal at ${PORTAL_LOGIN}.`
+}
+
+// Taona 2026-07-29, verbatim: "anytime a person text bot to withdraw or cancel
+// it should ask why if its not mentioned, and then mentioned i will withdraw u
+// now, confirm and thnen it does it then sends an email to them, samreen and
+// also inform me master".
+//
+// The two gates below are the whole safety story. `confirmed` is set by the
+// model only after the vendor says yes in their own words, and a PAID vendor is
+// never withdrawn automatically because their money raises a refund question no
+// rule here can answer.
+async function withdrawSelf(session: VendorSession, args: { reason?: string; confirmed?: boolean }): Promise<string> {
+  const vendorId = session.vendorId!
+  const reason = (args?.reason || '').trim()
+  if (!reason) return 'Before I do that, may I ask what is making you withdraw? It helps the team, and sometimes there is something we can sort out for you.'
+  if (args?.confirmed !== true) {
+    return `Just to be certain, I will withdraw you from the Young at Heart Festival 2026 and release your stall. Please reply to confirm and I will do it now.`
+  }
+
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not load your application just now. Please try again shortly.'
+
+  const { createAdminClient } = await import('@/lib/supabase/admin')
+  const { withdrawApplication } = await import('@/lib/vendors/withdraw')
+  const db = createAdminClient()
+  const biz = String((row as { business_name?: string }).business_name || 'your business')
+  const email = (row as { email?: string }).email || null
+
+  const res = await withdrawApplication(db, {
+    applicationId: vendorId, reason, actorEmail: email, actorRole: 'vendor',
+  })
+
+  if (!res.ok && res.reason === 'paid_needs_human') {
+    await escalateToHuman(session, `WITHDRAWAL from a PAID vendor (${biz}): "${reason}". Needs a refund decision before anything is cancelled.`).catch(() => {})
+    return 'Because your stall fee is already paid, I want a person to handle this with you so nothing goes wrong with your payment. I have passed it to the team and they will come back to you here.'
+  }
+  if (!res.ok && res.reason === 'already_withdrawn') {
+    return 'You are already withdrawn from the festival, so there is nothing further to do. If you are still getting messages from us, tell me and I will get that stopped.'
+  }
+  if (!res.ok) return 'I could not complete that just now. I have let the team know and they will follow up with you here.'
+
+  // Tell the vendor by email, tell the festival owner, tell the master.
+  const { sendEmail } = await import('@/lib/email/resend')
+  await sendEmail({
+    to: email || '',
+    subject: `Your Young at Heart Festival 2026 application has been withdrawn, ${biz}`,
+    text: `Hi,\n\nWe have withdrawn ${biz} from the Young at Heart Festival 2026 as you requested, and your stall has been released.\n\nReason recorded: ${reason}\n\nIf this was not what you wanted, or you change your mind, reply to this email or message us on WhatsApp and we will help.\n\nWe are sorry to see you go, and you are welcome to apply again in future.\n\nWarm regards,\nThe Young at Heart Festival Team`,
+  }).catch(() => {})
+
+  await notifyOwners({
+    event: 'system_alert',
+    audience: 'all',
+    body: `${biz} has WITHDRAWN from the festival via WhatsApp. Reason: "${reason}".${res.freedStalls.length ? ` Stall ${res.freedStalls.join(', ')} released.` : ''}`,
+  }).catch(() => {})
+
+  return `That is done. I have withdrawn ${biz} from the Young at Heart Festival 2026 and released your stall, and I have emailed you a confirmation. We are sorry to see you go, and you are very welcome to apply again another year.`
+}
+
 async function escalateToHuman(session: VendorSession, note: string): Promise<string> {
   const vendorId = session.vendorId!
   const row = await ownRow(vendorId)
@@ -499,6 +597,8 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'request_password_reset': content = await requestPasswordReset(session); break
       case 'update_my_email': content = await updateMyEmail(session, (args as { email?: string })?.email || ''); break
       case 'request_stall_change': content = await requestStallChange(session, (args as { requested_tier?: string })?.requested_tier || ''); break
+      case 'get_payment_due_date': content = await getPaymentDueDate(session.vendorId!); break
+      case 'withdraw_application': content = await withdrawSelf(session, (args as { reason?: string; confirmed?: boolean })); break
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
         deferred = getInvoiceDeferred(session)
