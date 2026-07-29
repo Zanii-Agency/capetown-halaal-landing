@@ -239,6 +239,22 @@ export function vendorInOwnerScope(
   adminNotes: string | null | undefined,
   paidAt?: string | null,
 ): boolean {
+  const p = parsePortalState(adminNotes).payment
+
+  // Money is in motion outside the card lane: collected but not settled, bank
+  // details revealed, a proof uploaded, or an operator-entered settlement.
+  const touchedEft =
+    p?.status === 'collected'
+    || !!p?.eft_revealed_at
+    || !!p?.eft_submitted_at
+    || MASTER_ONLY_METHODS.has(String(p?.method || ''))
+
+  // Settled through a channel she handles. Yoco reconciliation is what ENDS the
+  // arrangement, so a vendor who touched EFT and then settled by card is hers
+  // again. Y&K gifts and toys is exactly this case and must stay visible.
+  const settledHerWay =
+    (!!paidAt || p?.status === 'paid') && !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+
   // DELIBERATE HAND-OVER. The only way an UNPAID vendor reaches the festival
   // owner. Taona 2026-07-27: vendors who write in asking for an extension or a
   // payment plan are hers to negotiate, and she cannot negotiate with someone
@@ -246,9 +262,18 @@ export function vendorInOwnerScope(
   // infers intent: a detector deciding who leaves this wall would eventually
   // decide wrong, and the wall only works because every hole in it was made on
   // purpose and can be listed.
-  if (OWNERVIS_RE.test(adminNotes || '')) return true
-
-  const p = parsePortalState(adminNotes).payment
+  //
+  // GUARDED AGAINST MONEY IN MOTION. This branch used to `return true`
+  // unconditionally, which made it the one hole in the wall that ignored
+  // payment state entirely. Stubborn Monkey was handed over so she could sort
+  // out a vendor whose card kept declining, then the money arrived by EFT and
+  // was marked collected on 2026-07-26; the hand-over kept the vendor visible
+  // straight through the collection. Taona 2026-07-29: "all payments yet to be
+  // reconciled except for y and k should never be known by her."
+  //
+  // The ⟦NOEFT⟧ branch below already carried this exact guard, with a comment
+  // explaining the hazard. This branch did not, so the hazard simply moved.
+  if (OWNERVIS_RE.test(adminNotes || '')) return !touchedEft || settledHerWay
 
   // EXCLUDED FROM EFT MEANS HERS. Taona 2026-07-28: "If excluded on master lane,
   // it belongs to samreen." The master lane exists to hide an EFT ARRANGEMENT.
@@ -263,12 +288,8 @@ export function vendorInOwnerScope(
   // hand-over would expose the settlement this wall was built to hide. So the
   // hand-over applies only to a vendor who never touched EFT at all: no interim
   // collection, no revealed bank details, no uploaded proof, no EFT/manual
-  // settlement.
-  const touchedEft =
-    p?.status === 'collected'
-    || !!p?.eft_revealed_at
-    || !!p?.eft_submitted_at
-    || MASTER_ONLY_METHODS.has(String(p?.method || ''))
+  // settlement. (touchedEft is computed once at the top, shared with the
+  // OWNERVIS branch above, so the two hand-overs cannot drift apart.)
   if (hasNoEftMarker(adminNotes) && !touchedEft) return true
 
   // 'collected' is the EFT interim state and never sets paid_at, so it correctly

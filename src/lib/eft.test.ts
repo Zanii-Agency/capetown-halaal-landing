@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL } from './eft'
+import { vendorInOwnerScope, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -261,4 +261,43 @@ test('visiblePaymentStatus leaves every other state untouched for everyone', () 
     assert.equal(visiblePaymentStatus(s, 'capetownhalaal@gmail.com'), s, s)
     assert.equal(visiblePaymentStatus(s, EFT_ADMIN_EMAIL), s, s)
   }
+})
+
+// ---------------------------------------------------------------------------
+// The OWNERVIS hand-over must not survive money in motion.
+// Taona 2026-07-29: "all payments yet to be reconciled except for y and k
+// should never be known by her."
+// ---------------------------------------------------------------------------
+
+test('a handed-over vendor goes BACK behind the wall once money is collected', () => {
+  // Stubborn Monkey, live on 2026-07-29. Handed over so Samreen could help a
+  // vendor whose card kept declining; the money then arrived by EFT and was
+  // marked collected. The hand-over branch returned true unconditionally, so it
+  // kept the vendor visible straight through the collection.
+  const notes = withOwnerVisibleMarker('⟦PORTAL:' + Buffer.from(JSON.stringify({
+    payment: { status: 'collected', amount: 3700, eft_collected_at: '2026-07-26T12:10:56.307Z' },
+  })).toString('base64') + '⟧')
+  assert.equal(vendorInOwnerScope(notes, null), false)
+})
+
+test('but a handed-over vendor who SETTLES by card is hers again (Y&K)', () => {
+  // Y&K touched EFT and was then settled through Yoco. Reconciliation is what
+  // ends the arrangement, so this one must stay visible.
+  const notes = withOwnerVisibleMarker('⟦PORTAL:' + Buffer.from(JSON.stringify({
+    payment: { status: 'paid', method: 'yoco', amount: 4800, eft_revealed_at: '2026-07-24T09:00:00.000Z' },
+  })).toString('base64') + '⟧')
+  assert.equal(vendorInOwnerScope(notes, '2026-07-28T00:00:00.000Z'), true)
+})
+
+test('an ordinary hand-over with no payment activity still works', () => {
+  // The 14 vendors carrying OWNERVIS with a clean payment state must be
+  // unaffected, or the guard has broken the feature it protects.
+  assert.equal(vendorInOwnerScope(withOwnerVisibleMarker('needs a payment plan'), null), true)
+})
+
+test('an EFT-settled hand-over stays hidden', () => {
+  const notes = withOwnerVisibleMarker('⟦PORTAL:' + Buffer.from(JSON.stringify({
+    payment: { status: 'paid', method: 'eft', amount: 3700 },
+  })).toString('base64') + '⟧')
+  assert.equal(vendorInOwnerScope(notes, '2026-07-20T00:00:00.000Z'), false)
 })
