@@ -83,6 +83,16 @@ export const TOOL_DEFS = [
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
   {
+    name: 'update_my_email',
+    description: "Correct the email address on THIS vendor's application after a password-reset email failed to reach them. Call ONLY after request_password_reset reported it could not deliver, and the vendor has told you the correct address. Pass their corrected address in `email`. Refuses if the address on file has not actually failed, so it cannot be used for a routine address change.",
+    strict: true,
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: { email: { type: 'string', description: 'The corrected email address, exactly as the vendor spelled it' } },
+      required: ['email'],
+    },
+  },
+  {
     name: 'request_stall_change',
     description: "Submit a stall-size change request for THIS vendor to the team's review queue (a human approves it; pricing and floor-plan have real consequences). Call when a verified vendor asks to upgrade, downsize, or change their stall. Pass the requested size in `requested_tier` as the vendor described it.",
     strict: true,
@@ -118,7 +128,7 @@ export const TOOL_DEFS = [
 // New scoped tools MUST be added here — fail closed, not open.
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
-  'send_contract', 'get_logo_upload_link', 'request_password_reset', 'request_stall_change', 'escalate_to_human',
+  'send_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change', 'escalate_to_human',
 ])
 
 export interface ToolOutcome {
@@ -350,6 +360,25 @@ async function requestPasswordReset(session: VendorSession): Promise<string> {
     `I have flagged this for the team and someone will sort your access out with you here.`
 }
 
+async function updateMyEmail(session: VendorSession, email: string): Promise<string> {
+  const { repairVendorEmail } = await import('@/lib/exhibitor/repair-email')
+  const r = await repairVendorEmail(session.vendorId!, email)
+
+  if (!r.ok) {
+    // Never invent a reason. The gate refusing is a real answer and the vendor
+    // deserves the actual one, not a generic apology.
+    await escalateToHuman(session, `Vendor asked to change their email to "${email}" but the repair was refused: ${r.reason}.`).catch(() => {})
+    return `I could not change that for you: ${r.reason}. I have flagged it for the team and someone will sort it out with you here.`
+  }
+
+  if (r.resetDelivered) {
+    return `Done, I have corrected your email to ${r.newEmail} and sent a fresh link to set your password. It should arrive within a few minutes, check promotions and spam too. Open the link, choose a password, then log in at ${PORTAL_LOGIN}.`
+  }
+  // Address updated but the mail still did not land: say so rather than let
+  // them wait on another email that is not coming.
+  return `I have corrected your email to ${r.newEmail}, but the link still did not go through. I have flagged it for the team and someone will get your access sorted with you here.`
+}
+
 async function startVerification(session: VendorSession, email: string): Promise<string> {
   const r = await startVendorVerification(session.waPhone, (email || '').trim())
   if (!r.ok) {
@@ -468,6 +497,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'get_logo_upload_link': content = getLogoUploadLink(); break
       case 'start_verification': content = await startVerification(session, (args as { email?: string })?.email || ''); break
       case 'request_password_reset': content = await requestPasswordReset(session); break
+      case 'update_my_email': content = await updateMyEmail(session, (args as { email?: string })?.email || ''); break
       case 'request_stall_change': content = await requestStallChange(session, (args as { requested_tier?: string })?.requested_tier || ''); break
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':

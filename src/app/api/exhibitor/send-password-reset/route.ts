@@ -161,6 +161,22 @@ export async function POST(req: NextRequest) {
         console.log(`${tag} reset email sent OK`)
       } else {
         console.error(`${tag} sendEmail FAILED:`, sendRes?.error || '(no error message)')
+
+        // RECORD IT AS DATA, not only as an alert. The bot's update_my_email
+        // tool will only repair an address that is PROVABLY broken, and it
+        // needs something queryable to prove it with. Parsing the WhatsApp
+        // alert text for that would be a second source of truth that drifts.
+        // Law 8: rides site_events, no DDL.
+        try {
+          await admin.from('site_events').insert({
+            session_id: 'email_undeliverable',
+            event_type: 'email_undeliverable',
+            path: '/api/exhibitor/send-password-reset',
+            metadata: { email: lowEmail, reason: sendRes?.error || 'unknown' },
+          })
+        } catch (e) {
+          console.error(`${tag} could not record undeliverable:`, (e as Error).message)
+        }
         // MONITORING (KT #206651 P0.5): the endpoint deliberately returns
         // {ok:true} to avoid account enumeration, so a real send failure is
         // otherwise invisible until a vendor complains. Surface it to ops so a
