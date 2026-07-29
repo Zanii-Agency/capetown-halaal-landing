@@ -90,6 +90,32 @@ export async function POST(req: NextRequest) {
     body: `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'}. Ref ${ref}${note ? `, note: "${note.slice(0, 120)}"` : ''}. Reconcile it on /admin/eft.`,
   }).catch(() => {})
 
+  // ACKNOWLEDGE THE VENDOR. Until 2026-07-29 this route told the operator and
+  // told the vendor NOTHING, so someone who had just handed over money watched
+  // the screen go quiet. Aurelia sat that way from 29 July. Silence right after
+  // a payment is the worst possible moment for it.
+  //
+  // Only on the FIRST proof: a vendor re-uploading a clearer photo of the same
+  // slip does not need to be thanked twice, and the operator alert above
+  // already distinguishes the repeat.
+  //
+  // Best-effort, like everything else here. The proof is stored and stamped
+  // above, so a mail or WhatsApp failure must not cost them the upload.
+  if (isFirst) {
+    try {
+      const { sendProofAck } = await import('@/lib/payments/send-proof-ack')
+      const r = await sendProofAck({
+        businessName: name,
+        contactName: ctx.application.contact_name as string | null,
+        email: ctx.application.email as string | null,
+        phone: ctx.application.phone as string | null,
+      })
+      if (r.errors.length) console.warn('[eft-proof] ack partial:', JSON.stringify(r))
+    } catch (e) {
+      console.error('[eft-proof] ack failed:', (e as Error).message)
+    }
+  }
+
   // Send the PROOF ITSELF to the master's WhatsApp, not just an alert about it
   // (Taona 2026-07-26: "I should receive the copy via WhatsApp as well"). The
   // point of this lane is reconciling payments from a phone, so making him open
