@@ -21,6 +21,27 @@ const ENDPOINT_EMAIL = 'password-reset-email'
 export async function POST(req: NextRequest) {
   try {
     const { email } = await req.json()
+
+    // TRUTH FOR INTERNAL CALLERS ONLY.
+    //
+    // This endpoint answers {ok:true} to everyone so an attacker cannot probe
+    // which addresses have accounts. That contract is right for the public, and
+    // it is exactly what hid a real failure from the vendor: the bot called
+    // here, got {ok:true}, and told Raeesa Jenkins "Sent" three times over five
+    // weeks while every message bounced off a typo'd address
+    // (raeesajenkjns@ for raeesajenkins@). The same thing happened to
+    // Mias Chill Station on 2026-07-27. Detection worked both times and alerted
+    // the master; the person who needed to know was the only one not told.
+    //
+    // A caller bearing CRON_SECRET is our own server, acting for an ALREADY
+    // VERIFIED vendor about the address on their OWN application. It cannot
+    // enumerate anything it does not already hold, so it gets the real result.
+    const secret = process.env.CRON_SECRET
+    const auth = req.headers.get('authorization') || ''
+    const isInternal = !!secret && auth === `Bearer ${secret}`
+    let delivered = false
+    let deliveryReason: string | null = 'no attempt made'
+    const reply = () => NextResponse.json(isInternal ? { ok: true, delivered, reason: deliveryReason } : { ok: true })
     if (!email || typeof email !== 'string' || !email.includes('@')) {
       return NextResponse.json({ error: 'Invalid email' }, { status: 400 })
     }
@@ -41,7 +62,7 @@ export async function POST(req: NextRequest) {
     })
     if (!ipGuard.ok) {
       await logGuardEvent(admin, { endpoint: ENDPOINT_IP, ip, reason: ipGuard.reason!, fields: {} })
-      return NextResponse.json({ ok: true })
+      return reply()
     }
     const emailGuard = await checkIpThrottle(admin, {
       ip: lowEmailEarly,
@@ -56,7 +77,8 @@ export async function POST(req: NextRequest) {
         reason: emailGuard.reason!,
         fields: { real_ip: ip ?? null },
       })
-      return NextResponse.json({ ok: true })
+      deliveryReason = 'throttled, too many resets for this address'
+      return reply()
     }
     // Increment counters so the next call sees this attempt.
     await logGuardEvent(admin, {
@@ -94,7 +116,8 @@ export async function POST(req: NextRequest) {
         // (provisionExhibitorAccount in src/lib/exhibitor-auth.ts). Pending
         // applicants who hit "forgot password" land here.
         console.warn(`${tag} generateLink rejected: ${error.message} (often: no auth user, user may be unapproved)`)
-        return NextResponse.json({ ok: true })
+        deliveryReason = 'no portal account exists for this address'
+        return reply()
       }
 
       // IMPORTANT: we do NOT use data.properties.action_link directly. That
@@ -108,7 +131,8 @@ export async function POST(req: NextRequest) {
 
       if (!hashedToken || !verificationType) {
         console.error(`${tag} generateLink returned no hashed_token (response shape changed?)`)
-        return NextResponse.json({ ok: true })
+        deliveryReason = 'could not mint a reset link'
+        return reply()
       }
 
       const params = new URLSearchParams({
@@ -129,6 +153,9 @@ export async function POST(req: NextRequest) {
         // suppression too, not just on hard API failures.
         confirmDelivery: true,
       })
+
+      delivered = !!sendRes?.ok
+      deliveryReason = sendRes?.ok ? null : (sendRes?.error || 'unknown')
 
       if (sendRes?.ok) {
         console.log(`${tag} reset email sent OK`)
@@ -154,7 +181,7 @@ export async function POST(req: NextRequest) {
       console.error(`${tag} threw:`, (e as Error).message)
     }
 
-    return NextResponse.json({ ok: true })
+    return reply()
   } catch (error) {
     console.error('[send-password-reset] bad request:', error)
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 })

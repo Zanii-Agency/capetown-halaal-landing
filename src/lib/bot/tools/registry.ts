@@ -291,20 +291,63 @@ function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
   }
 }
 
-async function requestPasswordReset(vendorId: string): Promise<string> {
+async function requestPasswordReset(session: VendorSession): Promise<string> {
+  const vendorId = session.vendorId!
   const row = await ownRow(vendorId)
   if (!row?.email) return `I do not have an email on file for you. Please contact support@youngatheart.co.za.`
-  // Reuse the tested public endpoint (anti-enumeration + ops monitoring live there).
+  // NEVER CLAIM A SEND THIS FUNCTION DID NOT VERIFY.
+  //
+  // This used to `await fetch(...)` and throw the response away, then return
+  // "I have sent a password reset link" unconditionally. The endpoint already
+  // confirmed delivery and already alerted the master on failure, so the system
+  // KNEW the mail had bounced. The only person not told was the vendor.
+  //
+  // Raeesa Jenkins (MaterniTee) was told "sent" three times across five weeks
+  // while every message bounced off a typo on her application,
+  // raeesajenkjns@ where raeesajenkins@ belonged. She spent that time searching
+  // a spam folder for mail that never existed. Mias Chill Station hit the same
+  // thing on 2026-07-27. Both alerts reached the operator; neither vendor was
+  // corrected.
+  //
+  // The Bearer header is what makes the endpoint answer honestly: to anonymous
+  // callers it still returns a bare {ok:true} so nobody can probe which
+  // addresses have accounts.
+  const [u, d] = (row.email || '').split('@')
+  const masked = d ? `${u.slice(0, 2)}${'*'.repeat(Math.max(1, u.length - 2))}@${d}` : row.email
+
+  let delivered = false
+  let reason = 'the request did not go through'
   try {
-    await fetch('https://cthalaal.co.za/api/exhibitor/send-password-reset', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: row.email }),
+    const res = await fetch('https://cthalaal.co.za/api/exhibitor/send-password-reset', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.CRON_SECRET ? { Authorization: `Bearer ${process.env.CRON_SECRET}` } : {}),
+      },
+      body: JSON.stringify({ email: row.email }),
     })
+    const j = (await res.json().catch(() => ({}))) as { delivered?: boolean; reason?: string }
+    // `delivered` is absent when the secret is unset or the deploy is older than
+    // this change. Absent means UNVERIFIED, and unverified must not be reported
+    // as success, so it falls through to the honest branch below.
+    delivered = j.delivered === true
+    if (j.reason) reason = j.reason
   } catch (e) {
     console.error('[tool request_password_reset] failed:', (e as Error).message)
   }
-  const [u, d] = (row.email || '').split('@')
-  const masked = d ? `${u.slice(0, 2)}${'*'.repeat(Math.max(1, u.length - 2))}@${d}` : row.email
-  return `I have sent a password reset link to ${masked}. Check your inbox (and spam or promotions). Open the link and set a new password, then log in at ${PORTAL_LOGIN}.`
+
+  if (delivered) {
+    return `I have sent a password reset link to ${masked}. Check your inbox (and spam or promotions). Open the link and set a new password, then log in at ${PORTAL_LOGIN}.`
+  }
+
+  // Tell the vendor the truth and put a human on it. Say the address out loud,
+  // unmasked, because a typo is invisible behind asterisks and reading it back
+  // is what lets them spot it themselves.
+  await escalateToHuman(session, `Password reset could not be delivered to ${row.email} (${reason}). Vendor is locked out and needs the address checked.`)
+    .catch(() => {})
+  return `I could not get that email through to ${row.email}, so the address on your application may be wrong or it may be blocking us. ` +
+    `Please check it letter by letter and tell me the correct one if it is different. ` +
+    `I have flagged this for the team and someone will sort your access out with you here.`
 }
 
 async function startVerification(session: VendorSession, email: string): Promise<string> {
@@ -424,7 +467,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
         break
       case 'get_logo_upload_link': content = getLogoUploadLink(); break
       case 'start_verification': content = await startVerification(session, (args as { email?: string })?.email || ''); break
-      case 'request_password_reset': content = await requestPasswordReset(session.vendorId!); break
+      case 'request_password_reset': content = await requestPasswordReset(session); break
       case 'request_stall_change': content = await requestStallChange(session, (args as { requested_tier?: string })?.requested_tier || ''); break
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
