@@ -168,6 +168,12 @@ export async function GET(req: Request) {
       last_inbound_at: thread.last_inbound_at,
       last_handled_at: thread.last_handled_at,
     },
-    messages: stripEftMessages(messages, (m) => m.body, hide),
+    // Owner cutoff, same rule as everywhere else: a handed-over vendor's later
+    // conversation is master-first.
+    messages: stripEftMessages(messages, (m) => m.body, hide, {
+      scope,
+      identity: thread.channel === 'wa' ? { phone: thread.thread_key } : { email: thread.thread_key },
+      at: (m) => (m as { at?: string; created_at?: string }).at || (m as { created_at?: string }).created_at,
+    }),
   })
 }

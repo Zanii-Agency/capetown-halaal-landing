@@ -37,6 +37,8 @@ export async function GET(req: NextRequest) {
     .limit(500)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const messages = stripEftMessages(data, (m) => m.body, hide)
+  const messages = stripEftMessages(data, (m) => m.body, hide, {
+    scope, identity: { phone }, at: (m) => (m as { at?: string; created_at?: string }).at || (m as { created_at?: string }).created_at,
+  })
   return NextResponse.json({ phone: waPhone, count: messages.length, messages })
 }

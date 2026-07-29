@@ -18,6 +18,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getEftMode, isEftAdmin, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
 import { isMasterOnlySender } from '@/lib/master-only-senders'
 import { withoutMerged } from '@/lib/merge'
+import { ownerCutoff, hiddenByCutoff } from '@/lib/owner-view'
 
 // ── CONTENT-level wall (the read-side twin of notifyOwners' mentionsEft) ──────
 //
@@ -37,12 +38,31 @@ export function hidesEftContent(viewerEmail: string | null | undefined): boolean
 /** Drop the messages that talk about EFT. `body` extracts the text to test, so
  *  one helper serves wa_messages, support_inbox_messages, mail_messages and the
  *  synthesised comms rows without each caller re-deriving the rule. */
-export function stripEftMessages<T>(rows: T[] | null | undefined, body: (row: T) => unknown, hide: boolean): T[] {
+export function stripEftMessages<T>(
+  rows: T[] | null | undefined,
+  body: (row: T) => unknown,
+  hide: boolean,
+  /** Pass this and the OWNER CUTOFF applies too, so a handed-over vendor's
+   *  later conversation stays master-first.
+   *
+   *  The cutoff was wired into ONE endpoint (inbox/unified/messages) and was
+   *  therefore cosmetic on the other nine readers, which is how a master-lane
+   *  settlement thread stayed fully readable to the festival owner on
+   *  2026-07-29. Optional only so older callers keep compiling; every caller
+   *  holding a scope and a vendor identity should pass it. */
+  cut?: {
+    scope: LaneScope
+    identity: { phone?: string | null; email?: string | null; applicationId?: string | null }
+    at: (row: T) => string | null | undefined
+  },
+): T[] {
   const list = rows || []
   if (!hide) return [...list]
   return list.filter((r) => {
     const t = body(r)
-    return !revealsPaymentArrangement(typeof t === 'string' ? t : null)
+    if (revealsPaymentArrangement(typeof t === 'string' ? t : null)) return false
+    if (cut && cut.scope.hidesMessage(cut.identity, cut.at(r))) return false
+    return true
   })
 }
 
@@ -70,6 +90,22 @@ export interface LaneScope {
    *  checked INDEPENDENTLY because a crafted request can mismatch them (a benign
    *  email paired with a lane vendor's phone). */
   blocks(x: { phone?: string | null; email?: string | null; applicationId?: string | null }): boolean
+  /** True when a MESSAGE is past this vendor's owner cutoff.
+   *
+   *  The cutoff (⟦OWNERCUT:iso⟧) exists for a vendor who was handed to the
+   *  festival owner but whose conversation from a point onward is not hers to
+   *  read, e.g. one settled through the master lane and presented to her as an
+   *  ordinary card payment. She sees the vendor and the fact of payment; the
+   *  thread from the cutoff forward, including anything they send NEXT, is
+   *  master-first.
+   *
+   *  It lived in exactly ONE endpoint (inbox/unified/messages) and nowhere else,
+   *  so it was cosmetic on the channel lists, the support inbox, vendor-thread
+   *  and search. Living on the scope means every reader inherits it. */
+  hidesMessage(
+    x: { phone?: string | null; email?: string | null; applicationId?: string | null },
+    messageAt: string | null | undefined,
+  ): boolean
 }
 
 const ALLOW_ALL: LaneScope = {
@@ -78,6 +114,7 @@ const ALLOW_ALL: LaneScope = {
   blocksEmail: () => false,
   blocksApplicationId: () => false,
   blocks: () => false,
+  hidesMessage: () => false,
 }
 
 /** Pure core: build the scope from rows already loaded. Exported so the rule is
@@ -91,6 +128,21 @@ export function buildLaneScope(
   const phones = new Set<string>()
   const emails = new Set<string>()
   const ids = new Set<string>()
+  // Per-vendor message cutoffs, keyed by every identifier a reader might hold.
+  // Collected for EVERY row, including vendors who ARE hers: the cutoff is the
+  // mechanism that keeps a handed-over vendor's later conversation master-first.
+  const cutById = new Map<string, string>()
+  const cutByEmail = new Map<string, string>()
+  const cutByPhone = new Map<string, string>()
+  for (const r of rows) {
+    const cut = ownerCutoff(r.admin_notes)
+    if (cut) {
+      cutById.set(r.id, cut)
+      if (r.email) cutByEmail.set(r.email.toLowerCase(), cut)
+      const pk = phoneKey(r.phone)
+      if (pk) cutByPhone.set(pk, cut)
+    }
+  }
   for (const r of rows) {
     // 2026-07-26: blocks every vendor the festival owner does NOT own, which is
     // every unpaid one plus anyone settled by EFT or manual card — not merely the
@@ -159,6 +211,15 @@ export function buildLaneScope(
     blocks(x) {
       return this.blocksPhone(x.phone) || this.blocksEmail(x.email) || this.blocksApplicationId(x.applicationId)
     },
+    hidesMessage(x, messageAt) {
+      if (!messageAt) return false
+      const cut =
+        (x.applicationId && cutById.get(x.applicationId))
+        || (x.email && cutByEmail.get(x.email.toLowerCase()))
+        || (() => { const k = phoneKey(x.phone); return k ? cutByPhone.get(k) : undefined })()
+      if (!cut) return false
+      return hiddenByCutoff(messageAt, cut)
+    },
   }
 }
 
@@ -177,6 +238,7 @@ export async function laneScopeFor(viewerEmail: string | null | undefined): Prom
       blocksEmail: () => true,
       blocksApplicationId: () => true,
       blocks: () => true,
+      hidesMessage: () => true,
     }
   }
 

@@ -63,11 +63,24 @@ export async function GET(req: NextRequest) {
       .in('thread_id', ids)
       .order('received_at', { ascending: true })
       .limit(2000)
+    // The OWNER CUTOFF is applied per thread, using that thread's own peer as
+    // the identity, because a cutoff belongs to a vendor and this query spans
+    // many. Without it a handed-over vendor's whole master-lane history stayed
+    // readable here even though the marker was set (2026-07-29, Farfashions).
+    const peerOf = new Map<string, { email?: string | null; applicationId?: string | null }>(
+      (threads || []).map((t: { id: string; peer_email?: string | null; vendor_application_id?: string | null }) =>
+        [t.id, { email: t.peer_email, applicationId: t.vendor_application_id }]),
+    )
     const visible = stripEftMessages(
-      messages as Array<{ thread_id: string; subject: string | null; body_text: string | null }> | null,
+      messages as Array<{ thread_id: string; subject: string | null; body_text: string | null; received_at: string }> | null,
       (m) => `${m.subject || ''}\n${m.body_text || ''}`,
       hide,
-    )
+      {
+        scope,
+        identity: {},
+        at: (m) => m.received_at,
+      },
+    ).filter((m) => !hide || !scope.hidesMessage(peerOf.get(m.thread_id) || {}, m.received_at))
     messagesByThread = visible.reduce((acc: Record<string, unknown[]>, m: { thread_id: string }) => {
       const tid = m.thread_id
       if (!acc[tid]) acc[tid] = []
