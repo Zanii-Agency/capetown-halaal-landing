@@ -272,6 +272,7 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
       if (k.length !== 9 || OPERATOR_PHONES.has(k)) continue
       const vendor = byPhone.get(k)
       if (scope.blocks({ phone: m.wa_phone, applicationId: toPrimary(vendor?.id) })) continue
+      if (scope.hidesMessage({ phone: m.wa_phone, applicationId: toPrimary(vendor?.id) }, m.created_at)) continue
 
       const raw = (m.body || '').trim()
 
@@ -506,6 +507,13 @@ export async function loadMailThreads(
     if (!scope.unrestricted && isMasterOnlySender(t.peer_email)) continue
 
     const newest = latest.get(t.id)
+    // THREAD-LEVEL CUTOFF. Hiding a thread's MESSAGES is not enough: the row
+    // itself still renders, carrying the subject, which for an emailed proof is
+    // the vendor's own attachment filename. Taona saw a thread titled
+    // "ProofOfPayment.pdf" in the festival owner's list with every message
+    // correctly stripped. An empty thread with that title is worse than no
+    // thread, so a row past the vendor's cutoff does not render at all.
+    if (scope.hidesMessage({ email: t.peer_email, applicationId: appId }, newest?.created_at || t.last_inbound_at)) continue
     const inAt = lastInbound.get(t.id) || t.last_inbound_at
     const outAt = lastHumanOut.get(t.id)
     out.push({

@@ -50,8 +50,14 @@ export async function GET(req: NextRequest) {
   const scope = await laneScopeFor(user.email)
   const hide = hidesEftContent(user.email)
   const threads = (threadRows || []).filter(
-    (t: { peer_email: string | null; vendor_application_id: string | null }) =>
-      !scope.blocks({ email: t.peer_email, applicationId: t.vendor_application_id }),
+    (t: { peer_email: string | null; vendor_application_id: string | null; last_inbound_at?: string | null }) => {
+      const id = { email: t.peer_email, applicationId: t.vendor_application_id }
+      if (scope.blocks(id)) return false
+      // The row itself, not just its messages: an emailed proof arrives with the
+      // attachment filename as the subject, so a stripped-but-visible thread
+      // still reads "ProofOfPayment.pdf" in her list.
+      return !scope.hidesMessage(id, t.last_inbound_at)
+    },
   )
 
   const ids = (threads || []).map((t: { id: string }) => t.id)
