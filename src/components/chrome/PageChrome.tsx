@@ -33,7 +33,7 @@ import { type ReactNode } from 'react'
 export function PageShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-[#FFFFFF] text-[#1B1A17]">
-      <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-10 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 py-5 sm:py-8">
         {children}
       </div>
     </div>
@@ -54,14 +54,14 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <div className="mb-8 flex flex-wrap items-end gap-4">
+    <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3 sm:gap-4">
       <div className="flex-1 min-w-0">
         {kicker && (
           <p className="text-xs font-semibold text-[#cd2653] uppercase tracking-[0.22em] mb-2">
             {kicker}
           </p>
         )}
-        <h1 className="font-serif text-3xl md:text-4xl text-[#1B1A17] leading-tight">{title}</h1>
+        <h1 className="font-serif text-2xl sm:text-3xl md:text-4xl text-[#1B1A17] leading-tight">{title}</h1>
         {subtitle && (
           <p className="text-sm text-[#1B1A17]/55 mt-2">{subtitle}</p>
         )}
@@ -83,7 +83,7 @@ export function Card({
   className?: string
 }) {
   return (
-    <div className={`bg-[#FFFFFF] border border-[#E5E5E5]/40 rounded-2xl ${padded ? 'p-5 md:p-6' : ''} ${className}`}>
+    <div className={`bg-[#FFFFFF] border border-[#E5E5E5]/40 rounded-2xl ${padded ? 'p-4 sm:p-5 md:p-6' : ''} ${className}`}>
       {children}
     </div>
   )

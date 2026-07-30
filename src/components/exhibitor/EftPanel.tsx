@@ -32,10 +32,10 @@ interface Bank {
 function Row({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false)
   return (
-    <div className="flex items-center justify-between gap-3 py-2 border-b border-white/10 last:border-0">
+    <div className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-white/10 last:border-0">
       <span className="text-sm text-white/60">{label}</span>
-      <span className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-white">{value}</span>
+      <span className="flex items-center gap-2 min-w-0">
+        <span className="text-sm font-semibold text-white break-all">{value}</span>
         <button
           type="button"
           onClick={() => { navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500) }}
@@ -62,6 +62,7 @@ export default function EftPanel({
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
   // Bank details start hidden behind a reveal button. Revealing them is a strong
   // "about to pay by EFT" signal, so the click pings the operator (and seals the
   // vendor off the festival owner's inbox server-side). A vendor who has already
@@ -101,11 +102,17 @@ export default function EftPanel({
       const res = await fetch('/api/exhibitor/eft-proof', { method: 'POST', body: fd })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || 'Upload failed')
-      window.location.reload()
+      setSuccess(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
+    } finally {
       setBusy(false)
     }
+  }
+
+  function onSuccessClose() {
+    // Reload so the server flips the page to the provisional "received" state.
+    window.location.reload()
   }
 
   return (
@@ -148,6 +155,26 @@ export default function EftPanel({
             </Button>
             <Button onClick={scrollToUpload} className="bg-[#cd2653] hover:bg-[#b01f45] text-white">
               Upload proof now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Success confirmation shown immediately after a successful upload. */}
+      <Dialog open={success} onOpenChange={onSuccessClose}>
+        <DialogContent className="sm:max-w-md text-center">
+          <div className="mx-auto w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mb-2">
+            <CheckCircle2 className="w-7 h-7" />
+          </div>
+          <DialogHeader>
+            <DialogTitle>Proof received, thank you</DialogTitle>
+            <DialogDescription>
+              Please allow up to 24 hours for our team to confirm your payment and contact you. Once we have confirmed it, we will mark you as paid and your full portal will unlock so you can continue. You do not need to do anything else in the meantime.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-center">
+            <Button onClick={onSuccessClose} className="bg-[#cd2653] hover:bg-[#b01f45] text-white">
+              Continue
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -199,14 +226,14 @@ export default function EftPanel({
       </div>
 
       {/* Bank details. */}
-      <div className="rounded-2xl p-6 border bg-[#1a1416] border-[#1a1416] text-white">
+      <div className="rounded-2xl p-4 sm:p-6 border bg-[#1a1416] border-[#1a1416] text-white">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-11 h-11 rounded-xl flex items-center justify-center bg-white/10 text-[#ff7a9c]">
+          <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center bg-white/10 text-[#ff7a9c] shrink-0">
             <Building2 className="w-5 h-5" />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-sm text-white/60">Pay by EFT</p>
-            <p className="text-2xl font-bold text-white">
+            <p className="text-xl sm:text-2xl font-bold text-white truncate">
               {amount ? `R${amount.toFixed(2)} due` : 'Amount pending'}
             </p>
           </div>
@@ -248,7 +275,7 @@ export default function EftPanel({
       </div>
 
       {/* Upload proof. */}
-      <div ref={uploadRef} className="bg-white border border-neutral-200 rounded-2xl p-6">
+      <div ref={uploadRef} className="relative bg-white border border-neutral-200 rounded-2xl p-4 sm:p-6 overflow-hidden">
         <p className="font-semibold text-neutral-900 mb-1">{submitted ? 'Upload another proof' : 'Upload your proof of payment'}</p>
         <p className="text-sm text-neutral-500 mb-4">
           Attach your EFT confirmation or bank slip (PDF or image, up to 10MB). Uploading here is the fastest way for us to confirm your payment.
@@ -257,24 +284,35 @@ export default function EftPanel({
         <input
           type="file"
           accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
+          disabled={busy}
           onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null) }}
-          className="block w-full text-sm text-neutral-600 mb-3 file:mr-3 file:rounded-lg file:border-0 file:bg-[#cd2653]/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-[#cd2653] hover:file:bg-[#cd2653]/15"
+          className="block w-full text-sm text-neutral-600 mb-3 file:mr-3 file:rounded-lg file:border-0 file:bg-[#cd2653]/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-[#cd2653] hover:file:bg-[#cd2653]/15 disabled:opacity-60"
         />
         <textarea
           value={note}
+          disabled={busy}
           onChange={(e) => setNote(e.target.value)}
           placeholder="Optional note (date paid, amount, who paid)"
           rows={2}
-          className="block w-full text-sm rounded-lg border border-neutral-200 p-3 mb-3 focus:border-[#cd2653] focus:outline-none"
+          className="block w-full text-sm rounded-lg border border-neutral-200 p-3 mb-3 focus:border-[#cd2653] focus:outline-none disabled:opacity-60"
         />
         <button
           onClick={submit}
           disabled={busy || !file}
-          className="bg-[#cd2653] hover:bg-[#b01f45] text-white font-semibold rounded-lg px-5 py-3 text-sm flex items-center gap-2 disabled:opacity-60"
+          className="w-full sm:w-auto bg-[#cd2653] hover:bg-[#b01f45] text-white font-semibold rounded-lg px-5 py-3 text-sm flex items-center justify-center gap-2 disabled:opacity-60"
         >
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
           {submitted ? 'Upload another proof' : 'Submit proof of payment'}
         </button>
+
+        {/* Uploading overlay — keeps the vendor informed and prevents double submits. */}
+        {busy && (
+          <div className="absolute inset-0 z-10 bg-white/80 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center p-6 text-center">
+            <Loader2 className="w-8 h-8 text-[#cd2653] animate-spin mb-3" />
+            <p className="font-semibold text-neutral-900">Uploading your proof...</p>
+            <p className="text-sm text-neutral-500 mt-1">Hold tight, this should only take a few seconds.</p>
+          </div>
+        )}
       </div>
 
       {/* Support fallback. */}
