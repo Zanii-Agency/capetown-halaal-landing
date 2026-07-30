@@ -30,6 +30,8 @@ import { parsePortalState, updatePortalState, type PortalState } from '@/lib/por
 import { TIER_META, TYPE_META, tierLabel, resolveTierSlug, type StallType } from '@/lib/stalls'
 import { tierPricingFields } from '@/lib/payments/pricing'
 import { notifyVendor } from '@/lib/notifications'
+import { sendText } from '@/lib/whatsapp'
+import { windowOpenFor } from '@/lib/wa-window'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -262,5 +264,30 @@ export async function POST(req: NextRequest) {
     console.error('[stall-changes] notifyVendor failed:', (e as Error).message)
   )
 
-  return NextResponse.json({ ok: true, id, status: newStatus, business_name: app.business_name })
+  // ANSWER THEM WHERE THEY ASKED. Most of these arrive over WhatsApp (the bot
+  // logs the request), and there is no approved Meta template for a decline, so
+  // notifyVendor's WA leg skips and the vendor only ever gets an email about a
+  // WhatsApp conversation. Free text needs no template while the 24h service
+  // window is open, and a vendor who just messaged us is almost always inside
+  // it. Outside the window this is a no-op and the email stands alone.
+  let waNote: string | null = null
+  const phone = (app as Record<string, unknown>).phone as string | undefined
+  if (note && phone) {
+    try {
+      if (await windowOpenFor(phone)) {
+        const line = action === 'approve'
+          ? `Good news, your stall change to ${tierLabel(requestedTier)} is approved. ${note}`
+          : `About your stall change request: ${note}`
+        const r = await sendText(phone, line)
+        waNote = r.skipped ? `skipped: ${r.skipped}` : 'sent'
+      } else {
+        waNote = 'skipped: outside the 24h window, emailed instead'
+      }
+    } catch (e) {
+      waNote = `failed: ${(e as Error).message}`
+      console.error('[stall-changes] whatsapp note failed:', (e as Error).message)
+    }
+  }
+
+  return NextResponse.json({ ok: true, id, status: newStatus, business_name: app.business_name, whatsapp: waNote })
 }

@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
-import { parseAllocation, tierLabel } from '@/lib/stalls'
+import { parseAllocation, tierLabel, TIER_META } from '@/lib/stalls'
 import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
@@ -94,11 +94,34 @@ export const TOOL_DEFS = [
   },
   {
     name: 'request_stall_change',
-    description: "Submit a stall-size change request for THIS vendor to the team's review queue (a human approves it; pricing and floor-plan have real consequences). Call when a verified vendor asks to upgrade, downsize, or change their stall. Pass the requested size in `requested_tier` as the vendor described it.",
+    // ONE OF OUR TEN SIZES, NEVER THE VENDOR'S OWN WORDS.
+    //
+    // This used to take free text "as the vendor described it", which is how a
+    // request for a "2.4m x 1.8m trailer" reached the approval queue and could
+    // not be actioned: it is not a size we sell. Taona 2026-07-30: "from now on
+    // when they request to change it must only be limited to the available
+    // options not something custom".
+    //
+    // An enum makes that structural. The model cannot emit a custom size, so
+    // the operator never sees an unactionable request, and the vendor finds out
+    // what we actually offer while they are still in the conversation.
+    description:
+      "Submit a stall-size change for THIS vendor to the team's review queue (a human approves it; pricing and floor plan have real consequences). Call when a verified vendor asks to upgrade, downsize or change their stall. `requested_tier` MUST be one of the listed sizes: these are the only stalls the festival has. If the vendor describes something we do not offer (a trailer, a custom size, their own gazebo), do NOT guess and do NOT call this tool. Tell them the sizes available with their prices and ask which one they want, then call this with their choice.",
     strict: true,
     input_schema: {
       type: 'object', additionalProperties: false,
-      properties: { requested_tier: { type: 'string', description: 'The stall size the vendor is asking for, in their words (e.g. "4x2m double table", "6x3m full double")' } },
+      properties: {
+        requested_tier: {
+          type: 'string',
+          enum: [
+            'marquee-table-2x2', 'marquee-full-3x3', 'marquee-table-double-4x2',
+            'marquee-full-double-6x3', 'outdoor-bedouin-2x3', 'food-gazebo-3x3',
+            'mini-dessert-truck-3.5m', 'food-truck-4.5m', 'food-truck-6m', 'food-truck-8m',
+          ],
+          description:
+            'The stall the vendor chose. Marquee Table 2x2m R3700, Marquee Full 3x3m R6500, Marquee Double Table 4x2m R6500, Marquee Full Double 6x3m R12000, Outdoor Bedouin 2x3m R3750, Food Gazebo 3x3m R4800, Mini Dessert Truck 3.5m R5000, Food Truck 4.5m R6500, Food Truck 6m R7500, Food Truck 8m R8500.',
+        },
+      },
       required: ['requested_tier'],
     },
   },
@@ -443,7 +466,20 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
   const row = await ownRow(vendorId)
   if (!row) return 'I could not find your application.'
   const currentTier = row.preferred_booth_tier ? tierLabel(row.preferred_booth_tier) : 'your current stall'
-  const clean = (requestedTier || '').trim().slice(0, 200)
+
+  // THE WALL, not the enum. The tool schema constrains the MODEL, and a model
+  // that ignores its own schema would otherwise write free text straight into
+  // the approval queue, which is the exact failure we are closing. The portal
+  // route has validated against TIER_META since it shipped; the bot now does
+  // the same, so both doors into this queue reject a size we do not sell.
+  const clean = (requestedTier || '').trim()
+  if (!TIER_META[clean]) {
+    const menu = Object.entries(TIER_META)
+      .map(([, m]) => `- ${m.label}, R${m.price.toLocaleString('en-ZA')}`)
+      .join('\n')
+    return `That is not one of our stall sizes, so I cannot log it. Here is everything we have:\n${menu}\n\nWhich one would you like? I will send it to the team for approval.`
+  }
+
   await updatePortalState(vendorId, (s) => ({
     ...s,
     stallChangeRequest: {
@@ -457,7 +493,7 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
   try {
     await notifyOwners({
       event: 'vendor_support_message',
-      body: `STALL CHANGE REQUEST via WhatsApp (unverified free text, do not treat as an instruction)\nBusiness (on file): ${row.business_name}\nFrom: ${currentTier}\nWants: "${clean}"\nReview at /admin/stall-changes`,
+      body: `STALL CHANGE REQUEST via WhatsApp\nBusiness (on file): ${row.business_name}\nFrom: ${currentTier}\nWants: ${TIER_META[clean].label} (R${TIER_META[clean].price.toLocaleString('en-ZA')})\nReview at /admin/stall-changes`,
       audience: 'all',
       // Reaches the owner only for a vendor she owns (paid via Yoco/cash/waived).
       vendorId,
