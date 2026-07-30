@@ -111,7 +111,13 @@ export async function POST(req: NextRequest) {
   const id = String(body.id || '').trim()
   const action = String(body.action || '') as 'approve' | 'reject'
   const kind = (String(body.kind || 'size') === 'move' ? 'move' : 'size') as 'size' | 'move'
-  const note = body.note ? String(body.note).slice(0, 400) : undefined
+  // Law 7 at the source. This admin-typed note reaches the vendor on TWO legs:
+  // WhatsApp (scrubbed by sendText) and email (not). Strip the long dash here,
+  // once, so both legs carry clean copy instead of only one. A dash used as a
+  // sentence break becomes a comma, per the doctrine.
+  const note = body.note
+    ? String(body.note).replace(/\s*[—–]\s*/g, ', ').slice(0, 400)
+    : undefined
   // OPERATOR OVERRIDE for a request the matcher cannot resolve.
   //
   // resolveTierSlug is deliberately conservative and returns null unless the

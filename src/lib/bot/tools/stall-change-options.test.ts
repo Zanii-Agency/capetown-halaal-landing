@@ -64,6 +64,14 @@ test('every offered tier has a real price to quote', () => {
   }
 })
 
+test('the decline note is dash-stripped at the source, so both legs are law-7 clean', () => {
+  // The note reaches the vendor by WhatsApp (scrubbed) AND email (was not). It
+  // is stripped once where it is read, so an admin-typed em-dash never ships.
+  const ROUTE = readFileSync(join(process.cwd(), 'src/app/api/admin/stall-changes/route.ts'), 'utf8')
+  const noteLine = ROUTE.slice(ROUTE.indexOf('const note = body.note'), ROUTE.indexOf('const note = body.note') + 160)
+  assert.match(noteLine, /replace\(\/\\s\*\[[—–]+\]\\s\*\/g/, 'note must strip long dashes before use')
+})
+
 test('the decline route selects phone, so the WhatsApp leg can actually send', () => {
   // The WA decline leg reads app.phone. It shipped once with phone missing from
   // the SELECT, so `if (note && phone)` was always false and the message it
