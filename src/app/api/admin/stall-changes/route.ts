@@ -110,6 +110,19 @@ export async function POST(req: NextRequest) {
   const action = String(body.action || '') as 'approve' | 'reject'
   const kind = (String(body.kind || 'size') === 'move' ? 'move' : 'size') as 'size' | 'move'
   const note = body.note ? String(body.note).slice(0, 400) : undefined
+  // OPERATOR OVERRIDE for a request the matcher cannot resolve.
+  //
+  // resolveTierSlug is deliberately conservative and returns null unless the
+  // free text names exactly ONE tier, so nobody is charged for a guessed size.
+  // That is correct, and it produced a DEAD END: a vendor asking for a
+  // "2.4m x 1.8m trailer" (not one of the ten tiers, because vendors describe
+  // their own equipment) left the operator with a 400 and an instruction to go
+  // to a different page. Every unmatchable phrasing became a manual detour.
+  //
+  // So the operator can now name the tier at the point of decision. It is
+  // validated against TIER_META like any other, so an override still cannot
+  // invent a price.
+  const tierOverride = body.tier ? String(body.tier).trim() : ''
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   if (!['approve', 'reject'].includes(action)) {
     return NextResponse.json({ error: 'invalid action' }, { status: 400 })
@@ -167,11 +180,18 @@ export async function POST(req: NextRequest) {
   // validated the free text against TIER_META directly, so it never matched and
   // the booth change got stuck (Samreen voice note, 2026-07-21). resolveTierSlug
   // returns null when the text is ambiguous, so we never approve a mis-priced tier.
-  const requestedTier = resolveTierSlug(cr.requestedTier) || ''
+  // An override wins over the matcher, but only if it is a real tier.
+  if (tierOverride && !TIER_META[tierOverride]) {
+    return NextResponse.json({ error: `Unknown stall tier "${tierOverride}".`, code: 'BAD_TIER' }, { status: 400 })
+  }
+  const requestedTier = tierOverride || resolveTierSlug(cr.requestedTier) || ''
   if (action === 'approve' && !TIER_META[requestedTier]) {
+    // Hand the caller the choices so the UI can ask instead of dead-ending.
     return NextResponse.json({
-      error: `Could not match "${cr.requestedTier}" to a known stall size. Set the tier manually on the vendor page.`,
+      error: `"${cr.requestedTier}" is not one of our stall sizes. Pick the tier to move them to.`,
       code: 'UNRESOLVED_TIER',
+      requestedText: cr.requestedTier,
+      tiers: Object.entries(TIER_META).map(([slug, m]) => ({ slug, label: m.label, price: m.price })),
     }, { status: 400 })
   }
 
