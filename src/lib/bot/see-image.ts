@@ -24,7 +24,12 @@ const MODEL = process.env.CTH_VISION_MODEL || 'claude-sonnet-5'
 // photos well under this; a bigger payload is a document scan we skip rather
 // than risk a slow request on the webhook path.
 const MAX_BYTES = 3_500_000
-const TIMEOUT_MS = 12_000
+// The webhook AWAITS this before its 200 (the reply needs the image context, so
+// it cannot be deferred to after()). Meta retries a webhook it thinks timed out,
+// so the vision call is capped well under that window. A normal read is 2 to 4s;
+// this only bites a hung call, which then fails soft to a caption-only reply.
+// The wamid dedup guard catches any retry that still slips through.
+const TIMEOUT_MS = 8_000
 
 // The only formats the vision API takes. A HEIC or TIFF is not an error, it is
 // simply not readable here, and the caller falls back to the plain ack.

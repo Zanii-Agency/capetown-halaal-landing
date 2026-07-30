@@ -63,3 +63,14 @@ test('every offered tier has a real price to quote', () => {
     assert.ok(TIER_META[slug].price > 0, `${slug} has no price`)
   }
 })
+
+test('the decline route selects phone, so the WhatsApp leg can actually send', () => {
+  // The WA decline leg reads app.phone. It shipped once with phone missing from
+  // the SELECT, so `if (note && phone)` was always false and the message it
+  // advertised never sent (a Record<string, unknown> cast hid it from tsc).
+  // Doctrine review 2026-07-30.
+  const ROUTE = readFileSync(join(process.cwd(), 'src/app/api/admin/stall-changes/route.ts'), 'utf8')
+  const select = ROUTE.slice(ROUTE.indexOf("from('vendor_applications')"))
+  const firstSelect = select.slice(0, select.indexOf('.maybeSingle()'))
+  assert.match(firstSelect, /\bphone\b/, 'the row the WA leg reads must include phone')
+})

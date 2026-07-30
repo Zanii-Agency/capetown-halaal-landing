@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
   // against acting on a request that is no longer pending (double-click / race).
   const { data: app } = await db
     .from('vendor_applications')
-    .select('id, business_name, admin_notes, special_requirements')
+    .select('id, business_name, admin_notes, special_requirements, phone')
     .eq('id', id)
     .maybeSingle()
   if (!app) return NextResponse.json({ error: 'Application not found' }, { status: 404 })
