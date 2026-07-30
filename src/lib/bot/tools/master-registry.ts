@@ -16,6 +16,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { computeVendorPricing } from '@/lib/payments/pricing'
+import { computePaymentDue, fmtDate } from '@/lib/exhibitor-paygate'
 import { segmentCount, SEGMENT_LABELS, type SegmentKey } from '@/lib/bot/segments'
 import { hasEftMarker, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
 
@@ -89,15 +90,15 @@ export function toolDefsForRole(role: string) {
   return MASTER_TOOL_DEFS.filter((t) => OWNER_TOOL_NAMES.has(t.name))
 }
 
-type VRow = {
+export type VRow = {
   id: string; business_name: string | null; contact_name: string | null; email: string | null
   phone: string | null; status: string | null; admin_notes: string | null; paid_at: string | null
-  preferred_booth_tier: string | null; special_requirements: unknown
+  preferred_booth_tier: string | null; special_requirements: unknown; reviewed_at: string | null
 }
 
 const DAY = 86400000
 
-function vendorSummary(r: VRow, ownerScoped = false): string {
+export function vendorSummary(r: VRow, ownerScoped = false): string {
   const state = parsePortalState(r.admin_notes || '')
   const pay = state.payment
   const paid = !!r.paid_at || pay?.status === 'paid'
@@ -106,10 +107,22 @@ function vendorSummary(r: VRow, ownerScoped = false): string {
   const received = Number(pay?.amount) || 0
   const outstanding = Math.max(0, total - received)
   const alloc = parseAllocation(r.admin_notes || '')
+
+  // DUE DATE: the ONE rule, computePaymentDue (explicit due date if ever set,
+  // else reviewed_at + 30 days), the same function the vendor dashboard and the
+  // vendor bot use. This tool used to read pay?.due from portal state, which
+  // NOTHING writes, so the master brain saw no due date on any unpaid vendor and
+  // told Taona her date "genuinely isn't there yet" while her own dashboard was
+  // showing 25 August. A rule wired into some readers and not this one (Barfi
+  // Bliss, 2026-07-30). Now the master brain reads the same date everyone else
+  // does. pay?.due is kept as an override for the rare hand-set case.
+  const due = pay?.due ? new Date(pay.due) : computePaymentDue({ reviewed_at: r.reviewed_at })
+  let dueLine = ''
   let overdue = ''
-  if (!paid && pay?.due) {
-    const days = Math.floor((Date.now() - new Date(pay.due).getTime()) / DAY)
-    if (days > 0) overdue = `, ${days} day${days === 1 ? '' : 's'} overdue`
+  if (!paid && due && !isNaN(due.getTime())) {
+    const left = Math.ceil((due.getTime() - Date.now()) / DAY)
+    dueLine = `, stall fee due ${fmtDate(due)}${left >= 0 ? ` (${left} day${left === 1 ? '' : 's'} left)` : ''}`
+    if (left < 0) overdue = `, ${Math.abs(left)} day${Math.abs(left) === 1 ? '' : 's'} overdue`
   }
   // Every branch below names the EFT arrangement, which is the one thing the
   // festival owner must never learn. She only reaches this function for vendors
@@ -121,7 +134,7 @@ function vendorSummary(r: VRow, ownerScoped = false): string {
     : pay?.eft_revealed_at ? ', revealed EFT details (likely paying)' : ''
   const payLine = paid
     ? `PAID${received ? ` (R${received})` : ''}`
-    : `UNPAID${total ? `, R${outstanding} outstanding of R${total}` : ''}${overdue}`
+    : `UNPAID${total ? `, R${outstanding} outstanding of R${total}` : ''}${dueLine}${overdue}`
   return `${r.business_name || 'Unnamed'} (${r.contact_name || 'no contact'}, ${r.email || 'no email'}, ${r.phone || 'no phone'}) [vendor_id ${r.id}]: application ${r.status || 'unknown'}, ${payLine}, stall ${alloc.stall || 'not allocated'}${r.preferred_booth_tier ? ` (${tierLabel(r.preferred_booth_tier)})` : ''}${eft}.`
 }
 
@@ -137,7 +150,7 @@ async function findVendors(query: string, ownerScoped = false): Promise<string> 
   // uses. Over-fetch instead and let the predicate decide.
   const { data } = await db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements')
+    .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, reviewed_at')
     .or(`business_name.ilike.${like},contact_name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
     .limit(ownerScoped ? 40 : 12)
   let rows = (data || []) as VRow[]
