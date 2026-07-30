@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
-import { parseAllocation, resolveTierSlug, tierLabel, TIER_META } from '@/lib/stalls'
+import { parseAllocation, resolveTierSlug, tierLabel, TIER_META, TYPE_META, STALL_LIST } from '@/lib/stalls'
 import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
@@ -145,6 +145,25 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'where_is_my_stall',
+    description: "Return THIS vendor's allocated stall code, zone, and a link to the map in their portal. Call when a verified vendor asks where their stall is, what zone they are in, or for their stall number.",
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
+    name: 'report_issue',
+    description: "Record an issue or problem THIS vendor is having. Call when a verified vendor reports a problem you cannot fix immediately. `issue_type` categorises it: payment (cannot pay/gateway error), portal (cannot log in or page broken), documents (cannot upload a required doc), stall (question about allocated stall), other. `description` is what they said in their own words. For payment/portal/documents issues, guide them to the right fix first; only escalate if the tool says it could not resolve it.",
+    strict: true,
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        issue_type: { type: 'string', enum: ['payment', 'portal', 'documents', 'stall', 'other'], description: 'Category of the issue' },
+        description: { type: 'string', description: "The vendor's description of the issue, in their own words" },
+      },
+      required: ['issue_type', 'description'],
+    },
+  },
+  {
     name: 'escalate_to_human',
     description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call when a verified vendor has a request or question you cannot resolve with the other tools. Pass a one-line summary in `note`.",
     strict: true,
@@ -171,7 +190,7 @@ export const TOOL_DEFS = [
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
   'send_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
-  'get_payment_due_date', 'withdraw_application', 'escalate_to_human',
+  'get_payment_due_date', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'escalate_to_human',
 ])
 
 export interface ToolOutcome {
@@ -527,6 +546,63 @@ async function getPaymentDueDate(vendorId: string): Promise<string> {
   return `Your stall fee is due on ${fmtDate(due)}. ${when} You can pay in your portal at ${PORTAL_LOGIN}.`
 }
 
+async function whereIsMyStall(vendorId: string): Promise<string> {
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not load your application just now. Please try again shortly.'
+  const alloc = parseAllocation(row.admin_notes || '')
+  if (!alloc.stall) {
+    return `Your stall has not been allocated yet, ${row.contact_name || 'you'} will get it once your payment is confirmed. You can check your portal at ${PORTAL_LOGIN} for updates.`
+  }
+  const geo = STALL_LIST.find((s) => s.code === alloc.stall)
+  const zone = geo ? TYPE_META[geo.type]?.label : null
+  const zoneLine = zone ? ` in the ${zone} zone` : ''
+  return `Your stall is ${alloc.stall}${zoneLine}. You can see it on the map in your portal at ${PORTAL_LOGIN}.`
+}
+
+async function reportIssue(session: VendorSession, args: { issue_type?: string; description?: string }): Promise<string> {
+  const vendorId = session.vendorId!
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not load your application just now. Please try again shortly.'
+  const type = (args?.issue_type || 'other').trim()
+  const description = (args?.description || '').trim()
+  if (!description) return 'Tell me a bit more about what is going wrong so I can record it properly.'
+
+  const category = ['payment', 'portal', 'documents', 'stall'].includes(type) ? type : 'other'
+  const note = `[${category.toUpperCase()}] ${description}`
+
+  // Self-service guidance for the common categories, while still logging the issue
+  // so the team sees it if the vendor needs more help.
+  let guidance = ''
+  if (category === 'payment') {
+    guidance = `For payment problems, the fastest fix is usually in your portal at ${PORTAL_LOGIN} under Payments. If the gateway is failing, try a different card or clear your browser.`
+  } else if (category === 'portal') {
+    guidance = `For login or portal issues, try a password reset at ${PORTAL_LOGIN} first. If that does not work, I have logged this for the team.`
+  } else if (category === 'documents') {
+    guidance = `You can upload your documents in your portal at ${PORTAL_LOGIN} under Documents. Make sure each file is under 10MB and is a PDF or image.`
+  } else if (category === 'stall') {
+    guidance = `I can check your stall allocation for you — just ask "where is my stall".`
+  }
+
+  await updatePortalState(vendorId, (s) => ({
+    ...s,
+    support: [...(s.support || []), { id: randomUUID(), from: 'vendor' as const, body: note, at: new Date().toISOString() }],
+  }))
+
+  // Notify owners for non-self-service or serious issues, but not for routine guidance.
+  if (category === 'other' || category === 'stall') {
+    await notifyOwners({
+      event: 'vendor_support_message',
+      body: `ISSUE REPORTED via WhatsApp\nBusiness (on file): ${row.business_name}\nType: ${category}\nNote: "${description.slice(0, 240)}"`,
+      audience: 'all',
+      vendorId,
+    }).catch(() => {})
+  }
+
+  return guidance
+    ? `I have noted that: "${description}". ${guidance}`
+    : `I have noted that: "${description}". The team will follow up with you here if needed.`
+}
+
 // Taona 2026-07-29, verbatim: "anytime a person text bot to withdraw or cancel
 // it should ask why if its not mentioned, and then mentioned i will withdraw u
 // now, confirm and thnen it does it then sends an email to them, samreen and
@@ -636,6 +712,8 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'request_stall_change': content = await requestStallChange(session, (args as { requested_tier?: string })?.requested_tier || ''); break
       case 'get_payment_due_date': content = await getPaymentDueDate(session.vendorId!); break
       case 'withdraw_application': content = await withdrawSelf(session, (args as { reason?: string; confirmed?: boolean })); break
+      case 'where_is_my_stall': content = await whereIsMyStall(session.vendorId!); break
+      case 'report_issue': content = await reportIssue(session, args as { issue_type?: string; description?: string }); break
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
         deferred = getInvoiceDeferred(session)
