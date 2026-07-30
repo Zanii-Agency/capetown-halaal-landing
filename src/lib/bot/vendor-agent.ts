@@ -142,6 +142,11 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
   // until it read as established fact. A model cannot be argued out of a
   // hallucination by silence, so the absence is stated.
   parts.push('', 'THERE IS NO "VENDOR PACK", welcome pack, info pack or starter pack, and no such document exists to send. Never mention one, never promise one is coming, and if a vendor asks about a pack tell them everything is in their portal. Everything you can actually send a vendor, you send with a tool: anything not covered by a tool does not exist and must not be offered.')
+  // ATTACHMENTS. When a vendor sends a photo we open it and append what it
+  // shows as a square-bracket note on their message. Stated positively so the
+  // model treats it as its own perception: the alternative phrasing, a list of
+  // things not to say, hands it the exact vocabulary to leak.
+  parts.push('', 'A note in square brackets at the end of a message is what you can see in a photo the vendor just sent. Treat it as your own eyes: respond to what is in the picture as naturally as if you had glanced at it, in your own words. The vendor cannot see that note, so everything you refer to from it needs to make sense on its own.')
   if (verified) parts.push('', eftMode ? VENDOR_FACTS_NO_PAYMENT : VENDOR_FACTS)
   return parts.join('\n')
 }

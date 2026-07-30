@@ -26,6 +26,7 @@ import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
 import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
 import { runMasterAgent } from '@/lib/bot/master-agent'
+import { seeImage } from '@/lib/bot/see-image'
 import { resolveVendorSession, confirmVendorVerification } from '@/lib/bot/vendor-session'
 import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
@@ -465,20 +466,58 @@ async function handleInbound(msg: {
     return
   }
 
-  if (msg.type !== 'text' || !msg.text.trim()) {
-    // Non-text inbound (image / document / sticker). The media bytes are already
-    // captured to vendor-docs by logMessage above. Resolve who sent it so a known
-    // vendor gets a warm "got your document, attached it to your application"
-    // acknowledgement instead of the generic tour. Never deflect a document.
+  // MEDIA INBOUND. Two separate failures lived here, both hit by one real
+  // message: Zhaahira sent a screenshot of a payment link that would not open,
+  // captioned "Slms the link doesn't work", and got back "got your document and
+  // it is on your application."
+  //
+  // 1. Her CAPTION was thrown away. parseInbound already folds a media caption
+  //    into msg.text, so the question was right there, but this branch tested
+  //    msg.type and short-circuited before anything could read it. A captioned
+  //    image is a message with a picture attached, not a silent upload.
+  // 2. The IMAGE was never opened. Taona: "its suppose to scan the image
+  //    quietly to understand context". So we look, and hand what we see to the
+  //    agent as context rather than narrating it back at the vendor.
+  //
+  // Only genuinely wordless, unreadable media still gets the plain ack.
+  if (msg.type !== 'text') {
     const mediaSender = await resolveIdentity(e164)
-    if (mediaSender.role === 'vendor' && msg.type !== 'sticker') {
-      const ack = mediaSender.firstName
-        ? `Thanks ${mediaSender.firstName}, got your document and it is on your application. The team will take a look.`
-        : `Thanks, got your document and it is on your application. The team will take a look.`
-      const res = await sendText(e164, ack)
-      await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+    const caption = msg.text.trim()
+
+    const seen = msg.media?.kind === 'image'
+      ? await seeImage(msg.media.id, msg.media.mimeType)
+      : null
+
+    if (seen) {
+      // Context for the agent, never shown verbatim to the vendor.
+      const note = seen.isPaymentProof
+        ? `[They attached an image. It looks like a proof of payment: ${seen.description} Do not confirm the payment as received or settled: say it has been passed to the team to check against the account, and answer anything else they asked.]`
+        : seen.isProblem
+          ? `[They attached a screenshot showing a problem: ${seen.description} Help them with THIS problem directly. Do not thank them for a document.]`
+          : `[They attached an image: ${seen.description}]`
+      msg.text = caption ? `${caption}\n\n${note}` : note
+    } else if (caption) {
+      // Vision was unavailable or the format unreadable, but they still wrote
+      // something. Their words alone beat a canned acknowledgement.
+      msg.text = `${caption}\n\n[They also attached ${msg.media?.kind === 'image' ? 'an image' : 'a file'} which could not be read automatically.]`
+    } else {
+      // Nothing to go on: no words, nothing legible. The original behaviour.
+      if (mediaSender.role === 'vendor' && msg.type !== 'sticker') {
+        const ack = mediaSender.firstName
+          ? `Thanks ${mediaSender.firstName}, got your document and it is on your application. The team will take a look.`
+          : `Thanks, got your document and it is on your application. The team will take a look.`
+        const res = await sendText(e164, ack)
+        await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+        return
+      }
+      await sendText(e164, "Hi! I'm the Young at Heart Festival assistant. Ask me about tickets, vendors, directions, or anything about the festival. Type 'talk to human' to reach our support team. Reply STOP to unsubscribe.")
       return
     }
+    // Fall through: this is now a normal message and takes the normal path,
+    // including the handover gates and the vendor agent below.
+  }
+
+  if (!msg.text.trim()) {
     await sendText(e164, "Hi! I'm the Young at Heart Festival assistant. Ask me about tickets, vendors, directions, or anything about the festival. Type 'talk to human' to reach our support team. Reply STOP to unsubscribe.")
     return
   }
