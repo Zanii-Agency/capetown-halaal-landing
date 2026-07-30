@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { visiblePaymentStatus } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
+import { hiddenFromOwner } from '@/lib/audit-scope'
 import { Vendor360 } from './Vendor360'
 
 export const dynamic = 'force-dynamic'
@@ -43,6 +45,10 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
     .eq('id', id)
     .single()
   if (!app) notFound()
+
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(id)) redirect('/admin/vendors')
+  const hide = hidesEftContent(user.email)
 
   const a = app as Record<string, unknown>
   const portalRaw = parsePortalState((a.admin_notes as string) || '')
@@ -141,8 +147,18 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   }
 
   communications.sort((a, b) => +new Date(b.at) - +new Date(a.at))
+  const visibleComms = stripEftMessages(communications, (m) => m.body, hide, {
+    scope,
+    identity: { phone: phoneRaw, email: emailRaw },
+    at: (m) => m.at,
+  })
 
-  const events = (eventsRes.data || []) as AuditEvent[]
+  const events = ((eventsRes.data || []) as AuditEvent[]).filter((e) =>
+    !hiddenFromOwner({ event_type: e.event_type, note: e.note }, true),
+  )
+
+  // Do not ship the internal admin_notes blob to the browser.
+  const { admin_notes: _adminNotes, ...vendorSafe } = a as Record<string, unknown>
 
   const approvedAt = a.approved_at as string | null | undefined
   const daysSinceApproval = approvedAt
@@ -159,10 +175,10 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   return (
     <Vendor360
       initialData={{
-        vendor: a,
+        vendor: vendorSafe,
         stall,
         portal,
-        communications,
+        communications: visibleComms,
         events,
         stats,
       }}

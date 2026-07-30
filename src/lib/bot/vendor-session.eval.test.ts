@@ -178,7 +178,7 @@ test('9. request_stall_change — writes a pending request scoped to the session
   const { data } = await db.from('vendor_applications').select('admin_notes').eq('id', A).single()
   const req = parsePortalState((data as { admin_notes: string }).admin_notes).stallChangeRequest
   assert.equal(req?.status, 'pending')
-  assert.match(req?.requestedTier || '', /4x2m/)
+  assert.equal(req?.requestedTier, 'marquee-table-double-4x2')
   // And it never wrote onto B.
   const { data: bRow } = await db.from('vendor_applications').select('admin_notes').eq('id', B).single()
   assert.equal(parsePortalState((bRow as { admin_notes: string }).admin_notes).stallChangeRequest, undefined)

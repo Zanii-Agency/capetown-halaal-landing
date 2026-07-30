@@ -15,6 +15,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
 import { cancelStaffBadgeOrder } from '@/lib/woocommerce'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   if (!gate.ok) return gate.response
   const { user } = gate
   const db = createAdminClient()
+
+  // Staff-badge operations on a master-lane vendor must not be visible or
+  // actionable by the festival owner.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const { data: appRow } = await db.from('vendor_applications').select('admin_notes').eq('id', id).maybeSingle()
   const state = parsePortalState((appRow?.admin_notes as string) || '')

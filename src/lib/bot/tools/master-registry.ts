@@ -14,11 +14,12 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
-import { parseAllocation, tierLabel } from '@/lib/stalls'
+import { parseAllocation, tierLabel, STALL_LIST, STALL_CAPACITY, TYPE_META, type StallStatus } from '@/lib/stalls'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { computePaymentDue, fmtDate } from '@/lib/exhibitor-paygate'
 import { segmentCount, SEGMENT_LABELS, type SegmentKey } from '@/lib/bot/segments'
 import { hasEftMarker, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
+import { pendingStallChangeRequests } from '@/lib/stall-change-action'
 
 export const MASTER_TOOL_DEFS = [
   {
@@ -56,6 +57,42 @@ export const MASTER_TOOL_DEFS = [
       "List vendors actively engaging the EFT payment lane, with timestamps, most recent first: who OPENED / revealed the bank details (a signal they are about to pay), who UPLOADED a proof (awaiting Taona's reconcile), and who is on the Master lane. Call whenever Taona asks who opened or revealed the bank details, who is about to pay, who uploaded proof, who paid recently / last night on EFT, or what is happening on the EFT or Master lane.",
     strict: true,
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
+    name: 'pending_stall_changes',
+    description:
+      'List every vendor with a pending stall-size or stall-position change request, showing current tier, requested tier, reason, and move details. Call when Taona asks what stall changes are waiting, who wants a different size, or who asked to move position.',
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
+    name: 'stall_occupancy',
+    description:
+      'Return the full stall occupancy map: which stalls are allocated/held/reserved/blocked and to which vendor, and which are still available. Call when Taona asks what stalls are free, who is on a specific stall, or for a floor-plan summary.',
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
+    name: 'vendor_documents',
+    description:
+      "List a single vendor's uploaded documents from their portal state: type, filename, status (pending/approved/rejected), and upload time. Call when Taona asks what docs a vendor uploaded, whether their documents are approved, or what is missing.",
+    strict: true,
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: { vendor_id: { type: 'string', description: 'The vendor_id returned by find_vendors.' } },
+      required: ['vendor_id'],
+    },
+  },
+  {
+    name: 'vendor_staff',
+    description:
+      "List a single vendor's registered staff members from their portal state: name, role, phone, ID number, vehicle registration, and badge order status. Call when Taona asks who a vendor registered, how many staff passes they have, or whether badges were ordered.",
+    strict: true,
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: { vendor_id: { type: 'string', description: 'The vendor_id returned by find_vendors.' } },
+      required: ['vendor_id'],
+    },
   },
 ] as const
 
@@ -263,6 +300,64 @@ async function eftLaneActivity(): Promise<string> {
   return `${acts.length} vendor${acts.length === 1 ? '' : 's'} active on the EFT lane:\n` + acts.map(line).join('\n')
 }
 
+// Build the occupancy map from every vendor's stall marker. Codes not held by
+// anyone are available. Held/allocated/reserved/blocked are all shown so Taona
+// can see the real floor state.
+async function stallOccupancy(): Promise<string> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('vendor_applications')
+    .select('business_name, admin_notes')
+    .limit(2000)
+  const held = new Map<string, { vendor: string; status: StallStatus }>()
+  for (const r of (data || []) as Array<{ business_name: string | null; admin_notes: string | null }>) {
+    const alloc = parseAllocation(r.admin_notes)
+    if (!alloc.stalls.length) continue
+    for (const code of alloc.stalls) {
+      held.set(code, { vendor: r.business_name || 'Unnamed', status: alloc.status })
+    }
+  }
+
+  const typeOrder: Array<'FT' | 'FS' | 'TS' | 'BS'> = ['FT', 'FS', 'TS', 'BS']
+  const lines: string[] = []
+  for (const type of typeOrder) {
+    const stalls = STALL_LIST.filter((s) => s.type === type)
+    const free = stalls.filter((s) => !held.has(s.code)).length
+    lines.push(`${TYPE_META[type].label} (${type}): ${free}/${stalls.length} free`)
+    for (const s of stalls) {
+      const h = held.get(s.code)
+      if (h) lines.push(`  ${s.code}: ${h.status} — ${h.vendor}`)
+    }
+  }
+  const totalFree = STALL_LIST.length - held.size
+  lines.unshift(`Total stalls: ${STALL_LIST.length}, ${held.size} held, ${totalFree} available.`)
+  return lines.join('\n')
+}
+
+async function vendorDocuments(vendorId: string): Promise<string> {
+  const db = createAdminClient()
+  const { data: v } = await db.from('vendor_applications').select('business_name, admin_notes').eq('id', vendorId).single()
+  if (!v) return `No vendor with id ${vendorId}.`
+  const docs = parsePortalState(v.admin_notes).docs || []
+  if (!docs.length) return `${v.business_name || 'Vendor'} has no documents uploaded yet.`
+  return `${v.business_name || 'Vendor'} documents:\n` + docs.map((d) =>
+    `- ${d.type}${d.name ? ` (${d.name})` : ''}: ${d.status}${d.note ? ` — note: ${d.note}` : ''}, uploaded ${d.uploaded_at.slice(0, 16).replace('T', ' ')}`
+  ).join('\n')
+}
+
+async function vendorStaff(vendorId: string): Promise<string> {
+  const db = createAdminClient()
+  const { data: v } = await db.from('vendor_applications').select('business_name, admin_notes').eq('id', vendorId).single()
+  if (!v) return `No vendor with id ${vendorId}.`
+  const staff = parsePortalState(v.admin_notes).staff || []
+  if (!staff.length) return `${v.business_name || 'Vendor'} has no staff registered yet.`
+  return `${v.business_name || 'Vendor'} staff (${staff.length}):\n` + staff.map((s) => {
+    const badge = s.revoked_at ? 'revoked' : s.wc_order_id ? 'ordered' : 'pending'
+    const checkedIn = s.checked_in_at ? ', checked in' : ''
+    return `- ${s.name}${s.role ? ` (${s.role})` : ''}: ${s.id_number}${s.phone ? `, ${s.phone}` : ''}${s.vehicle_reg ? `, vehicle ${s.vehicle_reg}` : ''} — badge ${badge}${checkedIn}`
+  }).join('\n')
+}
+
 /**
  * Execute a master tool. THE WALL: refuses unless role === 'master'. Every tool
  * here reads across vendors, so a non-master caller (festival_owner, vendor,
@@ -283,6 +378,10 @@ export async function executeMasterTool(role: string, name: string, args: unknow
       case 'pipeline_numbers': return { content: await pipelineNumbers() }
       case 'vendor_conversation': return { content: await vendorConversation((args as { vendor_id?: string })?.vendor_id || '', ownerScoped) }
       case 'eft_lane_activity': return { content: await eftLaneActivity() }
+      case 'pending_stall_changes': return { content: await pendingStallChangeRequests() }
+      case 'stall_occupancy': return { content: await stallOccupancy() }
+      case 'vendor_documents': return { content: await vendorDocuments((args as { vendor_id?: string })?.vendor_id || '') }
+      case 'vendor_staff': return { content: await vendorStaff((args as { vendor_id?: string })?.vendor_id || '') }
       default: return { content: `Unknown tool: ${name}`, isError: true }
     }
   } catch (e) {

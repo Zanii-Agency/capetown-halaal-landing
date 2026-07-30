@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
+import { isPublicVendor } from '@/lib/public-vendor'
 
 // Logos live in the public vendor-assets bucket (same bucket + public-URL shape
 // the exhibitor profile + marketing templates use). Law 2: a logo is a vendor's
@@ -38,7 +39,7 @@ export async function GET(
 
     const { data, error } = await supabase
       .from('vendor_applications')
-      .select('id, business_name, business_description, website, instagram, admin_notes')
+      .select('id, business_name, business_description, website, instagram, admin_notes, paid_at')
       .eq('status', 'approved')
       .contains('product_categories', [sectorName])
       .order('business_name', { ascending: true })
@@ -55,9 +56,12 @@ export async function GET(
       website: string | null
       instagram: string | null
       admin_notes: string | null
+      paid_at: string | null
     }
 
-    const vendors = ((data || []) as Row[]).map((v) => {
+    const vendors = ((data || []) as Row[])
+      .filter((v) => isPublicVendor({ admin_notes: v.admin_notes, paid_at: v.paid_at }))
+      .map((v) => {
       const profile = parsePortalState(v.admin_notes || '').profile || {}
       const logoUrl = publicLogoUrl(profile.logo_path)
       // has_profile mirrors the public detail-page gate (logo + a write-up):

@@ -6,7 +6,9 @@
 // and template messages (it never sends twice).
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState, updatePortalState } from '@/lib/portal-state'
+import { parsePortalState, updatePortalState, updatePortalStateImpl, type PortalState } from '@/lib/portal-state'
+import { withOwnerCutoff } from '@/lib/owner-view'
+import { earliestEftTimestamp, hasEftMarker } from '@/lib/eft'
 import { sendEmail } from '@/lib/email/resend'
 import { VendorPaymentConfirmation } from '@/lib/email/templates/VendorPaymentConfirmation'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
@@ -327,24 +329,44 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
   }
 
   // Record cumulative paid + this ref in the marker (admin UI + portal read it).
-  await updatePortalState(input.applicationId, (s) => {
-    const prevRefs: string[] = Array.isArray((s.payment as { refs?: unknown } | undefined)?.refs)
-      ? ((s.payment as { refs?: string[] }).refs as string[])
-      : []
-    return {
-      ...s,
-      payment: {
-        ...(s.payment || {}),
-        status: 'paid',
-        amount: newCumulative,
-        method: input.method,
-        provider_ref: ref || s.payment?.provider_ref,
-        refs: ref ? Array.from(new Set([...prevRefs, ref])) : prevRefs,
-        paid_at: s.payment?.paid_at || paidAtIso,
-      },
-      stage: s.stage === 'show_ready' ? 'show_ready' : 'paid',
-    }
-  })
+  // Build the next state in memory so we can also stamp the owner-view cutoff
+  // when an EFT-lane vendor is reconciled back through a normal channel. The
+  // cutoff hides every EFT-era message from the festival owner.
+  const prevRefs: string[] = Array.isArray((before.payment as { refs?: unknown } | undefined)?.refs)
+    ? ((before.payment as { refs?: string[] }).refs as string[])
+    : []
+  const nextState: PortalState = {
+    ...before,
+    payment: {
+      ...(before.payment || {}),
+      status: 'paid',
+      amount: newCumulative,
+      method: input.method,
+      provider_ref: ref || before.payment?.provider_ref,
+      refs: ref ? Array.from(new Set([...prevRefs, ref])) : prevRefs,
+      paid_at: before.payment?.paid_at || paidAtIso,
+    },
+    stage: before.stage === 'show_ready' ? 'show_ready' : 'paid',
+  }
+  let nextAdminNotes = updatePortalStateImpl(app.admin_notes as string, nextState)
+
+  // If this is the FIRST paid transition and the vendor was on the master lane,
+  // hide the entire EFT-era conversation from the festival owner. The cutoff is
+  // set to the earliest EFT touch (revealed details / proof upload / collected),
+  // falling back to the settlement time if no earlier timestamp exists.
+  const wasMasterLane =
+    before.payment?.status === 'collected'
+    || ['eft', 'manual_card'].includes(String(before.payment?.method || ''))
+    || hasEftMarker(app.admin_notes as string)
+  if (wonFirst && paymentAlertAudience(input.method) === 'all' && wasMasterLane) {
+    const cutAt = earliestEftTimestamp(before) || paidAtIso
+    nextAdminNotes = withOwnerCutoff(nextAdminNotes, cutAt)
+  }
+
+  await admin
+    .from('vendor_applications')
+    .update({ admin_notes: nextAdminNotes })
+    .eq('id', input.applicationId)
 
   // Send-gating: `silent` suppresses sends for backfill/corrections. Both a
   // first payment and a top-up send a confirmation for THIS payment's amount.

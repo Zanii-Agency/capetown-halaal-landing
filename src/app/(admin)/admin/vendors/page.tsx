@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
-import { visiblePaymentStatus } from '@/lib/eft'
+import { visiblePaymentStatus, vendorInOwnerScope, isEftAdmin } from '@/lib/eft'
 import { parseVendorExtras } from '@/lib/vendor-extras'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { VendorsList, type VendorRow } from '@/components/admin/vendors/VendorsList'
@@ -27,53 +27,56 @@ export default async function VendorsListPage() {
   const { data: apps } = await admin
     .from('vendor_applications')
     .select(
-      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, contract_signed_at, contract_pdf_path, docs_complete_at, created_at'
+      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, paid_at, contract_signed_at, contract_pdf_path, docs_complete_at, created_at'
     )
     .eq('status', 'approved')
     .order('business_name', { ascending: true })
 
-  const rows: VendorRow[] = (apps || []).map((a) => {
-    const notes = (a.admin_notes as string) || ''
-    const { stall, status: stallStatus } = parseAllocation(notes)
-    const portal = parsePortalState(notes)
-    const paymentStatus = visiblePaymentStatus(portal.payment?.status, user.email)
-    const paymentAmount = portal.payment?.amount || null
-    const docsCount = (portal.docs || []).length
-    const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)
-    const extras = parseVendorExtras(a.special_requirements as string | null)
-    // Prefer the raw stall-type label the vendor chose; fall back to the tier slug label.
-    const stallType = extras.stallType || tierLabel(a.preferred_booth_tier as string)
+  const viewerIsEftAdmin = isEftAdmin(user.email)
+  const rows: VendorRow[] = (apps || [])
+    .filter((a) => viewerIsEftAdmin || vendorInOwnerScope(a.admin_notes as string | null, a.paid_at as string | null))
+    .map((a) => {
+      const notes = (a.admin_notes as string) || ''
+      const { stall, status: stallStatus } = parseAllocation(notes)
+      const portal = parsePortalState(notes)
+      const paymentStatus = visiblePaymentStatus(portal.payment?.status, user.email)
+      const paymentAmount = portal.payment?.amount || null
+      const docsCount = (portal.docs || []).length
+      const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)
+      const extras = parseVendorExtras(a.special_requirements as string | null)
+      // Prefer the raw stall-type label the vendor chose; fall back to the tier slug label.
+      const stallType = extras.stallType || tierLabel(a.preferred_booth_tier as string)
 
-    const blockers: string[] = []
-    if (paymentStatus !== 'paid' && paymentStatus !== 'waived') blockers.push('Fee unpaid')
-    if (!contractSigned) blockers.push('Contract unsigned')
-    if (docsCount === 0) blockers.push('No docs')
-    if (!stall) blockers.push('No stall allocated')
+      const blockers: string[] = []
+      if (paymentStatus !== 'paid' && paymentStatus !== 'waived') blockers.push('Fee unpaid')
+      if (!contractSigned) blockers.push('Contract unsigned')
+      if (docsCount === 0) blockers.push('No docs')
+      if (!stall) blockers.push('No stall allocated')
 
-    return {
-      id: a.id as string,
-      business_name: (a.business_name as string) || 'Unnamed vendor',
-      contact_name: (a.contact_name as string) || null,
-      email: (a.email as string) || null,
-      phone: (a.phone as string) || null,
-      categories: (a.product_categories as string[]) || [],
-      tier_label: tierLabel(a.preferred_booth_tier as string),
-      stall_type: stallType,
-      appliances: extras.appliances,
-      appliance_details: extras.applianceDetails,
-      uses_gas: extras.usesGas,
-      stall: stall,
-      stall_status: stall ? stallStatus : null,
-      payment_status: paymentStatus,
-      payment_amount: paymentAmount,
-      docs_count: docsCount,
-      contract_signed: contractSigned,
-      docs_complete_at: (a.docs_complete_at as string) || null,
-      contract_signed_at: (a.contract_signed_at as string) || null,
-      blockers,
-      created_at: (a.created_at as string) || '',
-    }
-  })
+      return {
+        id: a.id as string,
+        business_name: (a.business_name as string) || 'Unnamed vendor',
+        contact_name: (a.contact_name as string) || null,
+        email: (a.email as string) || null,
+        phone: (a.phone as string) || null,
+        categories: (a.product_categories as string[]) || [],
+        tier_label: tierLabel(a.preferred_booth_tier as string),
+        stall_type: stallType,
+        appliances: extras.appliances,
+        appliance_details: extras.applianceDetails,
+        uses_gas: extras.usesGas,
+        stall: stall,
+        stall_status: stall ? stallStatus : null,
+        payment_status: paymentStatus,
+        payment_amount: paymentAmount,
+        docs_count: docsCount,
+        contract_signed: contractSigned,
+        docs_complete_at: (a.docs_complete_at as string) || null,
+        contract_signed_at: (a.contract_signed_at as string) || null,
+        blockers,
+        created_at: (a.created_at as string) || '',
+      }
+    })
 
   if (rows.length === 0) {
     return (

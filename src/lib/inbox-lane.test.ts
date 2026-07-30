@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import { buildLaneScope, phoneKey, hidesEftContent, stripEftMessages, type LaneVendorRow } from './inbox-lane'
 import { updatePortalStateImpl } from './portal-state'
 import { withNoEftMarker } from './eft'
+import { withOwnerCutoff } from './owner-view'
 
 const v = (o: Partial<LaneVendorRow> = {}): LaneVendorRow =>
   ({ id: 'id-1', phone: '0760712578', email: 'chef@vendor.co.za', admin_notes: null, paid_at: null, ...o })
@@ -233,4 +234,26 @@ test('the EFT admin still sees master-only senders', () => {
   const s = buildLaneScope([], true, true)   // isEftAdmin = true
   assert.equal(s.unrestricted, true)
   assert.equal(s.blocksEmail('ibreply@absa.co.za'), false)
+})
+
+// ---------------------------------------------------------------------------
+// Owner-view cutoff (⟦OWNERCUT:<iso>⟧) is enforced inside the scope so every
+// reader that uses hidesMessage inherits it automatically.
+// ---------------------------------------------------------------------------
+
+test('hidesMessage withholds messages at or after the owner cutoff', () => {
+  const cut = '2026-07-28T08:00:00.000Z'
+  const notes = withOwnerCutoff('note', cut)
+  const s = buildLaneScope([v({ admin_notes: notes })], false, false)
+  // The vendor is in her scope after reconciliation, so blocks() is false.
+  assert.equal(s.blocksPhone('07607112578'), false)
+  // But the EFT-era conversation from the cutoff onward is master-first.
+  assert.equal(s.hidesMessage({ phone: '0760712578' }, '2026-07-28T07:59:59.000Z'), false, 'before cutoff')
+  assert.equal(s.hidesMessage({ phone: '0760712578' }, cut), true, 'exactly at cutoff')
+  assert.equal(s.hidesMessage({ phone: '0760712578' }, '2026-07-29T09:00:00.000Z'), true, 'after cutoff')
+})
+
+test('the EFT admin bypasses the owner cutoff', () => {
+  const s = buildLaneScope([v({ admin_notes: withOwnerCutoff('note', '2026-07-28T08:00:00.000Z') })], false, true)
+  assert.equal(s.hidesMessage({ phone: '0760712578' }, '2026-07-29T09:00:00.000Z'), false)
 })

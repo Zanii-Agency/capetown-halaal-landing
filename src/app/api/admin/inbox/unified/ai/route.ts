@@ -197,7 +197,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
   const hide = hidesEftContent(gate.adminUser.email)
-  const turns = stripEftMessages(await loadThread(db, body.phone, body.email), (t) => t.text, hide)
+  const turns = stripEftMessages(await loadThread(db, body.phone, body.email), (t) => t.text, hide, {
+    scope,
+    identity: { phone: body.phone, email: body.email },
+    at: (t) => t.at,
+  })
   const eftOn = await getEftMode()
   const prompt = promptFor(body.action, turns, body.draft || '', eftOn, body.channel ?? (body.phone ? 'whatsapp' : 'email'))
   if ('error' in prompt) return NextResponse.json({ ok: false, message: prompt.error }, { status: 200 })

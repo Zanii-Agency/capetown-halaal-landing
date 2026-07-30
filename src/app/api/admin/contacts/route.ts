@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -45,15 +46,17 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const db = createAdminClient()
+  const scope = await laneScopeFor(user.email)
   const contacts: Contact[] = []
 
   // 1) 2026 vendor applicants
   const { data: vendors } = await db
     .from('vendor_applications')
-    .select('email, contact_name, business_name, phone, created_at')
+    .select('id, email, contact_name, business_name, phone, created_at')
     .order('created_at', { ascending: false })
   for (const v of vendors || []) {
     if (!v.email) continue
+    if (scope.blocks({ applicationId: v.id, email: v.email, phone: v.phone })) continue
     contacts.push({
       email: v.email.toLowerCase(),
       name: v.contact_name || v.business_name || null,

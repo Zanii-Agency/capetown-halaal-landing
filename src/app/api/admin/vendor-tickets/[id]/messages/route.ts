@@ -136,5 +136,9 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
   // Oldest first so the conversation reads top-to-bottom (newest at the bottom).
   comms.sort((a, b) => +new Date(a.at) - +new Date(b.at))
 
-  return NextResponse.json({ messages: stripEftMessages(comms, (m) => m.body, hide) })
+  return NextResponse.json({ messages: stripEftMessages(comms, (m) => m.body, hide, {
+    scope,
+    identity: { phone, email },
+    at: (m) => m.at,
+  }) })
 }

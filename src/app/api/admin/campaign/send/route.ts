@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { render } from '@react-email/components'
 import { Resend } from 'resend'
+import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { Campaign, type CampaignProps } from '@/lib/email/templates/Campaign'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { requireOperator } from '@/lib/admin-rbac'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 
 export const maxDuration = 300
 
@@ -14,16 +16,21 @@ const PACE_MS = 300 // ~3.3 sends/sec, comfortably under Resend's 10/sec Pro rat
 
 type Audience = 'vendors' | 'vendors_pending' | 'vendors_approved' | 'buyers' | 'test'
 
+type AuthContext = { ok: true; viewerEmail?: string | null; isCron: boolean } | { ok: false; res: NextResponse }
+
 /* ----- auth: Bearer CRON_SECRET (terminal) OR admin session (portal) ----- */
-async function authorize(request: NextRequest): Promise<{ ok: true } | { ok: false; res: NextResponse }> {
+async function authorize(request: NextRequest): Promise<AuthContext> {
   // Cron branch (CRON_SECRET bearer) left untouched: machine-to-machine sends.
-  if (verifyCronAuth(request.headers.get('authorization'))) return { ok: true }
+  if (verifyCronAuth(request.headers.get('authorization'))) return { ok: true, isCron: true }
 
   // Admin branch: this SENDS bulk email, so it must be role-gated (owner/operator),
   // not membership-only. Centralised through requireOperator.
   const gate = await requireOperator()
   if (!gate.ok) return { ok: false, res: gate.response }
-  return { ok: true }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return { ok: true, viewerEmail: user?.email ?? null, isCron: false }
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -34,7 +41,11 @@ const firstName = (n?: string | null) => {
 
 type Recipient = { email: string; name: string; id?: string; notes?: string }
 
-async function getRecipients(audience: Audience, testTo: string[]): Promise<Recipient[]> {
+async function getRecipients(
+  audience: Audience,
+  testTo: string[],
+  opts: { restrict?: boolean } = {},
+): Promise<Recipient[]> {
   const admin = createAdminClient()
   if (audience === 'test') return testTo.map((e) => ({ email: e, name: 'there' }))
 
@@ -43,12 +54,19 @@ async function getRecipients(audience: Audience, testTo: string[]): Promise<Reci
     return (data || []).map((r) => ({ email: r.email, name: firstName(r.name) }))
   }
 
-  // Vendor audiences carry id + admin_notes so a campaign can durably mark who it reached.
-  let q = admin.from('vendor_applications').select('id, email, contact_name, admin_notes').order('email', { ascending: true })
+  // Vendor audiences carry id + admin_notes + paid_at so a campaign can durably
+  // mark who it reached AND so we can keep master-lane vendors out of the
+  // festival owner's bulk sends.
+  let q = admin
+    .from('vendor_applications')
+    .select('id, email, contact_name, admin_notes, paid_at')
+    .order('email', { ascending: true })
   if (audience === 'vendors_pending') q = q.in('status', ['pending', 'info_requested'])
   else if (audience === 'vendors_approved') q = q.eq('status', 'approved')
   const { data } = await q
-  return (data || []).map((r) => ({ id: r.id, email: r.email, name: firstName(r.contact_name), notes: r.admin_notes || '' }))
+  return (data || [])
+    .filter((r) => !opts.restrict || vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null))
+    .map((r) => ({ id: r.id, email: r.email, name: firstName(r.contact_name), notes: r.admin_notes || '' }))
 }
 
 /** Dedupe by lowercased email, drop invalids. */
@@ -69,6 +87,7 @@ const personalize = (s: string | undefined, name: string) => (s ? s.replace(/\{n
 export async function POST(request: NextRequest) {
   const auth = await authorize(request)
   if (!auth.ok) return auth.res
+  const restrict = !auth.isCron && !isEftAdmin(auth.viewerEmail ?? null)
 
   let body: {
     audience: Audience
@@ -96,7 +115,7 @@ export async function POST(request: NextRequest) {
   // This is the source of truth (immune to local-file/ledger drift). excludeEmails remains as a belt-and-braces extra.
   const markNote = (body.markNote || '').trim()
   const exclude = new Set((body.excludeEmails || []).map((e) => (e || '').trim().toLowerCase()))
-  const allRecipients = clean(await getRecipients(audience, testTo))
+  const allRecipients = clean(await getRecipients(audience, testTo, { restrict }))
   const recipients = allRecipients.filter(
     (r) =>
       !exclude.has(r.email) &&

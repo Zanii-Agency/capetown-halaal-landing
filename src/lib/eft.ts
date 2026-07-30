@@ -17,7 +17,7 @@
 
 import { parseAllocation } from '@/lib/stalls'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState } from '@/lib/portal-state'
+import { parsePortalState, type PortalState } from '@/lib/portal-state'
 
 const EFT_MARKER = '⟦EFT⟧'
 // Bare token; cannot collide with ⟦PORTAL:<base64>⟧ or ⟦STALL:...⟧ (different
@@ -188,12 +188,13 @@ export function getEftBankDetails(): EftBankDetails {
 
 /** GLOBAL EFT mode. When ON, EVERY vendor sees EFT details (Yoco hidden) and
  *  every vendor's comms route to the EFT tab. Read order: env EFT_MODE forces it
- *  on (crisis override, needs a deploy), else the latest persisted toggle from
- *  the /admin/eft tab (site_events, no DDL, instant). A vendor is "in the lane"
- *  when this is ON *or* they carry the per-vendor ⟦EFT⟧ marker. Server-only. */
+ *  on or off (crisis override / test harness), else the latest persisted toggle
+ *  from the /admin/eft tab (site_events, no DDL, instant). A vendor is "in the
+ *  lane" when this is ON *or* they carry the per-vendor ⟦EFT⟧ marker. Server-only. */
 export async function getEftMode(): Promise<boolean> {
   const env = (process.env.EFT_MODE || '').toLowerCase()
   if (env === '1' || env === 'true' || env === 'on' || env === 'yes') return true
+  if (env === '0' || env === 'false' || env === 'off' || env === 'no') return false
   try {
     const admin = createAdminClient()
     const { data } = await admin
@@ -536,6 +537,22 @@ export function eftReference(app: { id?: string | null; admin_notes?: string | n
   if (alloc.stall) return alloc.stall
   const id = (app.id || '').replace(/-/g, '')
   return id ? `CTH${id.slice(-6).toUpperCase()}` : 'CTH'
+}
+
+/** The earliest timestamp that proves this vendor touched the EFT lane:
+ *  revealing bank details, uploading a proof, or the operator marking the money
+ *  collected. Used to set the owner-view cutoff when the vendor is later
+ *  reconciled back through Yoco, so every EFT-era message stays hidden from the
+ *  festival owner. */
+export function earliestEftTimestamp(state: PortalState): string | null {
+  const p = state.payment
+  if (!p) return null
+  const candidates = [p.eft_revealed_at, p.eft_submitted_at, p.eft_collected_at].filter(
+    (s): s is string => typeof s === 'string' && s.length > 0,
+  )
+  if (candidates.length === 0) return null
+  candidates.sort() // ISO 8601 strings sort lexicographically
+  return candidates[0]
 }
 
 /** Holding message the bot sends to master-lane vendors instead of running the

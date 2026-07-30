@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker } from './eft'
+import { vendorInOwnerScope, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -300,4 +300,57 @@ test('an EFT-settled hand-over stays hidden', () => {
     payment: { status: 'paid', method: 'eft', amount: 3700 },
   })).toString('base64') + '⟧')
   assert.equal(vendorInOwnerScope(notes, '2026-07-20T00:00:00.000Z'), false)
+})
+
+// ---------------------------------------------------------------------------
+// earliestEftTimestamp drives the owner-view cutoff on reconciliation.
+// ---------------------------------------------------------------------------
+
+test('earliestEftTimestamp returns the earliest EFT touch', () => {
+  const state = parsePortalState(updatePortalStateImpl('note', {
+    v: 1,
+    payment: {
+      eft_revealed_at: '2026-07-28T10:00:00.000Z',
+      eft_submitted_at: '2026-07-27T09:00:00.000Z',
+      eft_collected_at: '2026-07-27T18:00:00.000Z',
+    },
+  }))
+  assert.equal(earliestEftTimestamp(state), '2026-07-27T09:00:00.000Z')
+})
+
+test('earliestEftTimestamp returns null when no EFT touch exists', () => {
+  assert.equal(earliestEftTimestamp(parsePortalState('note')), null)
+  assert.equal(earliestEftTimestamp(parsePortalState(updatePortalStateImpl('note', {
+    v: 1,
+    payment: { status: 'paid', method: 'yoco' },
+  }))), null)
+})
+
+test('earliestEftTimestamp handles a single touch and ignores empty strings', () => {
+  const state = parsePortalState(updatePortalStateImpl('note', {
+    v: 1,
+    payment: {
+      eft_collected_at: '2026-07-25T12:00:00.000Z',
+      eft_revealed_at: '',
+    },
+  }))
+  assert.equal(earliestEftTimestamp(state), '2026-07-25T12:00:00.000Z')
+})
+
+
+test('getEftMode env override forces the lane on or off without touching the DB', async () => {
+  const original = process.env.EFT_MODE
+  try {
+    for (const on of ['on', 'ON', '1', 'true', 'yes']) {
+      process.env.EFT_MODE = on
+      assert.equal(await getEftMode(), true, `${on} should force EFT mode on`)
+    }
+    for (const off of ['off', 'OFF', '0', 'false', 'no']) {
+      process.env.EFT_MODE = off
+      assert.equal(await getEftMode(), false, `${off} should force EFT mode off`)
+    }
+  } finally {
+    if (original === undefined) delete process.env.EFT_MODE
+    else process.env.EFT_MODE = original
+  }
 })

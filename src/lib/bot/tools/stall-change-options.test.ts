@@ -67,18 +67,21 @@ test('every offered tier has a real price to quote', () => {
 test('the decline note is dash-stripped at the source, so both legs are law-7 clean', () => {
   // The note reaches the vendor by WhatsApp (scrubbed) AND email (was not). It
   // is stripped once where it is read, so an admin-typed em-dash never ships.
-  const ROUTE = readFileSync(join(process.cwd(), 'src/app/api/admin/stall-changes/route.ts'), 'utf8')
-  const noteLine = ROUTE.slice(ROUTE.indexOf('const note = body.note'), ROUTE.indexOf('const note = body.note') + 160)
+  // The logic was moved to stall-change-action.ts so the HTTP route and the
+  // WhatsApp command surface share one copy of the rule.
+  const ACTION = readFileSync(join(process.cwd(), 'src/lib/stall-change-action.ts'), 'utf8')
+  const noteLine = ACTION.slice(ACTION.indexOf('function safeNote'), ACTION.indexOf('function safeNote') + 200)
   assert.match(noteLine, /replace\(\/\\s\*\[[—–]+\]\\s\*\/g/, 'note must strip long dashes before use')
 })
 
-test('the decline route selects phone, so the WhatsApp leg can actually send', () => {
+test('the action selects phone, so the WhatsApp leg can actually send', () => {
   // The WA decline leg reads app.phone. It shipped once with phone missing from
   // the SELECT, so `if (note && phone)` was always false and the message it
   // advertised never sent (a Record<string, unknown> cast hid it from tsc).
-  // Doctrine review 2026-07-30.
-  const ROUTE = readFileSync(join(process.cwd(), 'src/app/api/admin/stall-changes/route.ts'), 'utf8')
-  const select = ROUTE.slice(ROUTE.indexOf("from('vendor_applications')"))
+  // Doctrine review 2026-07-30. The shared action now handles this for both
+  // the admin route and the WhatsApp command surface.
+  const ACTION = readFileSync(join(process.cwd(), 'src/lib/stall-change-action.ts'), 'utf8')
+  const select = ACTION.slice(ACTION.indexOf("from('vendor_applications')"))
   const firstSelect = select.slice(0, select.indexOf('.maybeSingle()'))
   assert.match(firstSelect, /\bphone\b/, 'the row the WA leg reads must include phone')
 })

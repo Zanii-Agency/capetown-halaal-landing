@@ -94,3 +94,29 @@ test('a future eft_lane_* event type is covered the day it is written', () => {
   assert.equal(isLaneMechanicsEvent('EFT_LANE_ADD'), true, 'case insensitive')
   assert.equal(isLaneMechanicsEvent('approved'), false)
 })
+
+// ---------------------------------------------------------------------------
+// site_events can name a vendor; when they do, an out-of-scope vendor is hidden.
+// ---------------------------------------------------------------------------
+
+test('siteEventHiddenFromOwner hides master-lane vendor events by scope', () => {
+  assert.equal(siteEventHiddenFromOwner({
+    event_type: 'vendor_doc_uploaded',
+    metadata: { vendor_id: 'x' },
+  }, false), true, 'out-of-scope vendor event')
+  assert.equal(siteEventHiddenFromOwner({
+    event_type: 'vendor_doc_uploaded',
+    metadata: { vendor_id: 'x' },
+  }, true), false, 'in-scope vendor event')
+})
+
+test('siteEventHiddenFromOwner still judges content when vendor scope is unknown', () => {
+  assert.equal(siteEventHiddenFromOwner({
+    event_type: 'cron_reconcile_yoco',
+    metadata: { note: 'Processed EFT settlement' },
+  }), true, 'EFT wording hides even without vendor')
+  assert.equal(siteEventHiddenFromOwner({
+    event_type: 'apply_submit',
+    metadata: {},
+  }), false, 'ordinary event stays visible')
+})

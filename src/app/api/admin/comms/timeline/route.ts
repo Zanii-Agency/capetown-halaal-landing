@@ -247,11 +247,12 @@ export async function GET(req: NextRequest) {
 
   rows.sort((a, b) => +new Date(b.at) - +new Date(a.at))
 
-  const total = stripEftMessages(rows, (r) => r.body, hideEft).length
+  const identity = { phone: phoneRaw, email: emailRaw }
+  const total = stripEftMessages(rows, (r) => r.body, hideEft, { scope, identity, at: (r) => r.at }).length
   // EFT wall is CONTENT-level (2026-07-26): strip before paginating, so `total`
   // and has_more describe what the viewer can actually see rather than promising
   // rows that were then filtered away.
-  const visible = stripEftMessages(rows, (r) => r.body, hideEft)
+  const visible = stripEftMessages(rows, (r) => r.body, hideEft, { scope, identity, at: (r) => r.at })
   const page = visible.slice(offset, offset + limit)
   const has_more = offset + page.length < total
 

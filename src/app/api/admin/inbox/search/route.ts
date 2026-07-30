@@ -83,7 +83,8 @@ export async function GET(req: Request) {
       data: Array<{ id: string; body: string; wa_phone: string; created_at: string }> | null
     }
     for (const row of data ?? []) {
-      if (scope.blocksPhone(row.wa_phone) || (hide && revealsPaymentArrangement(row.body))) continue
+      if (scope.blocksPhone(row.wa_phone)) continue
+      if (hide && (revealsPaymentArrangement(row.body) || scope.hidesMessage({ phone: row.wa_phone }, row.created_at))) continue
       const tk = `wa:${row.wa_phone}`
       if (seen.has(tk)) continue
       const { data: thread } = (await supabase
@@ -122,7 +123,7 @@ export async function GET(req: Request) {
       // from_address alone was cosmetic: on an OUTBOUND row from_address is our
       // own support mailbox, which is never in the blocked set, so every reply we
       // ever sent to a master-lane vendor passed the check.
-      .select('thread_id, body_text, from_address, to_address, subject')
+      .select('thread_id, body_text, from_address, to_address, subject, created_at')
       .ilike('body_text', like)
       .order('created_at', { ascending: false })
       .limit(20)) as unknown as {
@@ -132,14 +133,17 @@ export async function GET(req: Request) {
         from_address: string
         to_address: string | null
         subject: string
+        created_at: string
       }> | null
     }
     for (const raw of data ?? []) {
       const row = { ...raw, body: raw.body_text || '' }
       // BOTH ends. A message is walled if EITHER party is in the master lane:
       // inbound is caught by from_address, outbound only by to_address.
-      if (scope.blocksEmail(row.from_address) || scope.blocksEmail(row.to_address)
-        || (hide && (revealsPaymentArrangement(row.body) || revealsPaymentArrangement(row.subject)))) continue
+      if (scope.blocksEmail(row.from_address) || scope.blocksEmail(row.to_address)) continue
+      if (hide && (revealsPaymentArrangement(row.body) || revealsPaymentArrangement(row.subject)
+        || scope.hidesMessage({ email: row.from_address }, row.created_at)
+        || scope.hidesMessage({ email: row.to_address }, row.created_at))) continue
       if (!row.thread_id || seen.has(`mail:${row.thread_id}`)) continue
       seen.add(`mail:${row.thread_id}`)
       const resolved = await resolveContact({ email: row.from_address, supabase })
@@ -176,6 +180,8 @@ export async function GET(req: Request) {
       for (const c of channels) {
         const tk = `${c.channel}:${c.key}`
         if (seen.has(tk)) continue
+        // The thread metadata itself must be scoped, not just the message hit.
+        if (c.channel === 'wa' ? scope.blocksPhone(c.key) : scope.blocksEmail(c.key)) continue
         // Look up thread id
         const { data: thread } = (await supabase
           .from('wa_threads')

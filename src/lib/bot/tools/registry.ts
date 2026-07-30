@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
-import { parseAllocation, tierLabel, TIER_META } from '@/lib/stalls'
+import { parseAllocation, resolveTierSlug, tierLabel, TIER_META } from '@/lib/stalls'
 import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
@@ -170,7 +170,8 @@ export const TOOL_DEFS = [
 // New scoped tools MUST be added here — fail closed, not open.
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
-  'send_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change', 'escalate_to_human',
+  'send_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
+  'get_payment_due_date', 'withdraw_application', 'escalate_to_human',
 ])
 
 export interface ToolOutcome {
@@ -467,12 +468,12 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
   if (!row) return 'I could not find your application.'
   const currentTier = row.preferred_booth_tier ? tierLabel(row.preferred_booth_tier) : 'your current stall'
 
-  // THE WALL, not the enum. The tool schema constrains the MODEL, and a model
-  // that ignores its own schema would otherwise write free text straight into
-  // the approval queue, which is the exact failure we are closing. The portal
-  // route has validated against TIER_META since it shipped; the bot now does
-  // the same, so both doors into this queue reject a size we do not sell.
-  const clean = (requestedTier || '').trim()
+  // THE WALL. The tool schema constrains the MODEL to canonical slugs, but a
+  // direct executor call or a future model may pass free text. Resolve it to a
+  // canonical slug first; if it cannot be resolved to exactly one tier, refuse
+  // and show the menu so the vendor picks one we actually sell.
+  const raw = (requestedTier || '').trim()
+  const clean = resolveTierSlug(raw) || raw
   if (!TIER_META[clean]) {
     const menu = Object.entries(TIER_META)
       .map(([, m]) => `- ${m.label}, R${m.price.toLocaleString('en-ZA')}`)
@@ -540,7 +541,7 @@ async function withdrawSelf(session: VendorSession, args: { reason?: string; con
   const reason = (args?.reason || '').trim()
   if (!reason) return 'Before I do that, may I ask what is making you withdraw? It helps the team, and sometimes there is something we can sort out for you.'
   if (args?.confirmed !== true) {
-    return `Just to be certain, I will withdraw you from the Young at Heart Festival 2026 and release your stall. Please reply to confirm and I will do it now.`
+    return `Just to be certain, I will withdraw you from the Young at Heart Festival 2026 and release your slot. Please reply to confirm and I will do it now.`
   }
 
   const row = await ownRow(vendorId)
@@ -558,7 +559,7 @@ async function withdrawSelf(session: VendorSession, args: { reason?: string; con
 
   if (!res.ok && res.reason === 'paid_needs_human') {
     await escalateToHuman(session, `WITHDRAWAL from a PAID vendor (${biz}): "${reason}". Needs a refund decision before anything is cancelled.`).catch(() => {})
-    return 'Because your stall fee is already paid, I want a person to handle this with you so nothing goes wrong with your payment. I have passed it to the team and they will come back to you here.'
+    return 'Because your stall fee is already paid, a person needs to handle the refund side with you so nothing goes wrong with your payment. I have passed it to the team and they will come back to you here.'
   }
   if (!res.ok && res.reason === 'already_withdrawn') {
     return 'You are already withdrawn from the festival, so there is nothing further to do. If you are still getting messages from us, tell me and I will get that stopped.'
@@ -570,16 +571,16 @@ async function withdrawSelf(session: VendorSession, args: { reason?: string; con
   await sendEmail({
     to: email || '',
     subject: `Your Young at Heart Festival 2026 application has been withdrawn, ${biz}`,
-    text: `Hi,\n\nWe have withdrawn ${biz} from the Young at Heart Festival 2026 as you requested, and your stall has been released.\n\nReason recorded: ${reason}\n\nIf this was not what you wanted, or you change your mind, reply to this email or message us on WhatsApp and we will help.\n\nWe are sorry to see you go, and you are welcome to apply again in future.\n\nWarm regards,\nThe Young at Heart Festival Team`,
+    text: `Hi,\n\nWe have withdrawn ${biz} from the Young at Heart Festival 2026 as you requested, and your slot has been released.\n\nReason recorded: ${reason}\n\nIf this was not what you wanted, or you change your mind, reply to this email or message us on WhatsApp and we will help.\n\nWe are sorry to see you go, and you are welcome to apply again in future.\n\nWarm regards,\nThe Young at Heart Festival Team`,
   }).catch(() => {})
 
   await notifyOwners({
     event: 'system_alert',
     audience: 'all',
-    body: `${biz} has WITHDRAWN from the festival via WhatsApp. Reason: "${reason}".${res.freedStalls.length ? ` Stall ${res.freedStalls.join(', ')} released.` : ''}`,
+    body: `${biz} has WITHDRAWN from the festival via WhatsApp. Reason: "${reason}".${res.freedStalls.length ? ` Slot ${res.freedStalls.join(', ')} released.` : ''}`,
   }).catch(() => {})
 
-  return `That is done. I have withdrawn ${biz} from the Young at Heart Festival 2026 and released your stall, and I have emailed you a confirmation. We are sorry to see you go, and you are very welcome to apply again another year.`
+  return `That is done. I have withdrawn ${biz} from the Young at Heart Festival 2026 and released your slot, and I have emailed you a confirmation. We are sorry to see you go, and you are very welcome to apply again another year.`
 }
 
 async function escalateToHuman(session: VendorSession, note: string): Promise<string> {

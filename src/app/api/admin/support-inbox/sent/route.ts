@@ -60,7 +60,9 @@ export async function GET() {
   // strip anything EFT-related still left among the ones she does.
   const scope = await laneScopeFor(user.email)
   const sentRows = stripEftMessages(
-    ((rows ?? []) as SentRow[]).filter((r) => !scope.blocksEmail(r.to_address)),
+    ((rows ?? []) as SentRow[]).filter(
+      (r) => !scope.blocksEmail(r.to_address) && !scope.hidesMessage({ email: r.to_address }, r.received_at),
+    ),
     (r) => `${r.subject || ''}\n${r.body_text || ''}`,
     hidesEftContent(user.email),
   )

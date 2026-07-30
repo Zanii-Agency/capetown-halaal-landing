@@ -251,9 +251,17 @@ export async function GET(request: Request) {
     }
 
     // --- Normalize site_events into the unified item shape ---------------
-    const siteItems: ActivityItem[] = siteRows.filter(ev =>
-      !restricted || !siteEventHiddenFromOwner({ event_type: ev.event_type, metadata: ev.metadata }),
-    ).map(ev => {
+    const siteItems: ActivityItem[] = siteRows.filter(ev => {
+      if (!restricted) return true
+      const meta = (ev.metadata ?? {}) as Record<string, unknown>
+      const vendorId = typeof meta.vendor_id === 'string'
+        ? meta.vendor_id
+        : (typeof meta.application_id === 'string' ? meta.application_id : null)
+      return !siteEventHiddenFromOwner(
+        { event_type: ev.event_type, metadata: ev.metadata },
+        vendorId ? scopeOf(vendorId) : undefined,
+      )
+    }).map(ev => {
       const meta = (ev.metadata ?? {}) as Record<string, unknown>
       const vendorId = typeof meta.vendor_id === 'string'
         ? meta.vendor_id

@@ -16,6 +16,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
+import { buildLaneScope, type LaneVendorRow } from '@/lib/inbox-lane'
+import { isEftAdmin } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -49,7 +51,7 @@ export async function GET(req: NextRequest) {
   const CSV_MAX_ROWS = 1000
   let q = db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, contract_signed_at')
+    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, paid_at, contract_signed_at')
     .order('business_name', { ascending: true })
     .limit(CSV_MAX_ROWS)
   if (ids && ids.length) q = q.in('id', ids)
@@ -61,6 +63,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Could not read vendors: ${error.message}` }, { status: 500 })
   }
 
+  const rawRows = ((data || []) as Array<{
+    id: string
+    business_name: string | null
+    contact_name: string | null
+    email: string | null
+    phone: string | null
+    product_categories: string[] | null
+    business_description: string | null
+    status: string | null
+    admin_notes: string | null
+    paid_at: string | null
+    contract_signed_at: string | null
+  }>)
+
+  // Scope the export: master-lane vendors must not appear in the festival
+  // owner's CSV. Unapproved applicants stay visible (they have no lane yet).
+  const scope = buildLaneScope(rawRows as unknown as LaneVendorRow[], false, isEftAdmin(user.email ?? null))
+  const rows = rawRows.filter((r) => !scope.blocksApplicationId(r.id))
+
   // H5: audit log every export so we can trace PII flows. We anchor the
   // event on the first exported vendor's application_id (the audit table FK
   // requires a non-null application_id), and stash the full id list +
@@ -68,7 +89,7 @@ export async function GET(req: NextRequest) {
   // operator-facing audit UI reads vendor_application_events only.
   try {
     const actorEmail = ((adminUser as { email?: string | null }).email) ?? user.email ?? null
-    const rowIds = ((data as Array<{ id: string }> | null) || []).map((r) => r.id).slice(0, CSV_MAX_ROWS)
+    const rowIds = rows.map((r) => r.id).slice(0, CSV_MAX_ROWS)
     if (rowIds.length > 0) {
       await db.from('vendor_application_events').insert({
         application_id: rowIds[0],
@@ -94,17 +115,7 @@ export async function GET(req: NextRequest) {
     'status', 'stall_code', 'payment_status', 'contract_signed_at',
   ]
   const lines: string[] = [headers.join(',')]
-  for (const row of (data || []) as Array<{
-    business_name: string | null
-    contact_name: string | null
-    email: string | null
-    phone: string | null
-    product_categories: string[] | null
-    business_description: string | null
-    status: string | null
-    admin_notes: string | null
-    contract_signed_at: string | null
-  }>) {
+  for (const row of rows) {
     const portal = parsePortalState(row.admin_notes || '')
     const { stall } = parseAllocation(row.admin_notes || '')
     const sector = row.product_categories?.[0] || ''

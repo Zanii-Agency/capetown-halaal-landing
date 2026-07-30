@@ -11,6 +11,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { buildLaneScope, type LaneVendorRow } from '@/lib/inbox-lane'
+import { isEftAdmin } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -32,12 +34,17 @@ export async function GET(req: NextRequest) {
   if (type === 'vendor') {
     const { data, error } = await db
       .from('vendor_applications')
-      .select('id, business_name, contact_name, email, phone, status')
+      .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at')
       .eq('status', 'approved')
       .or(`business_name.ilike.%${q}%,contact_name.ilike.%${q}%,email.ilike.%${q}%`)
       .limit(10)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ results: data || [] })
+
+    // Scope autocomplete to the viewer: the festival owner must not link a
+    // master-lane vendor into a support thread.
+    const scope = buildLaneScope((data || []) as unknown as LaneVendorRow[], false, isEftAdmin(user.email ?? null))
+    const results = (data || []).filter((r) => !scope.blocksApplicationId(r.id as string))
+    return NextResponse.json({ results })
   }
 
   if (type === 'ticket') {

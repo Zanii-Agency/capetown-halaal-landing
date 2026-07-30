@@ -169,7 +169,12 @@ export async function POST(req: Request) {
     }
   }
 
-  const msgs = stripEftMessages(await loadMessages(supabase, thread), (m) => m.body, hide)
+  const identity = thread.channel === 'wa' ? { phone: thread.thread_key } : { email: thread.thread_key }
+  const msgs = stripEftMessages(await loadMessages(supabase, thread), (m) => m.body, hide, {
+    scope,
+    identity,
+    at: (m) => m.created_at,
+  })
   if (msgs.length === 0) {
     const payload = {
       summary: 'No messages yet on this thread.',

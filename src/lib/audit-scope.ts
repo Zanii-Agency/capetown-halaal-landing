@@ -88,12 +88,16 @@ export function hiddenFromOwner(row: AuditRow, vendorInScope: boolean | undefine
   return vendorInScope !== true
 }
 
-/** site_events name no vendor, so they are judged on content alone. Keeping
- *  this as its own entry point stops a caller accidentally passing `undefined`
- *  for vendorInScope and hiding the entire feed. */
-export function siteEventHiddenFromOwner(row: AuditRow): boolean {
+/** site_events usually name no vendor, so they are judged on content alone.
+ *  When the caller CAN resolve the vendor (metadata.vendor_id or
+ *  metadata.application_id), pass `vendorInScope` so vendor-tied events such as
+ *  `vendor_doc_uploaded` for a master-lane vendor are hidden from the festival
+ *  owner. Undefined means the vendor is unknown / not applicable, and the row
+ *  is then judged on content only. */
+export function siteEventHiddenFromOwner(row: AuditRow, vendorInScope?: boolean): boolean {
   const type = row.event_type || ''
   if (MASTER_ONLY_EVENT_TYPES.has(type)) return true
   if (isLaneMechanicsEvent(type)) return true
+  if (vendorInScope === false) return true
   return revealsPaymentArrangement([type, asText(row.note), asText(row.metadata)].join(' '))
 }

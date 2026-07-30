@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, type DocRecord } from '@/lib/portal-state'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -49,6 +50,8 @@ export async function GET(req: NextRequest) {
   const { data: adminUser } = await db.from('admin_users').select('id').eq('id', user.id).maybeSingle()
   if (!adminUser) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
+  const restrict = !isEftAdmin(user.email ?? null)
+
   const url = new URL(req.url)
   const search = (url.searchParams.get('search') || '').trim().toLowerCase()
   const docType = (url.searchParams.get('doc_type') || '').trim()
@@ -62,7 +65,7 @@ export async function GET(req: NextRequest) {
   // operator would never want to look at.
   const { data: apps, error } = await db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, status, admin_notes, contract_signed_at, contract_pdf_path')
+    .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, contract_signed_at, contract_pdf_path')
     .order('updated_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -77,9 +80,11 @@ export async function GET(req: NextRequest) {
       phone: string | null
       status: string | null
       admin_notes: string | null
+      paid_at: string | null
       contract_signed_at: string | null
       contract_pdf_path: string | null
     }
+    if (restrict && !vendorInOwnerScope(a.admin_notes, a.paid_at)) continue
     const state = parsePortalState(a.admin_notes)
     const docs = state.docs || []
     for (const d of docs) {

@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { redirect } from 'next/navigation'
 import { getOrders } from '@/lib/woocommerce'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
+import { hiddenFromOwner } from '@/lib/audit-scope'
 import { PageShell, PageHeader, Card, Pill, StatCard } from '@/components/chrome/PageChrome'
 import WebTrafficDashboard from './WebTrafficDashboard'
 
@@ -104,7 +106,7 @@ export default async function AnalyticsPage() {
       return [] as Awaited<ReturnType<typeof getOrders>>
     }),
     db.from('vendor_application_events')
-      .select('id, application_id, event_type, actor_email, actor_role, note, created_at')
+      .select('id, application_id, event_type, actor_email, actor_role, note, before_value, after_value, created_at')
       .order('created_at', { ascending: false })
       .limit(20),
   ])
@@ -114,17 +116,26 @@ export default async function AnalyticsPage() {
   const eventRows = eventsRes.data || []
   const appIds = Array.from(new Set(eventRows.map((e) => e.application_id).filter(Boolean)))
   let nameById: Record<string, string> = {}
+  let scopeById: Record<string, boolean> = {}
+  const viewerIsEftAdmin = isEftAdmin(user.email)
   if (appIds.length > 0) {
     const { data: apps } = await db
       .from('vendor_applications')
-      .select('id, business_name')
+      .select('id, business_name, admin_notes, paid_at')
       .in('id', appIds)
-    nameById = (apps || []).reduce((acc: Record<string, string>, a: { id: string; business_name: string | null }) => {
-      acc[a.id] = a.business_name || '(unknown vendor)'
-      return acc
-    }, {})
+    ;(apps || []).forEach((a: { id: string; business_name: string | null; admin_notes: string | null; paid_at: string | null }) => {
+      nameById[a.id] = a.business_name || '(unknown vendor)'
+      scopeById[a.id] = vendorInOwnerScope(a.admin_notes, a.paid_at)
+    })
   }
-  const recentActivity: RecentEvent[] = eventRows.map((e) => ({
+  const recentActivity: RecentEvent[] = eventRows
+    .filter((e) => viewerIsEftAdmin || !hiddenFromOwner({
+      event_type: e.event_type,
+      note: e.note,
+      before_value: e.before_value,
+      after_value: e.after_value,
+    }, e.application_id ? scopeById[e.application_id] : undefined))
+    .map((e) => ({
     id: e.id,
     event_type: e.event_type,
     actor_email: e.actor_email,

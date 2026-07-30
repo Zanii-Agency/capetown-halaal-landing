@@ -88,3 +88,24 @@ test('the master is never guarded, nothing is hidden from him', () => {
   const s = 'Aurelia opened the EFT bank details this morning.'
   assert.equal(guard(MASTER, s), s)
 })
+
+// ---------------------------------------------------------------------------
+// New master-only read tools: stall_occupancy, vendor_documents, vendor_staff.
+// They are never offered to the festival owner and are refused at the executor.
+// ---------------------------------------------------------------------------
+
+const NEW_MASTER_TOOLS = ['stall_occupancy', 'vendor_documents', 'vendor_staff', 'pending_stall_changes'] as const
+
+for (const toolName of NEW_MASTER_TOOLS) {
+  test(`${toolName} is not in the festival owner's tool set`, () => {
+    const ownerNames = new Set(toolDefsForRole('festival_owner').map((t) => t.name))
+    assert.equal(ownerNames.has(toolName), false)
+  })
+
+  test(`${toolName} is refused to the festival owner at the executor`, async () => {
+    const args = toolName === 'stall_occupancy' ? {} : { vendor_id: '00000000-0000-0000-0000-000000000000' }
+    const out = await executeMasterTool('festival_owner', toolName, args)
+    assert.equal(out.isError, true)
+    assert.equal(out.content, 'Not authorised.')
+  })
+}

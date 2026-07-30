@@ -6,11 +6,20 @@
 // emails support). On submit the portal flips to a PROVISIONAL "payment received,
 // pending confirmation" state and unlocks. No em-dashes anywhere (Law 7).
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check, Eye, AlertTriangle,
 } from 'lucide-react'
 import { EFT_TERMS, EFT_TERMS_HEADING } from '@/lib/eft-terms'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 
 interface Bank {
   accountName: string
@@ -58,11 +67,28 @@ export default function EftPanel({
   // vendor off the festival owner's inbox server-side). A vendor who has already
   // submitted a proof has clearly seen the details, so show them unhidden.
   const [revealed, setRevealed] = useState(submitted)
+  const [showProofPrompt, setShowProofPrompt] = useState(false)
+  const uploadRef = useRef<HTMLDivElement>(null)
 
-  function reveal() {
+  // Show the proof-of-payment prompt 3 seconds after the vendor reveals the bank
+  // details, every time they reveal them. This keeps the instruction tied to the
+  // moment they actually have the details in front of them, and it comes back on
+  // every fresh reveal so the message is not missed.
+  useEffect(() => {
+    if (!revealed || submitted) return
+    const t = setTimeout(() => setShowProofPrompt(true), 3000)
+    return () => clearTimeout(t)
+  }, [revealed, submitted])
+
+  function revealDetails() {
     setRevealed(true)
     // Fire-and-forget: the heads-up to the operator must never block the reveal.
     fetch('/api/exhibitor/eft-intent', { method: 'POST' }).catch(() => {})
+  }
+
+  function scrollToUpload() {
+    setShowProofPrompt(false)
+    uploadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 
   async function submit() {
@@ -84,6 +110,49 @@ export default function EftPanel({
 
   return (
     <div className="space-y-6">
+      {/* Reminder popup shown 3 seconds after the vendor reveals the bank details.
+          It repeats every time they re-open the details, so the instruction is
+          never buried. Uploading proof on this page is the fastest path to the
+          finance team; emailing or messaging individual team members slows it down. */}
+      <Dialog open={showProofPrompt} onOpenChange={setShowProofPrompt}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Upload your proof of payment here</DialogTitle>
+            <DialogDescription>
+              Once you have paid, upload your proof on this page so our finance team can confirm it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm text-neutral-700">
+            <p>
+              <span className="font-semibold text-[#cd2653]">Upload your proof of payment here.</span>{' '}
+              This is the only way your payment is tracked and sent to the finance team.
+            </p>
+            <p>
+              <span className="font-semibold text-[#cd2653]">Do not email or WhatsApp your proof to anyone else.</span>{' '}
+              Messages to team members you know personally, or to any email other than{' '}
+              <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>,
+              will not be noted and will delay your confirmation.
+            </p>
+            <p>
+              If you cannot upload here at all, email{' '}
+              <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>.{' '}
+              Uploads are confirmed faster.
+            </p>
+            <p>
+              Use reference <span className="font-semibold">{reference}</span> when you pay, so we can match it to {businessName}.
+            </p>
+          </div>
+          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowProofPrompt(false)}>
+              I will upload later
+            </Button>
+            <Button onClick={scrollToUpload} className="bg-[#cd2653] hover:bg-[#b01f45] text-white">
+              Upload proof now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Provisional confirmation once a proof is on file. */}
       {submitted && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 flex items-start gap-4 text-emerald-800">
@@ -106,7 +175,7 @@ export default function EftPanel({
             plainly that a personal chat will not be answered, is the whole point
             of this notice (Taona, 2026-07-27). */}
         <p className="text-sm">
-          Please pay your stall fee by EFT using the details below and upload your proof of payment. To reach us, use your portal inbox, email{' '}
+          Please pay your stall fee by EFT using the details below and upload your proof of payment on this page. To reach us, use your portal inbox, email{' '}
           <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>, or WhatsApp our official number{' '}
           <a href="https://wa.me/27659435012" className="font-semibold underline whitespace-nowrap">065 943 5012</a>.{' '}
           <span className="font-semibold">Please WhatsApp that number only.</span> Messages sent to any other number, including someone from the team you know personally, will not be answered and will not reach us. We also cannot see or reply to messages on social media. Your payment status updates here on your portal.
@@ -158,7 +227,7 @@ export default function EftPanel({
           ) : (
             <button
               type="button"
-              onClick={reveal}
+              onClick={revealDetails}
               className="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 transition-colors px-5 py-4 text-left flex items-center gap-3"
             >
               <span className="w-9 h-9 rounded-lg flex items-center justify-center bg-white/10 text-[#ff7a9c] shrink-0">
@@ -179,11 +248,10 @@ export default function EftPanel({
       </div>
 
       {/* Upload proof. */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-6">
+      <div ref={uploadRef} className="bg-white border border-neutral-200 rounded-2xl p-6">
         <p className="font-semibold text-neutral-900 mb-1">{submitted ? 'Upload another proof' : 'Upload your proof of payment'}</p>
         <p className="text-sm text-neutral-500 mb-4">
-          Attach your EFT confirmation or bank slip (PDF or image, up to 10MB). You can also email it to{' '}
-          <a href="mailto:support@youngatheart.co.za" className="underline hover:text-neutral-700">support@youngatheart.co.za</a>.
+          Attach your EFT confirmation or bank slip (PDF or image, up to 10MB). Uploading here is the fastest way for us to confirm your payment.
         </p>
         {error && <div className="p-3 mb-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
         <input

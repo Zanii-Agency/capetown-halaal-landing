@@ -19,6 +19,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parseVendorExtras } from '@/lib/vendor-extras'
+import { buildLaneScope, type LaneVendorRow } from '@/lib/inbox-lane'
+import { isEftAdmin } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -79,10 +81,16 @@ export async function GET(req: NextRequest) {
 
   const rows = (data || []) as Array<Record<string, unknown>>
 
+  // Scope the export the same way the vendor list is scoped: the festival owner
+  // must not receive a spreadsheet of master-lane vendors. Unapproved applicants
+  // stay visible (they have no payment lane yet).
+  const scope = buildLaneScope(rows as unknown as LaneVendorRow[], false, isEftAdmin(user.email ?? null))
+  const scopedRows = rows.filter((r) => !scope.blocksApplicationId(r.id as string))
+
   // Audit every PII export (same pattern as the CSV route).
   try {
     const actorEmail = ((adminUser as { email?: string | null }).email) ?? user.email ?? null
-    const rowIds = rows.map((r) => r.id as string)
+    const rowIds = scopedRows.map((r) => r.id as string)
     if (rowIds.length > 0) {
       await db.from('vendor_application_events').insert({
         application_id: rowIds[0],
@@ -115,7 +123,7 @@ export async function GET(req: NextRequest) {
     cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true }
   })
 
-  for (const r of rows) {
+  for (const r of scopedRows) {
     const notes = (r.admin_notes as string) || ''
     const extras = parseVendorExtras(r.special_requirements as string | null)
     const { stall } = parseAllocation(notes)
@@ -147,7 +155,7 @@ export async function GET(req: NextRequest) {
   COLUMNS.forEach(([, , wrap], i) => {
     if (wrap) ws.getColumn(i + 1).alignment = { wrapText: true, vertical: 'top' }
   })
-  for (let i = 2; i <= rows.length + 1; i++) {
+  for (let i = 2; i <= scopedRows.length + 1; i++) {
     ws.getRow(i).alignment = { ...ws.getRow(i).alignment, vertical: 'top' }
   }
 

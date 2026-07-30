@@ -17,6 +17,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 const ALLOWED: PaymentMethod[] = ['eft', 'cash', 'manual_card', 'waived']
 
@@ -30,8 +31,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const gate = await requireOperator()
   if (!gate.ok) return gate.response
   const { user } = gate
-
   const db = createAdminClient()
+
+  // The festival owner cannot record payments against master-lane vendors.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
   const method = String(body.method || '').trim() as PaymentMethod

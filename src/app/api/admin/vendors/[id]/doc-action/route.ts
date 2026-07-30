@@ -16,6 +16,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, syncPortalState } from '@/lib/portal-state'
 import { notifyVendor } from '@/lib/notifications'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -39,8 +40,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const gate = await requireOperator()
   if (!gate.ok) return gate.response
   const { user } = gate
-
   const db = createAdminClient()
+
+  // Document approvals on a master-lane vendor must not be triggered by the
+  // festival owner; the notification would leak the vendor's presence.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
   const type = String(body.type || '').trim()
