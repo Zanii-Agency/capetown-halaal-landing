@@ -13,7 +13,6 @@
 // exchange (resumes auto-bot).
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { sendText } from '@/lib/whatsapp'
 
 const ON_MARKER = '[HUMAN_HANDOVER_ON]'
 const OFF_MARKER = '[HUMAN_HANDOVER_OFF]'

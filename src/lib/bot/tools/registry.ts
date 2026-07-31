@@ -14,12 +14,12 @@
 import { randomUUID } from 'node:crypto'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { updatePortalState, parsePortalState } from '@/lib/portal-state'
+import { updatePortalState, parsePortalState, type DocRecord } from '@/lib/portal-state'
 import { parseAllocation, resolveTierSlug, tierLabel, TIER_META, TYPE_META, STALL_LIST } from '@/lib/stalls'
 import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
-import { sendMedia, sendText } from '@/lib/whatsapp'
+import { sendMedia, sendText, fetchMediaBytes } from '@/lib/whatsapp'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { paymentReference } from '@/lib/payments'
@@ -164,6 +164,12 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'upload_document',
+    description: "Upload a document or photo THIS vendor just sent on WhatsApp to their portal Documents bucket. Call when a verified vendor sends a file, photo, certificate, or proof and says they want to upload it, or when the message is clearly a document upload. Takes no identifying arguments; it uploads the media attached to their current message.",
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
     name: 'escalate_to_human',
     description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call when a verified vendor has a request or question you cannot resolve with the other tools. Pass a one-line summary in `note`.",
     strict: true,
@@ -190,7 +196,7 @@ export const TOOL_DEFS = [
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
   'send_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
-  'get_payment_due_date', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'escalate_to_human',
+  'get_payment_due_date', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'escalate_to_human',
 ])
 
 export interface ToolOutcome {
@@ -603,6 +609,117 @@ async function reportIssue(session: VendorSession, args: { issue_type?: string; 
     : `I have noted that: "${description}". The team will follow up with you here if needed.`
 }
 
+// Canonical doc types accepted by the portal and admin document review flow.
+const DOC_TYPES = ['halaal_cert', 'health_permit', 'gas_cert', 'fire_safety', 'public_liability', 'electrical_coc', 'contract', 'indemnity', 'other']
+const MAX_DOC_BYTES = 5 * 1024 * 1024 // WhatsApp media fetch cap; portal allows 10MB, but we cannot fetch more than 5MB.
+
+function extensionFrom(filename?: string, mimeType?: string): string {
+  if (filename) {
+    const ext = filename.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (ext) return ext
+  }
+  const map: Record<string, string> = {
+    'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png',
+    'image/webp': 'webp', 'image/gif': 'gif', 'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  }
+  return map[mimeType?.toLowerCase() || ''] || 'bin'
+}
+
+function inferDocType(filename?: string, mimeType?: string): string {
+  const text = `${filename || ''} ${mimeType || ''}`.toLowerCase()
+  if (/halaal|halal|cert/.test(text) && !/liability|indemn/.test(text)) return 'halaal_cert'
+  if (/health|permit|food/.test(text)) return 'health_permit'
+  if (/gas/.test(text)) return 'gas_cert'
+  if (/fire/.test(text)) return 'fire_safety'
+  if (/liability|insurance/.test(text)) return 'public_liability'
+  if (/electrical|elec|coa|coc/.test(text)) return 'electrical_coc'
+  if (/contract/.test(text)) return 'contract'
+  if (/indemn/.test(text)) return 'indemnity'
+  return 'other'
+}
+
+async function uploadDocument(session: VendorSession): Promise<string> {
+  const vendorId = session.vendorId!
+  const media = session.media
+  if (!media || (media.kind !== 'image' && media.kind !== 'document')) {
+    return `I do not see a document or photo to upload. Send the file here first, then say "upload it" and I will put it on your application.`
+  }
+
+  const fetched = await fetchMediaBytes(media.id)
+  if (!fetched) {
+    return `I could not fetch that file just now. It may be too large or the link expired. Please try uploading it in your portal at ${PORTAL_LOGIN} under Documents, or send it again.`
+  }
+  if (fetched.bytes.byteLength > MAX_DOC_BYTES) {
+    return `That file is too large for me to fetch over WhatsApp. Please upload it in your portal at ${PORTAL_LOGIN} under Documents (up to 10MB there).`
+  }
+
+  const docType = inferDocType(media.filename, media.mimeType || fetched.contentType)
+  const ext = extensionFrom(media.filename, media.mimeType || fetched.contentType)
+  const safeName = (media.filename || `document-${Date.now()}.${ext}`).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)
+  const path = `${vendorId}/wa-${docType}-${Date.now()}.${ext}`
+
+  const db = createAdminClient()
+  const { error: upErr } = await db.storage.from('vendor-docs').upload(path, fetched.bytes, {
+    contentType: media.mimeType || fetched.contentType || 'application/octet-stream',
+    upsert: true,
+  })
+  if (upErr) {
+    console.error('[tool upload_document] storage upload failed:', upErr.message)
+    return `I could not save that file just now. Please try uploading it in your portal at ${PORTAL_LOGIN} under Documents.`
+  }
+
+  const record: DocRecord = {
+    type: docType,
+    path,
+    name: safeName,
+    status: 'pending',
+    uploaded_at: new Date().toISOString(),
+  }
+
+  // Replace a previous doc of the same inferred type unless it is a catch-all
+  // "other" upload, in which case we append so nothing is accidentally lost.
+  await updatePortalState(vendorId, (s) => ({
+    ...s,
+    docs: docType === 'other'
+      ? [...(s.docs || []), record]
+      : [...(s.docs || []).filter((d) => d.type !== docType), record],
+  }))
+
+  // Mirror to the admin feed exactly like a portal upload would.
+  try {
+    await db.from('site_events').insert({
+      session_id: `vendor-${vendorId}`,
+      event_type: 'vendor_doc_uploaded',
+      path: '/exhibitor/portal/documents',
+      metadata: {
+        vendor_application_id: vendorId,
+        doc_type: docType,
+        file_name: safeName,
+        storage_path: path,
+        source: 'whatsapp',
+      },
+    })
+  } catch (e) {
+    console.warn('[tool upload_document] site_events insert failed:', (e as Error).message)
+  }
+
+  // Notify owners, respecting lane scope (owner only sees her own vendors).
+  try {
+    const row = await ownRow(vendorId)
+    await notifyOwners({
+      event: 'document_uploaded',
+      body: `New document uploaded via WhatsApp by ${row?.business_name || 'a vendor'}: ${docType}.`,
+      audience: 'all',
+      vendorId,
+    })
+  } catch (e) {
+    console.error('[tool upload_document] notifyOwners failed:', (e as Error).message)
+  }
+
+  return `Thanks, I have uploaded your "${safeName}" to your portal Documents as ${docType.replace(/_/g, ' ')}. The team will review it and you can see it in your portal at ${PORTAL_LOGIN} under Documents.`
+}
+
 // Taona 2026-07-29, verbatim: "anytime a person text bot to withdraw or cancel
 // it should ask why if its not mentioned, and then mentioned i will withdraw u
 // now, confirm and thnen it does it then sends an email to them, samreen and
@@ -714,6 +831,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'withdraw_application': content = await withdrawSelf(session, (args as { reason?: string; confirmed?: boolean })); break
       case 'where_is_my_stall': content = await whereIsMyStall(session.vendorId!); break
       case 'report_issue': content = await reportIssue(session, args as { issue_type?: string; description?: string }); break
+      case 'upload_document': content = await uploadDocument(session); break
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
         deferred = getInvoiceDeferred(session)

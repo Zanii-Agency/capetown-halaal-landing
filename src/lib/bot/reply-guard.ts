@@ -95,7 +95,7 @@ export function guardReply(reply: string, opts: ReplyGuardOpts): GuardedReply {
   })
 
   // SA ID
-  out = out.replace(SA_ID_PATTERN, (m) => {
+  out = out.replace(SA_ID_PATTERN, () => {
     count++
     reasons.push('sa_id')
     return '[id redacted]'

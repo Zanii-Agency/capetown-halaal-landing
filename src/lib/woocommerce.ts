@@ -374,11 +374,10 @@ export async function cancelStaffBadgeOrder(orderId: number): Promise<void> {
 export async function getTicketStats() {
   // Only fetch 2026 event orders (filters out last year's festival)
   const after = '2026-01-01T00:00:00'
-  const [orders, failedOrders, pendingOrders, products] = await Promise.all([
+  const [orders, failedOrders, pendingOrders] = await Promise.all([
     getOrders({ status: 'completed', after }),
     getOrders({ status: 'failed', after }),
     getOrders({ status: 'pending,on-hold,cancelled', after }),
-    getProducts(),
   ])
 
   const totalRevenue = orders.reduce((sum, o) => sum + parseFloat(o.total), 0)

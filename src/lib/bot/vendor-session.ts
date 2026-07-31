@@ -22,6 +22,14 @@ import { sendEmail } from '@/lib/email/resend'
 
 export type VendorSessionStatus = 'verified' | 'ambiguous' | 'unknown'
 
+export type InboundMedia = {
+  id: string
+  kind: 'image' | 'document' | 'video' | 'audio' | 'sticker'
+  mimeType?: string
+  filename?: string
+  caption?: string
+}
+
 export interface VendorSession {
   status: VendorSessionStatus
   waPhone: string                 // E.164 of the sender (the credential)
@@ -32,6 +40,9 @@ export interface VendorSession {
   vendor?: NonNullable<Awaited<ReturnType<typeof resolveIdentity>>['vendor']>
   /** Distinct business names on this number when ambiguous, for the step-up prompt. */
   candidates?: string[]
+  /** Media attached to the current inbound message, if any. Scoped tools can use
+   *  this (e.g. upload_document) without reading it from the model's args. */
+  media?: InboundMedia
 }
 
 const OTP_TTL_MINUTES = 15

@@ -10,7 +10,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { BotAdmin } from '@/lib/bot/admins'
-import { MASTER_TOOL_DEFS, executeMasterTool, toolDefsForRole } from '@/lib/bot/tools/master-registry'
+import { executeMasterTool, toolDefsForRole } from '@/lib/bot/tools/master-registry'
 import { revealsPaymentArrangement } from '@/lib/eft'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'

@@ -98,6 +98,7 @@ const asStr = (v: unknown): string | null => (typeof v === 'string' && v ? v : n
 export function isEftScopedAlert(
   args: { body: string; eftScoped?: boolean },
   vendor: VendorLaneRow | null,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _globalOn: boolean,
 ): boolean {
   if (vendor) {

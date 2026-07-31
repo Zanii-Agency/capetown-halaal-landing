@@ -690,6 +690,7 @@ async function handleInbound(msg: {
         }
         if (!handled) {
           const session = await resolveVendorSession(e164)
+          if (msg.media) session.media = msg.media
           const out = await runVendorAgent(session, msg.text, { history })
           reply = out.message
           deferredActions.push(...out.deferred)

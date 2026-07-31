@@ -21,7 +21,7 @@ import { escalateToHuman } from './handover'
 import { notifyApplicationDecision, type DecisionStatus } from '@/lib/applications/decision-notify'
 import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { syncPortalState } from '@/lib/portal-state'
-import { withAllocation, parseAllocation, STALL_LIST, TIER_META } from '@/lib/stalls'
+import { withAllocation, STALL_LIST } from '@/lib/stalls'
 import { executeStallChangeAction } from '@/lib/stall-change-action'
 
 export interface PendingBlast {

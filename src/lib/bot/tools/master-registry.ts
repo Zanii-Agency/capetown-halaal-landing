@@ -14,7 +14,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
-import { parseAllocation, tierLabel, STALL_LIST, STALL_CAPACITY, TYPE_META, type StallStatus } from '@/lib/stalls'
+import { parseAllocation, tierLabel, STALL_LIST, TYPE_META, type StallStatus } from '@/lib/stalls'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { computePaymentDue, fmtDate } from '@/lib/exhibitor-paygate'
 import { segmentCount, SEGMENT_LABELS, type SegmentKey } from '@/lib/bot/segments'

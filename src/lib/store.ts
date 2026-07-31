@@ -10,14 +10,6 @@ export interface User {
   phone: string
 }
 
-interface Booking {
-  id: string
-  boothId: string
-  userId: string
-  createdAt: Date
-  status: 'pending' | 'confirmed' | 'cancelled'
-}
-
 interface BoothStore {
   // User state
   user: User | null

@@ -21,21 +21,21 @@ export async function extractTextFromBuffer(buf, mime, opts = {}) {
     try {
         const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
         if (mime === "application/pdf") {
-            // @ts-ignore — unpdf is a peer dep resolved from the consuming project's node_modules
+            // @ts-expect-error — unpdf is a peer dep resolved from the consuming project's node_modules
             const { extractText, getDocumentProxy } = await import("unpdf");
             const pdf = await getDocumentProxy(new Uint8Array(b));
             const { text } = await extractText(pdf, { mergePages: true });
             return clean(Array.isArray(text) ? text.join("\n") : text, max);
         }
         if (mime === DOCX || mime === "application/msword") {
-            // @ts-ignore — mammoth is a peer dep
+            // @ts-expect-error — mammoth is a peer dep
             const mod = await import("mammoth");
             const mammoth = mod.default || mod;
             const { value } = await mammoth.extractRawText({ buffer: b });
             return clean(value, max);
         }
         if (mime === XLSX_MIME || mime === "application/vnd.ms-excel") {
-            // @ts-ignore — xlsx is a peer dep
+            // @ts-expect-error — xlsx is a peer dep
             const XLSX = await import("xlsx");
             const wb = XLSX.read(b, { type: "buffer" });
             const txt = wb.SheetNames.map((n) => `# ${n}\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n])).join("\n\n");
