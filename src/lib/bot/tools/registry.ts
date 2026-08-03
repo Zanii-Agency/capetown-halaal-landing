@@ -48,7 +48,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'check_application_status',
-    description: "Return THIS vendor's own application status, payment status, contract status and allocated stall. Call when a verified vendor asks where they stand or what to do next. Takes no identifying arguments.",
+    description: "Return THIS vendor's own record: the stall size they applied for and its price, the date they applied, their application status, payment status, contract status, and allocated floor stall. Call whenever a verified vendor asks where they stand, what to do next, OR what stall size or price they chose or when they applied. Takes no identifying arguments.",
     strict: true,
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
@@ -254,14 +254,14 @@ async function ownRow(vendorId: string) {
     // blocked, Law 8) and selecting it failed this scoped fetch with 42703,
     // which silently broke EVERY vendor tool below (status, due date, stall).
     // The due date is computed from reviewed_at + 30 by computePaymentDue.
-    .select('business_name, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements, reviewed_at')
+    .select('business_name, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements, reviewed_at, created_at')
     .eq('id', vendorId)
     .single()
   return data as {
     business_name: string; contact_name: string | null; email: string | null; status: string
     admin_notes: string | null; contract_signed_at: string | null; contract_pdf_path: string | null
     preferred_booth_tier: string | null; special_requirements: unknown
-    payment_due_date: string | null; reviewed_at: string | null
+    payment_due_date: string | null; reviewed_at: string | null; created_at: string | null
   } | null
 }
 
@@ -293,7 +293,34 @@ async function checkApplicationStatus(vendorId: string): Promise<string> {
   if (!row) return 'I could not find your application. Please contact support@youngatheart.co.za.'
   const state = parsePortalState(row.admin_notes || '')
   const alloc = parseAllocation(row.admin_notes || '')
-  return `Business: ${row.business_name}. Application status: ${row.status}. Payment: ${state.payment?.status || 'none'}. Contract: ${row.contract_signed_at ? 'signed' : 'not signed yet'}. Stall: ${alloc.stall ? `allocated ${alloc.stall}` : 'not allocated yet'}.${pendingRequestsLine(state)}`
+
+  // THE SIZE THEY CHOSE IS ALWAYS ON RECORD (preferred_booth_tier), and it is NOT
+  // the allocated floor code (alloc.stall, which is assigned later). Vendors keep
+  // asking what size and price they applied for and when, so state all three from
+  // the record rather than asking them back. Omitting the size here is exactly
+  // why the bot told Rizq & Co her stall "wasn't locked in" while a R6500 Marquee
+  // Double Table sat on her application (2026-08-03). Same seam as the master due
+  // date: the fact is in the record, just not in the reader the vendor talks to.
+  const size = row.preferred_booth_tier ? tierLabel(row.preferred_booth_tier) : ''
+  let sizeLine = size
+  try {
+    const total = computeVendorPricing({ preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements }).total
+    if (size && total) sizeLine = `${size} at R${total.toLocaleString('en-ZA')}`
+  } catch { /* keep the size without a price */ }
+  const applied = row.created_at
+    ? new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ''
+
+  return [
+    `Business: ${row.business_name}.`,
+    sizeLine ? `Stall they applied for: ${sizeLine}.` : 'Stall size: not on file, ask which size they want.',
+    applied ? `Applied on: ${applied}.` : '',
+    `Application status: ${row.status}.`,
+    `Payment: ${state.payment?.status || 'none'}.`,
+    `Contract: ${row.contract_signed_at ? 'signed' : 'not signed yet'}.`,
+    `Floor stall: ${alloc.stall ? `allocated ${alloc.stall}` : 'not allocated yet'}.`,
+    (pendingRequestsLine(state) || '').trim(),
+  ].filter(Boolean).join(' ')
 }
 
 async function getPaymentStatus(vendorId: string): Promise<string> {

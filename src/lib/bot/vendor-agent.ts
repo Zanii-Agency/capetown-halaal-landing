@@ -153,6 +153,13 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
   // until it read as established fact. A model cannot be argued out of a
   // hallucination by silence, so the absence is stated.
   parts.push('', 'THERE IS NO "VENDOR PACK", welcome pack, info pack or starter pack, and no such document exists to send. Never mention one, never promise one is coming, and if a vendor asks about a pack tell them everything is in their portal. Everything you can actually send a vendor, you send with a tool: anything not covered by a tool does not exist and must not be offered.')
+  // WHAT THEY APPLIED FOR IS ALWAYS ON RECORD. Vendors keep forgetting their
+  // stall size, price and application date, and the bot used to answer by asking
+  // them back or claiming the size was never captured. Both are wrong:
+  // check_application_status carries all three. Stated positively so the model
+  // reads the record instead of guessing that something is absent.
+  parts.push('', 'A vendor\'s chosen stall size, its price and the date they applied are always on their record. When a vendor asks what they applied for, what size or price they chose, or when they applied, call check_application_status and tell them the exact size, price and date from it. Their stall size is on file even before a floor position is allocated, so always give them the size and price you find.')
+
   // ATTACHMENTS. When a vendor sends a photo we open it and append what it
   // shows as a square-bracket note on their message. Stated positively so the
   // model treats it as its own perception: the alternative phrasing, a list of
