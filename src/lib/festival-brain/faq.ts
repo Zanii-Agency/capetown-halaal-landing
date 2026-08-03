@@ -38,6 +38,8 @@ export type FaqKey =
   | 'vendor_after_payment'
   | 'vendor_gate_passes'
   | 'vendor_part_payment'
+  | 'vendor_invoice_vat'
+  | 'vendor_table_chairs'
 
 export interface FaqEntry {
   key: FaqKey
@@ -70,11 +72,11 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
     key: 'venue',
     patterns: [
       /\b(where|venue|location|address|directions|map|how do i get)\b/i,
-      /\byoungsfield|wetton|claremont\b/i,
+      /\byoungsfield|wetton|claremont|chucker|plantation|ottery\b/i,
     ],
-    fact: 'Venue is Youngsfield Military Base, Wetton Road, Claremont, Cape Town.',
+    fact: 'Venue is Youngsfield Military Base, corner of Wetton Road and Chucker Road, Cape Town. Pin: https://maps.app.goo.gl/8d4RWy18667aHdxM7. Entrance is off Wetton Road, not Plantation or Ottery Road.',
     answer:
-      'The festival is at Youngsfield Military Base, Wetton Road, Claremont, Cape Town. Easiest by car or Uber. Claremont train station is a short ride away.',
+      'The festival is at Youngsfield Military Base, corner of Wetton Road and Chucker Road, Cape Town. Here is the pin: https://maps.app.goo.gl/8d4RWy18667aHdxM7. Important: the entrance is off Wetton Road. Some maps send people to Plantation or Ottery Road, which is not right. Easiest by car or Uber.',
   },
   ticket_price: {
     key: 'ticket_price',
@@ -92,9 +94,9 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
   parking: {
     key: 'parking',
     patterns: [/\bpark(ing)?\b/i, /\bcar park\b/i],
-    fact: 'Free parking is available at the venue. Arrive early on Saturday for best spots.',
+    fact: 'Free parking is available at the venue. Entrance is off Wetton Road at the corner of Chucker Road, not Plantation or Ottery Road.',
     answer:
-      'Free parking is available on-site at Youngsfield Military Base. Saturday is the busiest day, so arrive before 12:00 for the best spots.',
+      'Free parking is available on-site at Youngsfield Military Base. Use the entrance off Wetton Road at the corner of Chucker Road (pin: https://maps.app.goo.gl/8d4RWy18667aHdxM7). Some maps send people to Plantation or Ottery Road, which is not right. Saturday is the busiest day, so arrive before 12:00 for the best spots.',
   },
   kids_play_area: {
     key: 'kids_play_area',
@@ -492,6 +494,8 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
       /\bpay\b.{0,10}\b(it\s+)?off\b/i,
       /\bnow\b.{0,20}\brest\b.{0,20}\blater\b/i,
       /\bpay\b.{0,15}\bmonthly\b/i,
+      /\bpayment\s+plan\b/i,
+      /\bplan\b.{0,10}\bpay\b/i,
     ],
     fact:
       'Stall fees are not split into part payments, instalments or deposits. The full amount is what settles the stall. A vendor who cannot meet their own payment due date can take until 31 August 2026 to settle in full and keeps their reserved space until then, but this is only offered when they ask for it. Their original due date still stands, so they keep seeing the payment as due and may still receive reminders in the meantime.',
@@ -499,6 +503,35 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
     // truthful so it degrades correctly if anyone ever wires it as a canned answer.
     answer:
       'We are not able to take the stall fee in parts. The full amount is what settles the stall, and your space stays reserved for you. If the due date on your account is tight, you can take until 31 August 2026 to settle in full. Your account will still show the payment as due and you may still get reminders in the meantime, that is expected as long as you settle by then.',
+  },
+  vendor_invoice_vat: {
+    key: 'vendor_invoice_vat',
+    priority: 2,
+    patterns: [
+      /\bvat\b/i,
+      /\btax\s*(invoice|number|reg)/i,
+      /\binvoice\b.{0,15}\b(tax|vat)\b/i,
+      /\bvat\s*(number|registered|reg)/i,
+    ],
+    fact:
+      'The festival is not VAT registered. VAT cannot be charged and invoices do not show VAT.',
+    answer:
+      'The festival is not VAT registered, so VAT is not charged and your invoice will not show VAT. If you need a formal invoice for your records, I can send it to you.',
+  },
+  vendor_table_chairs: {
+    key: 'vendor_table_chairs',
+    priority: 1,
+    patterns: [
+      /\b(trestle\s*)?table\b/i,
+      /\bchairs?\b/i,
+      /\bfurniture\b/i,
+      /\bwhat.*included.*(stall|booth)\b/i,
+      /\bdo\s+(i|we)\s+get\b.{0,15}\b(table|chair|furniture)\b/i,
+    ],
+    fact:
+      'Every vendor gets one 1.8m trestle table and 2 chairs included in the stall price.',
+    answer:
+      'Every stall comes with one 1.8m trestle table and two chairs included in the price. You do not need to bring your own unless you want extras.',
   },
 }
 
@@ -530,6 +563,14 @@ export function matchFaq(message: string): FaqEntry | null {
  * Build a compact grounding context for the LLM from one or more FAQ entries.
  * Used in step 3 when we fall through to the LLM.
  */
+/** Deterministic guard: does this message ask about part-payments, instalments,
+ *  deposits, payment plans, or splitting the stall fee? Used before the brain /
+ *  agent so these questions never escalate to a human. */
+export function isPartPaymentAsk(message: string): boolean {
+  const text = (message || '').toLowerCase()
+  return FAQ.vendor_part_payment.patterns.some((pat) => pat.test(text))
+}
+
 export function buildGroundingContext(keys: FaqKey[]): string {
   if (keys.length === 0) return ''
   const lines = keys.map((k) => `- ${FAQ[k].fact}`)

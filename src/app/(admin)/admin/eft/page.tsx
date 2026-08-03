@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing } from '@/lib/payments/pricing'
+import { paymentReference } from '@/lib/payments'
 import { CustomerInboxClient } from '../customer-inbox/CustomerInboxClient'
 import EftAdminClient from './EftAdminClient'
 
@@ -109,14 +110,21 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     }
   }
 
-  type Contact = { id: string; business_name: string | null; contact_name: string | null; email: string | null }
+  type Contact = { id: string; business_name: string | null; contact_name: string | null; email: string | null; phone: string | null; reference: string }
   const rows: Row[] = []
   const candidates: Contact[] = []
   const excluded: Contact[] = []
 
   for (const a of (apps || []) as Array<Record<string, unknown>>) {
     const notes = (a.admin_notes as string) || ''
-    const contact: Contact = { id: a.id as string, business_name: a.business_name as string | null, contact_name: a.contact_name as string | null, email: a.email as string | null }
+    const contact: Contact = {
+      id: a.id as string,
+      business_name: a.business_name as string | null,
+      contact_name: a.contact_name as string | null,
+      email: a.email as string | null,
+      phone: a.phone as string | null,
+      reference: paymentReference(a.id as string),
+    }
     // Excluded from EFT (handled manually): never in the lane list or the add picker.
     if (hasNoEftMarker(notes)) { excluded.push(contact); continue }
     const marked = hasEftMarker(notes)

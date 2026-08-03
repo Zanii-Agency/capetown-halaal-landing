@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Send, Loader2, Paperclip, Sparkles, X, MessageSquareQuote, FolderOpen, RefreshCw } from 'lucide-react'
+import { Send, Loader2, Paperclip, Sparkles, X, MessageSquareQuote, FolderOpen, RefreshCw, Wand2 } from 'lucide-react'
 
 export interface SendResult {
   ok: boolean
@@ -53,6 +53,8 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
   const [spinBusy, setSpinBusy] = useState(false)
   /** The operator's own words before the last spin, so it can be undone. */
   const [preSpin, setPreSpin] = useState<string | null>(null)
+  const [aiInstruction, setAiInstruction] = useState('')
+  const [showInstruction, setShowInstruction] = useState(false)
   const [windowClosed, setWindowClosed] = useState(false)
   const [file, setFile] = useState<{ name: string; type: string; b64: string } | null>(null)
   const [canned, setCanned] = useState<Canned[]>([])
@@ -165,7 +167,12 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
       const r = await fetch('/api/admin/inbox/unified/ai', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'smart_reply', ...(phone ? { phone } : {}), ...(email ? { email } : {}) }),
+        body: JSON.stringify({
+          action: 'smart_reply',
+          ...(phone ? { phone } : {}),
+          ...(email ? { email } : {}),
+          ...(aiInstruction.trim() ? { instruction: aiInstruction.trim() } : {}),
+        }),
       })
       const j = await r.json().catch(() => ({}))
       if (!j.ok) throw new Error(j.message || 'AI could not draft that.')
@@ -203,6 +210,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
           channel,
           ...(phone ? { phone } : {}),
           ...(email ? { email } : {}),
+          ...(aiInstruction.trim() ? { instruction: aiInstruction.trim() } : {}),
         }),
       })
       const j = await r.json().catch(() => ({}))
@@ -256,6 +264,35 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
         </div>
       )}
 
+      <div className="mb-2 flex items-center gap-2">
+        <button
+          onClick={() => setShowInstruction((s) => !s)}
+          title="Give the AI a direction"
+          className={`inline-flex items-center gap-1 text-[11px] font-medium rounded-md px-2 py-1 transition-colors ${
+            showInstruction || aiInstruction.trim()
+              ? 'bg-[#cd2653]/10 text-[#cd2653]'
+              : 'text-neutral-500 hover:bg-neutral-100'
+          }`}
+        >
+          <Wand2 className="h-3 w-3" />
+          {showInstruction || aiInstruction.trim() ? 'AI direction set' : 'AI direction'}
+        </button>
+        {aiInstruction.trim() && !showInstruction && (
+          <span className="text-[11px] text-neutral-400 truncate max-w-[200px]">"{aiInstruction}"</span>
+        )}
+      </div>
+
+      {showInstruction && (
+        <div className="mb-2">
+          <input
+            value={aiInstruction}
+            onChange={(e) => setAiInstruction(e.target.value)}
+            placeholder="e.g. shorter, formal, mention the invoice"
+            className="w-full px-3 py-1.5 text-xs rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#cd2653]/20"
+          />
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
         <div className="relative flex-1">
           <textarea
@@ -293,6 +330,11 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
             <button onClick={aiDraft} disabled={aiBusy} title="Draft a reply with AI"
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-50">
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            </button>
+            <button onClick={text.trim() ? spin : aiDraft} disabled={aiBusy || spinBusy}
+              title={text.trim() ? 'Regenerate with the same direction' : 'Regenerate AI draft'}
+              className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-50">
+              {aiBusy || spinBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </button>
             {/* Spin rewrites YOUR text for this channel. Undo restores your own
                 words, so the rewrite is never a one-way door. */}

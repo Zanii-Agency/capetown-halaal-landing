@@ -4,6 +4,7 @@ import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { CONTRACT_VERSION } from '@/lib/contract/copy'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -108,6 +109,14 @@ export async function POST(req: NextRequest) {
   // Best-effort audit event (winning call only). Canonical site_events shape:
   // { session_id, event_type, path, metadata }. contract_signed is in the
   // activity-feed union, so it surfaces in the admin feed + vendor Activity tab.
+  await recordVendorAction({
+    applicationId: app.id,
+    eventType: 'contract_signed',
+    actorEmail: ctx.email,
+    note: `mode: ${body.signatureMode}`,
+    afterValue: path,
+  })
+
   try {
     await admin.from('site_events').insert({
       session_id: `contract-${app.id}`,

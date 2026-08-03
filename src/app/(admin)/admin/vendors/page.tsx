@@ -4,17 +4,23 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
-import { visiblePaymentStatus, vendorInOwnerScope, isEftAdmin } from '@/lib/eft'
+import { visiblePaymentStatus } from '@/lib/eft'
 import { parseVendorExtras } from '@/lib/vendor-extras'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { VendorsList, type VendorRow } from '@/components/admin/vendors/VendorsList'
 
 export const dynamic = 'force-dynamic'
 
-// Approved-vendor hub. Lists only status=approved applications + a relationship
-// summary per row (allocated stall, payment status, contract signed, todo
-// blockers). Clicking opens /admin/vendors/[id], which renders the full
-// per-vendor profile already implemented in this folder.
+// Approved-vendor hub. Taona 2026-08-02: the festival owner sees the SAME list
+// as the master — ALL approved vendors plus withdrawn ones (stored as
+// status='rejected' + the portal-state withdrawn marker, Law 8). The owner-scope
+// filter that used to live here was a comms predicate glued onto an operational
+// list, and it left her at "67 approved" while Applications said 167.
+//
+// THE MASK IS UNCHANGED. visiblePaymentStatus still collapses every EFT-lane
+// state (collected included) to 'none' for her, and only Yoco-settled payments
+// (Y&K, Farfashions) read as paid. The list is global; the EFT truth stays hers
+// never.
 export default async function VendorsListPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -27,14 +33,18 @@ export default async function VendorsListPage() {
   const { data: apps } = await admin
     .from('vendor_applications')
     .select(
-      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, paid_at, contract_signed_at, contract_pdf_path, docs_complete_at, created_at'
+      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, paid_at, contract_signed_at, contract_pdf_path, docs_complete_at, created_at, status'
     )
-    .eq('status', 'approved')
+    .in('status', ['approved', 'rejected'])
     .order('business_name', { ascending: true })
 
-  const viewerIsEftAdmin = isEftAdmin(user.email)
   const rows: VendorRow[] = (apps || [])
-    .filter((a) => viewerIsEftAdmin || vendorInOwnerScope(a.admin_notes as string | null, a.paid_at as string | null))
+    .filter((a) => {
+      if (a.status === 'approved') return true
+      // status='rejected' doubles as withdrawn (CHECK constraint, Law 8). Keep
+      // only the marker-carriers; genuine rejections never render here.
+      return !!parsePortalState((a.admin_notes as string) || '').withdrawn
+    })
     .map((a) => {
       const notes = (a.admin_notes as string) || ''
       const { stall, status: stallStatus } = parseAllocation(notes)
@@ -44,10 +54,12 @@ export default async function VendorsListPage() {
       const docsCount = (portal.docs || []).length
       const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)
       const extras = parseVendorExtras(a.special_requirements as string | null)
+      const withdrawn = !!portal.withdrawn
       // Prefer the raw stall-type label the vendor chose; fall back to the tier slug label.
       const stallType = extras.stallType || tierLabel(a.preferred_booth_tier as string)
 
       const blockers: string[] = []
+      if (withdrawn) blockers.push('Withdrawn')
       if (paymentStatus !== 'paid' && paymentStatus !== 'waived') blockers.push('Fee unpaid')
       if (!contractSigned) blockers.push('Contract unsigned')
       if (docsCount === 0) blockers.push('No docs')
@@ -75,6 +87,7 @@ export default async function VendorsListPage() {
         contract_signed_at: (a.contract_signed_at as string) || null,
         blockers,
         created_at: (a.created_at as string) || '',
+        withdrawn,
       }
     })
 

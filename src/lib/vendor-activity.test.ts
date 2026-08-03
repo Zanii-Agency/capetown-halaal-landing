@@ -97,3 +97,15 @@ test('a vendor who has done nothing says so rather than printing an empty list',
   const msg = buildLoginAlert({ businessName: 'New Co', place: 'an unknown location', ip: null, activity: {} })
   assert.match(msg, /\*Progress:\* nothing completed yet/)
 })
+
+test('the activity ping headline reads as presence, not a login (Angelpie stall change, 2026-08-01)', () => {
+  // An existing portal session never "logs in" — the 12h presence ping must
+  // say so, or the master goes hunting for a login event that does not exist.
+  const msg = buildLoginAlert({
+    businessName: 'Angelpie', contactName: 'Waseema', place: 'Cape Town, ZA', ip: null,
+    activity: { payment: { status: 'none' }, priorLogins: [] },
+    action: 'is on their portal right now.',
+  })
+  assert.match(msg, /^\*Angelpie \(Waseema\)\* is on their portal right now\./)
+  assert.doesNotMatch(msg, /just logged in/)
+})

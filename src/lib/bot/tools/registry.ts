@@ -20,11 +20,17 @@ import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
 import { sendMedia, sendText, fetchMediaBytes } from '@/lib/whatsapp'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { paymentReference } from '@/lib/payments'
+import { recordEftProof } from '@/lib/payments/eft-proof-shared'
+import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
+import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
+import { CONTRACT_VERSION } from '@/lib/contract/copy'
 import { startVendorVerification } from '@/lib/bot/vendor-session'
 import { buildSendable } from '@/lib/inbox/send-library'
+import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
 
 const PORTAL_LOGIN = 'cthalaal.co.za/exhibitor/login'
 
@@ -69,6 +75,19 @@ export const TOOL_DEFS = [
     description: "Give THIS vendor their contract: a link to their signed contract if signed, otherwise the portal link to review and sign it. Call when a verified vendor asks for or about their contract.",
     strict: true,
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
+    name: 'sign_contract',
+    description: "Sign the vendor contract for THIS vendor in WhatsApp. Call ONLY when the vendor has clearly read/accepted the contract terms and provided their full printed name (e.g. 'I agree, John Smith'). The tool records the signature, renders the signed PDF, and unlocks the payment step. If they have not given their full name, ask for it first.",
+    strict: true,
+    input_schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        print_name: { type: 'string', description: 'The exact full name the vendor types to sign with' },
+      },
+      required: ['print_name'],
+    },
   },
   {
     name: 'get_logo_upload_link',
@@ -170,6 +189,12 @@ export const TOOL_DEFS = [
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
   {
+    name: 'upload_eft_proof',
+    description: "Upload a proof-of-payment image or PDF THIS vendor just sent on WhatsApp into the EFT proof flow. Call ONLY when the vendor is on the EFT lane and the file is clearly a bank payment proof (EFT slip, payment confirmation, bank app screenshot). This stores it against their payment record, notifies the finance team, and unlocks their portal provisionally. If the vendor is NOT on EFT, tell them to upload documents through the portal instead.",
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
     name: 'escalate_to_human',
     description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call when a verified vendor has a request or question you cannot resolve with the other tools. Pass a one-line summary in `note`.",
     strict: true,
@@ -195,8 +220,9 @@ export const TOOL_DEFS = [
 // New scoped tools MUST be added here — fail closed, not open.
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
-  'send_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
-  'get_payment_due_date', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'escalate_to_human',
+  'send_contract', 'sign_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
+  'get_payment_due_date', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'upload_eft_proof',
+  'escalate_to_human',
 ])
 
 export interface ToolOutcome {
@@ -224,13 +250,18 @@ async function ownRow(vendorId: string) {
   const db = createAdminClient()
   const { data } = await db
     .from('vendor_applications')
-    .select('business_name, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements')
+    // NO payment_due_date: the column does not exist on this project (DDL is
+    // blocked, Law 8) and selecting it failed this scoped fetch with 42703,
+    // which silently broke EVERY vendor tool below (status, due date, stall).
+    // The due date is computed from reviewed_at + 30 by computePaymentDue.
+    .select('business_name, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements, reviewed_at')
     .eq('id', vendorId)
     .single()
   return data as {
     business_name: string; contact_name: string | null; email: string | null; status: string
     admin_notes: string | null; contract_signed_at: string | null; contract_pdf_path: string | null
     preferred_booth_tier: string | null; special_requirements: unknown
+    payment_due_date: string | null; reviewed_at: string | null
   } | null
 }
 
@@ -295,6 +326,44 @@ async function getBadgeAllocation(vendorId: string): Promise<string> {
 }
 
 /**
+ * Persist a bot-initiated outbound to wa_messages and ping the admin inbox to
+ * refresh. Best-effort: a logging failure must never break the actual send.
+ */
+async function logBotSend(phone: string | undefined | null, body: string, library: string, providerMessageId?: string) {
+  if (!phone) return
+  try {
+    const db = createAdminClient()
+    const waPhone = phone.replace(/^\+/, '')
+    const metadata = { library, sent_by: 'bot' }
+    if (providerMessageId) {
+      // The shared send functions now auto-log. Upsert so bot-initiated sends keep
+      // their richer metadata (contract/invoice library key).
+      const { data: existing } = await db
+        .from('wa_messages')
+        .select('id')
+        .eq('provider_message_id', providerMessageId)
+        .limit(1)
+      if (existing && existing.length > 0) {
+        await db.from('wa_messages').update({ metadata }).eq('provider_message_id', providerMessageId)
+        await broadcastInboxRefresh('bot-send')
+        return
+      }
+    }
+    await db.from('wa_messages').insert({
+      direction: 'out',
+      wa_phone: waPhone,
+      body,
+      status: 'sent',
+      provider_message_id: providerMessageId || null,
+      metadata,
+    })
+    await broadcastInboxRefresh('bot-send')
+  } catch (e) {
+    console.warn('[tool registry] bot send log failed:', (e as Error).message)
+  }
+}
+
+/**
  * SEND the contract, as a file, rather than describing one.
  *
  * This used to return a STRING and nothing else, so "I'll send you your
@@ -309,18 +378,22 @@ function sendContractDeferred(session: VendorSession): () => Promise<void> {
     try {
       const built = await buildSendable(vendorId, 'contract')
       if (built?.kind === 'document' && built.bytes) {
-        await sendMedia(waPhone, {
+        const res = await sendMedia(waPhone, {
           bytes: built.bytes,
           mimeType: built.mimeType || 'application/pdf',
           filename: built.filename || 'contract.pdf',
           kind: 'document',
           caption: built.caption,
         })
+        await logBotSend(waPhone, built.caption || 'Your contract.', 'contract', res.messageId)
         return
       }
       // Not signed yet: the library's link item is the honest alternative.
       const link = await buildSendable(vendorId, 'contract_link')
-      if (link?.caption) await sendText(waPhone, link.caption)
+      if (link?.caption) {
+        const res = await sendText(waPhone, link.caption)
+        await logBotSend(waPhone, link.caption, 'contract_link', res.messageId)
+      }
     } catch (e) {
       console.error('[tool send_contract] deferred send failed:', (e as Error).message)
     }
@@ -333,6 +406,89 @@ async function contractStatusLine(vendorId: string): Promise<string> {
   return row.contract_signed_at
     ? 'Sending your signed contract now.'
     : `Your contract is waiting in your portal at ${PORTAL_LOGIN}. Sending you the link now.`
+}
+
+async function signContract(session: VendorSession, printName: string): Promise<string> {
+  const vendorId = session.vendorId!
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not find your application just now. Please try again shortly.'
+  if (row.contract_signed_at) {
+    return `Your contract is already signed. You can move on to paying your stall fee in your portal at ${PORTAL_LOGIN}.`
+  }
+  if (!printName || printName.trim().length < 2) {
+    return `To sign the contract, please type your full name exactly as you want it to appear on the signed agreement.`
+  }
+
+  const db = createAdminClient()
+  const signedAtIso = new Date().toISOString()
+  const signatureDataUrl = typedSignatureDataUrl(printName.trim())
+
+  const pdf = await renderSignedContractPdf({
+    vendorName: String(row.business_name || 'Vendor'),
+    contactName: String(row.contact_name || ''),
+    printName: printName.trim(),
+    signedAtPlace: 'WhatsApp',
+    signedAtIso,
+    signatureDataUrl,
+    ip: null,
+    applicationId: vendorId,
+  })
+  if (!pdf) {
+    return `I could not generate the signed contract just now. Please sign it in your portal at ${PORTAL_LOGIN} under Contract, or try again shortly.`
+  }
+
+  const path = `signed-contracts/${vendorId}.pdf`
+  const { error: upErr } = await db.storage.from('vendor-docs').upload(path, pdf, {
+    contentType: 'application/pdf',
+    upsert: true,
+  })
+  if (upErr) {
+    console.error('[tool sign_contract] upload failed:', upErr.message)
+    return `I could not store the signed contract just now. Please sign it in your portal at ${PORTAL_LOGIN} under Contract, or try again shortly.`
+  }
+
+  const { data: transitioned, error: dbErr } = await db
+    .from('vendor_applications')
+    .update({
+      contract_signed_at: signedAtIso,
+      contract_signed_ip: null,
+      contract_signed_ua: 'WhatsApp',
+      contract_pdf_path: path,
+      contract_version: CONTRACT_VERSION,
+    })
+    .eq('id', vendorId)
+    .is('contract_signed_at', null)
+    .select('id')
+
+  if (dbErr) {
+    console.error('[tool sign_contract] db update failed:', dbErr.message)
+    return `I could not record the signature just now. Please try again shortly or sign in your portal at ${PORTAL_LOGIN}.`
+  }
+
+  const wonTransition = Array.isArray(transitioned) && transitioned.length > 0
+  if (wonTransition) {
+    try {
+      await db.from('site_events').insert({
+        session_id: `contract-${vendorId}`,
+        event_type: 'contract_signed',
+        path: '/api/whatsapp/webhook',
+        metadata: {
+          vendor_application_id: vendorId,
+          business_name: row.business_name,
+          mode: 'type',
+          print_name: printName.trim(),
+          version: CONTRACT_VERSION,
+          signed_at: signedAtIso,
+          storage_path: path,
+          source: 'whatsapp',
+        },
+      })
+    } catch (e) {
+      console.warn('[tool sign_contract] site_events insert failed:', (e as Error).message)
+    }
+  }
+
+  return `Thank you, ${printName.trim()}. Your Vendor Contract 2026 is signed and saved. You can now pay your stall fee in your portal at ${PORTAL_LOGIN} under Payments.`
 }
 
 function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
@@ -362,7 +518,9 @@ function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
       })
       if (!pdf) return
       const slug = (row.business_name || 'invoice').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'invoice'
-      await sendMedia(waPhone, { bytes: pdf, mimeType: 'application/pdf', filename: `CTH-Invoice-${slug}.pdf`, kind: 'document', caption: 'Your Cape Town Halaal Festival invoice.' })
+      const caption = 'Your Cape Town Halaal Festival invoice.'
+      const res = await sendMedia(waPhone, { bytes: pdf, mimeType: 'application/pdf', filename: `CTH-Invoice-${slug}.pdf`, kind: 'document', caption })
+      await logBotSend(waPhone, caption, 'invoice', res.messageId)
     } catch (e) {
       console.error('[tool get_invoice] deferred send failed:', (e as Error).message)
     }
@@ -538,9 +696,36 @@ async function getPaymentDueDate(vendorId: string): Promise<string> {
   const row = await ownRow(vendorId)
   if (!row) return 'I could not load your application just now. Please try again shortly.'
   const { computePaymentDue, daysUntil, fmtDate } = await import('@/lib/exhibitor-paygate')
-  const due = computePaymentDue(row as { payment_due_date?: string | null; reviewed_at?: string | null })
+
+  // 1. Portal state is the live source of truth (payment reminders write here).
+  const st = parsePortalState(row.admin_notes || '')
+  let due: Date | null = st.payment?.due ? new Date(st.payment.due) : null
+  if (due && isNaN(due.getTime())) due = null
+
+  // 2. Fallback to explicit column / reviewed_at.
+  if (!due) {
+    due = computePaymentDue(row)
+  }
+
+  // 3. Final fallback: the APPROVED_NOTIFIED marker (set when the approval
+  //    template went out) plus 30 days. This covers the common case where the
+  //    application was approved but neither portal state nor reviewed_at are
+  //    populated yet.
+  if (!due && row.admin_notes) {
+    const m = row.admin_notes.match(APPROVED_NOTIFIED_RE)
+    if (m) {
+      const notified = m[0].match(/:(\d{4}-\d{2}-\d{2}T[^⟧]+)/)?.[1]
+      if (notified) {
+        const d = new Date(notified)
+        if (!isNaN(d.getTime())) {
+          d.setDate(d.getDate() + 30)
+          due = d
+        }
+      }
+    }
+  }
+
   if (!due) return 'I do not have a payment due date on your account yet. The team will confirm it with you.'
-  const st = parsePortalState((row as { admin_notes?: string }).admin_notes || '')
   if (st.payment?.status === 'paid' || st.payment?.status === 'collected') {
     return `Your stall fee is settled, thank you, so there is nothing outstanding. Your original due date was ${fmtDate(due)}.`
   }
@@ -639,7 +824,7 @@ function inferDocType(filename?: string, mimeType?: string): string {
   return 'other'
 }
 
-async function uploadDocument(session: VendorSession): Promise<string> {
+export async function uploadDocument(session: VendorSession): Promise<string> {
   const vendorId = session.vendorId!
   const media = session.media
   if (!media || (media.kind !== 'image' && media.kind !== 'document')) {
@@ -657,9 +842,47 @@ async function uploadDocument(session: VendorSession): Promise<string> {
   const docType = inferDocType(media.filename, media.mimeType || fetched.contentType)
   const ext = extensionFrom(media.filename, media.mimeType || fetched.contentType)
   const safeName = (media.filename || `document-${Date.now()}.${ext}`).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)
-  const path = `${vendorId}/wa-${docType}-${Date.now()}.${ext}`
 
   const db = createAdminClient()
+
+  // LOGO ROUTING (2026-08-02, Taona: "if someone sends their logo or documents
+  // the bot must upload them to their respective places, not still ask them
+  // more questions"). A vendor with no logo yet who sends an IMAGE almost
+  // always means it as their logo — especially right after the logo reminder.
+  // Put it in the profile logo slot (same bucket + state as the portal logo
+  // upload) instead of the generic Documents bucket, so they go live without
+  // a second upload. Once a logo exists, further images stay documents.
+  if (media.kind === 'image') {
+    const { data: vrow } = await db
+      .from('vendor_applications')
+      .select('admin_notes')
+      .eq('id', vendorId)
+      .maybeSingle()
+    const hasLogo = !!parsePortalState((vrow as { admin_notes?: string | null } | null)?.admin_notes || '').profile?.logo_path
+    if (!hasLogo) {
+      const logoPath = `${vendorId}/logo-${Date.now()}.${ext}`
+      const { error: logoErr } = await db.storage.from('vendor-docs').upload(logoPath, fetched.bytes, {
+        contentType: media.mimeType || fetched.contentType || `image/${ext}`,
+        upsert: true,
+      })
+      if (logoErr) {
+        console.error('[tool upload_document] logo upload failed:', logoErr.message)
+        return `I could not save that logo just now. Please try uploading it in your portal at ${PORTAL_LOGIN} under Profile.`
+      }
+      await updatePortalState(vendorId, (s) => ({ ...s, profile: { ...(s.profile || {}), logo_path: logoPath } }))
+      try {
+        await db.from('site_events').insert({
+          session_id: `vendor-${vendorId}`,
+          event_type: 'profile_logo_uploaded',
+          path: '/exhibitor/portal/profile',
+          metadata: { vendor_application_id: vendorId, file_name: safeName, storage_path: logoPath, source: 'whatsapp' },
+        })
+      } catch { /* telemetry never blocks the reply */ }
+      return `Done, jazakallah, your logo is uploaded and will show on your public profile. If your tagline/description is filled in on your portal Profile page, you are all set to go live in the sector listings.`
+    }
+  }
+
+  const path = `${vendorId}/wa-${docType}-${Date.now()}.${ext}`
   const { error: upErr } = await db.storage.from('vendor-docs').upload(path, fetched.bytes, {
     contentType: media.mimeType || fetched.contentType || 'application/octet-stream',
     upsert: true,
@@ -718,6 +941,46 @@ async function uploadDocument(session: VendorSession): Promise<string> {
   }
 
   return `Thanks, I have uploaded your "${safeName}" to your portal Documents as ${docType.replace(/_/g, ' ')}. The team will review it and you can see it in your portal at ${PORTAL_LOGIN} under Documents.`
+}
+
+async function uploadEftProof(session: VendorSession): Promise<string> {
+  const vendorId = session.vendorId!
+  const media = session.media
+  if (!media || (media.kind !== 'image' && media.kind !== 'document')) {
+    return `I do not see a photo or PDF to upload. Send your proof of payment here first, then say "upload my proof" and I will pass it to the finance team.`
+  }
+
+  const fetched = await fetchMediaBytes(media.id)
+  if (!fetched) {
+    return `I could not fetch that file just now. It may be too large or the link expired. Please upload it in your portal at ${PORTAL_LOGIN} under Payments, or send it again.`
+  }
+  if (fetched.bytes.byteLength > MAX_DOC_BYTES) {
+    return `That file is too large for me to fetch over WhatsApp. Please upload it in your portal at ${PORTAL_LOGIN} under Payments (up to 10MB there).`
+  }
+
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not find your application just now. Please try again shortly.'
+
+  const result = await recordEftProof({
+    applicationId: vendorId,
+    admin_notes: row.admin_notes,
+    paid_at: null,
+    email: row.email,
+    phone: session.waPhone,
+    business_name: row.business_name,
+    contact_name: row.contact_name,
+    file: { bytes: Buffer.from(fetched.bytes), name: media.filename, type: media.mimeType || fetched.contentType },
+    source: 'whatsapp',
+  })
+
+  if (!result.ok) {
+    if (result.status === 403) {
+      return `I cannot take an EFT proof here because your account is not on the EFT payment lane. If you paid by card, give it a few minutes to reflect. Otherwise upload any documents in your portal at ${PORTAL_LOGIN} under Documents, or ask the team for help.`
+    }
+    return `I could not upload that proof just now: ${result.error}. Please try uploading it in your portal at ${PORTAL_LOGIN} under Payments, or send it again.`
+  }
+
+  return `Jazakallah, I have received your proof of payment and passed it to the finance team. You will get a confirmation once it is checked against the account. You can also see it in your portal at ${PORTAL_LOGIN} under Payments.`
 }
 
 // Taona 2026-07-29, verbatim: "anytime a person text bot to withdraw or cancel
@@ -822,6 +1085,9 @@ export async function executeTool(session: VendorSession, name: string, args: un
         deferred = sendContractDeferred(session)
         content = await contractStatusLine(session.vendorId!)
         break
+      case 'sign_contract':
+        content = await signContract(session, (args as { print_name?: string })?.print_name || '')
+        break
       case 'get_logo_upload_link': content = getLogoUploadLink(); break
       case 'start_verification': content = await startVerification(session, (args as { email?: string })?.email || ''); break
       case 'request_password_reset': content = await requestPasswordReset(session); break
@@ -832,6 +1098,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'where_is_my_stall': content = await whereIsMyStall(session.vendorId!); break
       case 'report_issue': content = await reportIssue(session, args as { issue_type?: string; description?: string }); break
       case 'upload_document': content = await uploadDocument(session); break
+      case 'upload_eft_proof': content = await uploadEftProof(session); break
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
         deferred = getInvoiceDeferred(session)

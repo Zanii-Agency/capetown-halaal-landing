@@ -132,7 +132,7 @@ test('vendorPortalFacts: empty state reads cleanly', () => {
   const vendor = {
     id: 'app-2', business_name: 'New Co', contact_name: null, email: null,
     status: 'pending', stall: null, payment_status: 'none',
-    contract_signed_at: null, tier_label: null,
+    contract_signed_at: null, payment_due_date: null, payment_due_days: null, tier_label: null,
   } as Parameters<typeof vendorPortalFacts>[1]
   const out = vendorPortalFacts({ v: 1 }, vendor)
   assert.match(out, /Documents on file: none yet/)
@@ -146,7 +146,7 @@ function vendorIdentity(over: Partial<NonNullable<ResolvedIdentity['vendor']>> =
     vendor: {
       id: 'app-A', business_name: 'Frullato', contact_name: null, email: null,
       status: 'approved', stall: 'A12', payment_status: 'pending',
-      contract_signed_at: null, tier_label: null, applicationCount: 1, ...over,
+      contract_signed_at: null, payment_due_date: null, payment_due_days: null, tier_label: null, applicationCount: 1, ...over,
     },
   }
 }

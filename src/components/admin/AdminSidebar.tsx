@@ -91,7 +91,13 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
   const searchParams = useSearchParams()
   const router = useRouter()
   const badge = ROLE_BADGE_STYLE[role]
-  // TEMPORARY EFT lane: inject the dev-only EFT item into the MONEY group.
+  // TEMPORARY EFT lane: the EFT admin is the master operator; badge them
+  // differently from the festival owner so the two Owner rows are not confused.
+  const isMaster = role === 'owner' && eftAdmin
+  const badgeLabel = isMaster ? 'Master' : badge.label
+  const badgeCls = isMaster
+    ? 'bg-purple-50 text-purple-700 border-purple-200'
+    : badge.cls
   const groups: NavGroup[] = eftAdmin
     ? navGroups.map((g) =>
         g.label === 'MONEY'
@@ -396,12 +402,12 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
           <span
             className={cn(
               'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border',
-              badge.cls
+              badgeCls
             )}
-            title={`Role: ${badge.label}`}
+            title={`Role: ${badgeLabel}`}
           >
             <BadgeIcon className="w-3 h-3" />
-            {badge.label}
+            {badgeLabel}
           </span>
         </div>}
         <button
@@ -452,12 +458,12 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
           <span
             className={cn(
               'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border',
-              badge.cls
+              badgeCls
             )}
-            title={`Role: ${badge.label}`}
+            title={`Role: ${badgeLabel}`}
           >
             <BadgeIcon className="w-3 h-3" />
-            {badge.label}
+            {badgeLabel}
           </span>
         </div>
       </div>

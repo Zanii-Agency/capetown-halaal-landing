@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { updatePortalState, parsePortalState, type SupportMessage } from '@/lib/portal-state'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 import {
   checkIpThrottle,
   logGuardEvent,
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
   })
 
   const msg: SupportMessage = { id: `${Date.now()}`, from: 'vendor', body: text, at: new Date().toISOString() }
+  await recordVendorAction({ applicationId, eventType: 'support_message_sent', actorEmail: ctx.email, note: text.slice(0, 200) })
   const next = await updatePortalState(applicationId, (s) => {
     const existing = s.support || []
     const appended = [...existing, msg]

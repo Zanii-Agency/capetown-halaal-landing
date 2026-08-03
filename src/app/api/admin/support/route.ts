@@ -7,8 +7,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, type SupportMessage } from '@/lib/portal-state'
-import { vendorInOwnerScope } from '@/lib/eft'
-import { hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { laneScopeFor, hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -47,16 +46,24 @@ export async function GET() {
     .order('updated_at', { ascending: false })
     .limit(1000)
 
+  const scope = await laneScopeFor(user.email)
   const threads: SupportThread[] = []
   const hideEft = hidesEftContent(user.email)
   for (const row of apps || []) {
     // The legacy portal support[] thread must follow the same ownership rule as
     // the main inbox: master-lane vendors are not visible to the festival owner.
-    if (!vendorInOwnerScope(row.admin_notes as string | null, row.paid_at as string | null)) continue
+    const id = row.id as string
+    const email = (row.email as string | null) || null
+    const phone = (row.phone as string | null) || null
+    if (scope.blocks({ applicationId: id, email, phone })) continue
 
     const state = parsePortalState(row.admin_notes as string)
     let messages = (state.support || []).slice().sort((a, b) => a.at.localeCompare(b.at))
-    messages = stripEftMessages(messages, (m) => m.body, hideEft)
+    messages = stripEftMessages(messages, (m) => m.body, hideEft, {
+      scope,
+      identity: { applicationId: id, email, phone },
+      at: (m) => m.at,
+    })
     if (!messages.length) continue
     const latest = messages[messages.length - 1]
     const lastIn = [...messages].reverse().find((m) => m.from === 'vendor')

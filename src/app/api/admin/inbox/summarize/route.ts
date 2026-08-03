@@ -93,13 +93,13 @@ async function loadMessages(
   }
   const { data } = (await supabase
     .from('mail_messages')
-    .select('direction, body, received_at')
+    .select('direction, body, subject, received_at')
     .eq('thread_id', thread.id)
     .order('received_at', { ascending: true })
-    .limit(40)) as unknown as { data: Array<{ direction: string; body: string | null; received_at: string }> | null }
+    .limit(40)) as unknown as { data: Array<{ direction: string; body: string | null; subject: string | null; received_at: string }> | null }
   return (data ?? []).map((m) => ({
     direction: m.direction === 'outbound' ? 'out' : 'in',
-    body: m.body ?? '',
+    body: `${m.subject || ''}\n${m.body ?? ''}`.trim(),
     created_at: m.received_at,
   }))
 }

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { updatePortalState, parsePortalState, hasPaid } from '@/lib/portal-state'
 import { activeProvider, paymentsEnabled, paymentReference } from '@/lib/payments'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 
 const SITE = 'https://cthalaal.co.za'
 
@@ -94,6 +95,7 @@ export async function POST() {
         },
       }
     })
+    await recordVendorAction({ applicationId, eventType: 'payment_initiated', actorEmail: ctx.email, note: `amount ${amount}, ref ${reference}` })
     return NextResponse.json({ url })
   } catch (e) {
     console.error('[payments] initiate failed:', (e as Error).message)

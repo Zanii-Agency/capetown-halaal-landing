@@ -43,6 +43,7 @@ const bodySchema = z.object({
   // 'spin' rewrites the operator's own text for the surface it is going out on,
   // so it is the one action that must know the channel.
   channel: z.enum(['whatsapp', 'email']).optional(),
+  instruction: z.string().max(500).optional(),
 })
 
 interface Turn { role: 'vendor' | 'team'; channel: 'whatsapp' | 'email'; text: string; at: string }
@@ -77,12 +78,12 @@ async function loadThread(db: ReturnType<typeof createAdminClient>, phone?: stri
     const { data } = await db
       .from('wa_messages')
       .select('direction, body, created_at, template_name')
-      .or(`wa_phone.eq.+${noPlus},wa_phone.eq.${noPlus}`)
+      .in('wa_phone', [`+${noPlus}`, noPlus])
       .order('created_at', { ascending: true })
       .limit(60)
     for (const m of (data || []) as Array<{ direction: string; body: string | null; created_at: string; template_name: string | null }>) {
       const text = (m.body || '').trim()
-      if (!text || /^\s*\[[A-Z_]+\]/.test(text) || /HUMAN_HANDOVER/.test(text) || /^\s*🛎/u.test(text)) continue
+      if (!text || /^\s*\[[A-Z_]+[:\]]/.test(text) || /HUMAN_HANDOVER/.test(text) || /^\s*🛎/u.test(text)) continue
       turns.push({ role: m.direction === 'in' ? 'vendor' : 'team', channel: 'whatsapp', text, at: m.created_at })
     }
   }
@@ -117,18 +118,25 @@ function lastInbound(turns: Turn[]): string | null {
   return null
 }
 
-function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean, channel: 'whatsapp' | 'email' = 'email'): { system: string; user: string } | { error: string } {
+function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean, channel: 'whatsapp' | 'email' = 'email', instruction?: string): { system: string; user: string } | { error: string } {
   const convo = transcript(turns)
   const base = `${hardFacts(eftOn)}\n\n${STYLE}`
+  const dir = instruction?.trim() ? `\n\nOPERATOR DIRECTION: ${instruction.trim()}` : ''
   switch (action) {
     case 'smart_reply': {
       const inbound = lastInbound(turns)
       if (!inbound) return { error: 'No incoming message to reply to yet.' }
-      return { system: `You are the Young at Heart festival team replying to a vendor or guest on the same channel. Write the reply only, no preamble.\n\n${base}`, user: `CONVERSATION:\n${convo}\n\nTHEIR LATEST MESSAGE:\n"${inbound}"\n\nReply directly to what they actually asked or said in that latest message, point by point. Do not send a generic acknowledgement or a template: answer their specific questions and requests using the facts above. If they ask about payment, part payment, deposits, proof of payment, or a deadline, answer using the current stall fee payment facts and terms exactly.` }
+      return {
+        system: `You are the Young at Heart festival team replying to a vendor or guest on the same channel. Write the reply only, no preamble.\n\n${base}`,
+        user: `CONVERSATION:\n${convo}\n\nTHEIR LATEST MESSAGE:\n"${inbound}"\n\nRead the full conversation above, then reply directly to what they actually asked or said in their latest message. Do not repeat points already covered in the thread. Do not send a generic acknowledgement or a template: answer their specific questions and requests using the facts above. If they ask about payment, part payment, deposits, proof of payment, or a deadline, answer using the current stall fee payment facts and terms exactly.${dir}`,
+      }
     }
     case 'tone_adjust': {
       if (!draft.trim()) return { error: 'Type a draft reply first, then adjust its tone.' }
-      return { system: `You rewrite a draft reply to be warmer and clearer while keeping the meaning and all facts. Output the rewritten reply only.\n\n${base}`, user: `DRAFT:\n${draft}\n\nRewrite it warmer, clearer, and a touch more professional. Keep it short.` }
+      return {
+        system: `You rewrite a draft reply to be warmer and clearer while keeping the meaning and all facts. Output the rewritten reply only.\n\n${base}`,
+        user: `DRAFT:\n${draft}\n\nRewrite it warmer, clearer, and a touch more professional. Keep it short.${dir}`,
+      }
     }
     // SPIN. The operator writes the message; this rewrites it for the surface it
     // is going out on. Distinct from smart_reply, which invents a reply from the
@@ -155,11 +163,14 @@ RULES THAT OVERRIDE EVERYTHING:
 ${shape}
 
 ${base}`,
-        user: `THE OPERATOR WROTE:\n${draft}\n\nRewrite it for the target channel, keeping their meaning and facts intact.`,
+        user: `THE OPERATOR WROTE:\n${draft}\n\nRewrite it for the target channel, keeping their meaning and facts intact.${dir}`,
       }
     }
     case 'follow_up':
-      return { system: `You write a short proactive follow-up to move this conversation forward (e.g. nudge to apply, pay, send a halaal certificate, or confirm details). Output the message only.\n\n${base}`, user: `CONVERSATION:\n${convo}\n\nWrite a helpful follow-up nudge appropriate to where this conversation stands.` }
+      return {
+        system: `You write a short proactive follow-up to move this conversation forward (e.g. nudge to apply, pay, send a halaal certificate, or confirm details). Output the message only.\n\n${base}`,
+        user: `CONVERSATION:\n${convo}\n\nWrite a helpful follow-up nudge appropriate to where this conversation stands.${dir}`,
+      }
     case 'summarize':
       return { system: `You summarise a support conversation for a festival operator. Output 1 to 2 sentences: who they are, what they want, and what is outstanding. No greeting.\n\n${STYLE}`, user: `CONVERSATION:\n${convo}\n\nSummarise it.` }
     case 'attachments':
@@ -203,13 +214,13 @@ export async function POST(req: NextRequest) {
     at: (t) => t.at,
   })
   const eftOn = await getEftMode()
-  const prompt = promptFor(body.action, turns, body.draft || '', eftOn, body.channel ?? (body.phone ? 'whatsapp' : 'email'))
+  const prompt = promptFor(body.action, turns, body.draft || '', eftOn, body.channel ?? (body.phone ? 'whatsapp' : 'email'), body.instruction)
   if ('error' in prompt) return NextResponse.json({ ok: false, message: prompt.error }, { status: 200 })
 
   try {
     const res = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 320,
+      max_tokens: 400,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
     })

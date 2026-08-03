@@ -15,6 +15,7 @@ import { laneScopeFor } from '@/lib/inbox-lane'
 import { listSendables, buildSendable } from '@/lib/inbox/send-library'
 import { sendMedia, sendText, toE164 } from '@/lib/whatsapp'
 import { sendEmail } from '@/lib/email/resend'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -111,6 +112,7 @@ export async function POST(req: NextRequest) {
       provider_message_id: res.messageId || null,
       metadata: { sent_by: g.email, library: body.key },
     })
+    await broadcastInboxRefresh('send-library')
     return NextResponse.json({ ok: true, sent: body.key, channel: 'whatsapp' })
   }
 
@@ -125,5 +127,6 @@ export async function POST(req: NextRequest) {
     confirmDelivery: true,
   })
   if (!res.ok) return NextResponse.json({ ok: false, message: `Not sent: ${res.error || 'unknown'}` }, { status: 502 })
+  await broadcastInboxRefresh('send-library')
   return NextResponse.json({ ok: true, sent: body.key, channel: 'email' })
 }

@@ -502,7 +502,17 @@ export async function runVendorBrain(
   let portalFacts = ''
   try {
     const state = await getPortalState(vendor.id)
-    portalFacts = '\n\n' + vendorPortalFacts(state, vendor)
+    // Make sure the bot sees the real payment due date even when the portal marker
+    // hasn't been backfilled. It is a first-class DB column and is already in the
+    // identity briefing; mirroring it here keeps the portal-facts block honest.
+    const enrichedState: typeof state = {
+      ...state,
+      payment: {
+        ...state.payment,
+        due: state.payment?.due || vendor.payment_due_date || undefined,
+      },
+    }
+    portalFacts = '\n\n' + vendorPortalFacts(enrichedState, vendor)
   } catch (e) {
     console.error('[vendor-brain] getPortalState failed:', (e as Error).message)
   }

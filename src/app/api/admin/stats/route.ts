@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 
 export async function GET() {
   try {
@@ -24,9 +23,6 @@ export async function GET() {
     if (!adminUser) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
-
-    const userEmail = user.email ?? ''
-    const viewerIsEftAdmin = isEftAdmin(userEmail)
 
     // Booth tier price map for revenue estimation
     const TIER_PRICES: Record<string, number> = {
@@ -57,19 +53,7 @@ export async function GET() {
     ])
 
     const total_apps = total.count ?? 0
-    let approved = approved_r.count ?? 0
-    // For non-EFT admins, the approved count should only include vendors that are
-    // actually in the festival owner's scope (doctrine: she never sees unpaid /
-    // master-lane vendors). EFT admin keeps the operational total.
-    if (!viewerIsEftAdmin) {
-      const { data: approvedApps } = await admin
-        .from('vendor_applications')
-        .select('admin_notes, paid_at')
-        .eq('status', 'approved')
-      approved = (approvedApps || []).filter((a) =>
-        vendorInOwnerScope(a.admin_notes as string | null, a.paid_at as string | null),
-      ).length
-    }
+    const approved = approved_r.count ?? 0
     const pending = pending_r.count ?? 0
     const rejected = rejected_r.count ?? 0
     const info_requested = infoReq_r.count ?? 0
@@ -95,10 +79,6 @@ export async function GET() {
     let estimatedRevenue = 0
     const categoryBreakdown: Record<string, number> = {}
     for (const app of (nonRejectedApps || [])) {
-      // Scope aggregate dashboard numbers the same way individual vendor rows are
-      // scoped: master-lane vendors do not contribute to the festival owner's view.
-      if (!viewerIsEftAdmin && !vendorInOwnerScope(app.admin_notes as string | null, app.paid_at as string | null)) continue
-
       const tier = app.preferred_booth_tier || ''
       estimatedRevenue += TIER_PRICES[tier] || 0
 

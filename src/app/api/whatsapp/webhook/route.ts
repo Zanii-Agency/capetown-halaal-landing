@@ -16,6 +16,7 @@ import {
   isStartKeyword,
 } from '@/lib/wa-consent'
 import { askFestivalBrain } from '@/lib/festival-brain'
+import { isPartPaymentAsk, FAQ } from '@/lib/festival-brain/faq'
 import { detectHumanIntent, escalateToHuman, isInHandover, isPendingHandover, setPendingHandover } from '@/lib/bot/handover'
 import { notifyOwners } from '@/lib/bot/notify'
 import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
@@ -28,6 +29,8 @@ import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
 import { runMasterAgent } from '@/lib/bot/master-agent'
 import { seeImage } from '@/lib/bot/see-image'
 import { resolveVendorSession, confirmVendorVerification } from '@/lib/bot/vendor-session'
+import { uploadDocument } from '@/lib/bot/tools/registry'
+import { tryHandleEftProofMedia } from '@/lib/bot/handle-eft-proof-media'
 import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { isMaintenanceEnabled } from '@/lib/maintenance'
@@ -161,7 +164,7 @@ async function weAskedSomething(e164: string): Promise<boolean> {
       // reply, no model call, no trace. Same +27 vs 27 key fragmentation already
       // documented in tools/registry.ts.
       .select('body')
-      .or(`wa_phone.eq.${e164},wa_phone.eq.${e164.replace(/^\+/, '')}`)
+      .in('wa_phone', [e164, e164.replace(/^\+/, '')])
       .eq('direction', 'out')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -488,6 +491,18 @@ async function handleInbound(msg: {
       ? await seeImage(msg.media.id, msg.media.mimeType)
       : null
 
+    // Payment proof (image or PDF) from a known vendor: lane them if needed,
+    // record the proof, alert the master, and stop here so it never gets lost
+    // as a generic "thanks for your document" ack.
+    if (msg.media) {
+      const proof = await tryHandleEftProofMedia(e164, msg.media, caption, seen)
+      if (proof.handled) {
+        const res = await sendText(e164, proof.reply)
+        await logMessage({ direction: 'out', wa_phone: e164, body: proof.reply, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+        return
+      }
+    }
+
     if (seen) {
       // Context for the agent, never shown verbatim to the vendor.
       const note = seen.isPaymentProof
@@ -501,7 +516,22 @@ async function handleInbound(msg: {
       // something. Their words alone beat a canned acknowledgement.
       msg.text = `${caption}\n\n[They also attached ${msg.media?.kind === 'image' ? 'an image' : 'a file'} which could not be read automatically.]`
     } else {
-      // Nothing to go on: no words, nothing legible. The original behaviour.
+      // Nothing to go on: no words, nothing legible. If a verified vendor sent a
+      // document/photo, actually upload it to their portal Documents bucket
+      // instead of just saying "got it". This closes the "I emailed it" loop and
+      // keeps the admin activity feed honest.
+      if (mediaSender.role === 'vendor' && msg.type !== 'sticker' && mediaSender.vendor?.id && msg.media) {
+        const session = {
+          status: 'verified' as const,
+          waPhone: e164,
+          vendorId: mediaSender.vendor.id,
+          media: msg.media,
+        }
+        const result = await uploadDocument(session)
+        const res = await sendText(e164, result)
+        await logMessage({ direction: 'out', wa_phone: e164, body: result, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+        return
+      }
       if (mediaSender.role === 'vendor' && msg.type !== 'sticker') {
         const ack = mediaSender.firstName
           ? `Thanks ${mediaSender.firstName}, got your document and it is on your application. The team will take a look.`
@@ -609,6 +639,17 @@ async function handleInbound(msg: {
   // count, etc.). Admins are already handled above; resolution here is for
   // vendors / ticket buyers / unknowns.
   const identity = await resolveIdentity(e164)
+
+  // Deterministic guard: part-payment / instalment / payment-plan questions are
+  // a firm no and must NEVER escalate to a human. The model sometimes misses the
+  // phrasing (e.g. "payment plan"), so we short-circuit with the canonical FAQ
+  // answer before any brain/agent call.
+  if (identity.role === 'vendor' && isPartPaymentAsk(msg.text)) {
+    const answer = FAQ.vendor_part_payment.answer
+    const res = await sendText(e164, answer)
+    await logMessage({ direction: 'out', wa_phone: e164, body: answer, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+    return
+  }
 
   // NOTE: the EFT lane deliberately does NOT change the bot's replies. Vendors in
   // the lane get the normal agent/brain like everyone else (no "maintenance"
@@ -915,14 +956,33 @@ async function logMessage(row: {
   const idOnlyMetadata = row.media
     ? { media: { kind: row.media.kind, id: row.media.id, mime_type: row.media.mimeType, filename: row.media.filename, caption: row.media.caption } }
     : null
-  const { data: inserted } = await db.from('wa_messages').insert({
-    direction: row.direction,
-    wa_phone: row.wa_phone,
-    body: row.body,
-    status: row.status,
-    provider_message_id: row.providerMessageId || null,
-    ...(idOnlyMetadata ? { metadata: idOnlyMetadata } : {}),
-  }).select('id').single()
+
+  // DOUBLE-WRITE GUARD (2026-08-02). sendText/sendTemplate already log their own
+  // outbound row via logWhatsAppOutbound, and most webhook call sites ALSO call
+  // logMessage after the send — the reply then rendered TWICE in the chat (same
+  // provider_message_id, e.g. Shamillas Fashions' logo ack sent two identical
+  // bubbles). If a row with this provider id already exists, skip the insert;
+  // thread bookkeeping + the refresh below still run.
+  let inserted: { id?: string } | null = null
+  if (row.direction === 'out' && row.providerMessageId) {
+    const { data: existing } = await db
+      .from('wa_messages')
+      .select('id')
+      .eq('provider_message_id', row.providerMessageId)
+      .limit(1)
+    if (existing && existing.length > 0) inserted = existing[0] as { id?: string }
+  }
+  if (!inserted) {
+    const { data: ins } = await db.from('wa_messages').insert({
+      direction: row.direction,
+      wa_phone: row.wa_phone,
+      body: row.body,
+      status: row.status,
+      provider_message_id: row.providerMessageId || null,
+      ...(idOnlyMetadata ? { metadata: idOnlyMetadata } : {}),
+    }).select('id').single()
+    inserted = ins as { id?: string } | null
+  }
 
   // Defer the slow media capture off the synchronous 200 path. after() runs
   // post-response on Vercel and survives the function (unlike a bare floating
@@ -1079,7 +1139,7 @@ async function recentHistory(e164: string): Promise<Array<{ role: 'user' | 'assi
     .select('direction, body')
     // Both key forms: rows exist with and without the leading '+', and an
     // eq on one of them silently returns a partial conversation.
-    .or(`wa_phone.eq.${e164},wa_phone.eq.${e164.replace(/^\+/, '')}`)
+    .in('wa_phone', [e164, e164.replace(/^\+/, '')])
     .order('created_at', { ascending: false })
     .limit(12)
   const rows = (data as Array<{ direction: string; body: string }>) || []

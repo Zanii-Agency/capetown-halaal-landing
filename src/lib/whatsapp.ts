@@ -4,6 +4,7 @@
 
 import { createHmac, timingSafeEqual } from 'crypto'
 import { canSend, type WaCategory } from './wa-consent'
+import { logWhatsAppOutbound } from './outbound-log'
 
 const GRAPH = 'https://graph.facebook.com/v21.0'
 const WA_TOKEN = process.env.WHATSAPP_TOKEN || ''
@@ -145,7 +146,9 @@ export async function sendText(to: string, body: string): Promise<SendResult> {
     type: 'text',
     text: { preview_url: false, body: sendBody },
   })
-  return extractMessageId(data, waId)
+  const result = extractMessageId(data, waId)
+  await logWhatsAppOutbound({ phone: to, body: sendBody, providerMessageId: result.messageId || null })
+  return result
 }
 
 // --- Free-form media (document/image), only valid inside the 24h window ---
@@ -173,7 +176,14 @@ export async function sendMedia(
     type: opts.kind,
     [opts.kind]: media,
   })
-  return extractMessageId(data, waId)
+  const result = extractMessageId(data, waId)
+  await logWhatsAppOutbound({
+    phone: to,
+    body: opts.caption || `📎 ${opts.filename}`,
+    providerMessageId: result.messageId || null,
+    metadata: { kind: opts.kind, filename: opts.filename },
+  })
+  return result
 }
 
 // --- Approved template (business-initiated) ---
@@ -206,12 +216,12 @@ export async function sendTemplate(
     })
   }
 
+  let cleanParams = bodyParams
   if (bodyParams.length) {
     // Template frames are Meta approved copy, but PARAMS are live text (names,
     // order summaries) and can carry a leak. Sanitize each against the wall
     // (2026-06-12): a brand inside a param drops THAT param to the reask
     // phrase; a stray dash is stripped. The template frame itself never dies.
-    let cleanParams = bodyParams
     try {
       const { sanitizeReply } = await import('./bot-guards/index.js')
       const { CTH_BOT_GUARDS_CONFIG } = await import('./bot/guards-config')
@@ -235,7 +245,34 @@ export async function sendTemplate(
       ...(components.length ? { components } : {}),
     },
   })
-  return extractMessageId(data, waId)
+  const result = extractMessageId(data, waId)
+  // Log the body the OPERATOR reads, not a bare label. festival_announcement
+  // renders "Hi {{1}}!" then a blank line then {{2}} (see proof-ack.ts). Every
+  // template in the local registry renders from its previewBody with the
+  // positional params mapped onto the spec's named params. Only a template
+  // missing from BOTH falls back to the "[Template: ...]" label.
+  let logBody = `[Template: ${templateName}]`
+  if (templateName === 'festival_announcement' && cleanParams.length >= 2) {
+    logBody = `Hi ${cleanParams[0]}!\n\n${cleanParams.slice(1).join('\n\n')}`
+  } else {
+    try {
+      const { findWaTemplate, renderWaTemplatePreview } = await import('./templates/wa-meta')
+      const spec = findWaTemplate(templateName)
+      if (spec) {
+        const named: Record<string, string> = {}
+        spec.params.forEach((p, i) => { named[p.key] = cleanParams[i] ?? '' })
+        logBody = renderWaTemplatePreview(spec, named)
+      }
+    } catch { /* keep the label — logging must never break a send */ }
+  }
+  await logWhatsAppOutbound({
+    phone: to,
+    body: logBody,
+    providerMessageId: result.messageId || null,
+    templateName,
+    metadata: { bodyParams },
+  })
+  return result
 }
 
 // --- Convenience: deliver a ticket (template + QR document header) ---

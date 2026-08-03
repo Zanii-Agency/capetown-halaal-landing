@@ -125,13 +125,16 @@ export function buildLoginAlert(args: {
   activity: VendorActivityInput
   /** How they got in: the reset link and the login form are different stories. */
   source?: string
+  /** First-line verb. The activity ping overrides this ("is on their portal
+   *  right now.") because an existing session never "logs in". */
+  action?: string
 }): string {
   const issues = vendorIssues(args.activity)
   const actions = vendorActions(args.activity)
   const who = args.contactName ? `${args.businessName} (${args.contactName})` : args.businessName
 
   const lines = [
-    `*${who}* just logged in.`,
+    `*${who}* ${args.action || 'just logged in.'}`,
     `${args.place}${args.ip ? ` · ${args.ip}` : ''} · ${loginContext(args.activity.priorLogins)}${args.source ? ` · via ${args.source}` : ''}`,
   ]
   if (issues.length) lines.push('', '*Issues:*', ...issues.slice(0, 5).map((i) => `• ${i}`))

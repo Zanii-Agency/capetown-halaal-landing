@@ -5,6 +5,7 @@ import { updatePortalState, parsePortalState } from '@/lib/portal-state'
 import { getEftMode, vendorInEftLane, eftReference } from '@/lib/eft'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { notifyOwners } from '@/lib/bot/notify'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 
 const THROTTLE_MS = 12 * 60 * 60 * 1000 // one heads-up per vendor per 12h
 
@@ -47,6 +48,13 @@ export async function POST() {
     ...s,
     payment: { ...s.payment, eft_revealed_at: prior && withinWindow ? prior : now },
   }))
+
+  await recordVendorAction({
+    applicationId,
+    eventType: 'eft_details_revealed',
+    actorEmail: ctx.email,
+    note: `eft_revealed_at stamped`,
+  })
 
   if (withinWindow) return NextResponse.json({ ok: true, notified: false })
 

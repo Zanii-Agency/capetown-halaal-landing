@@ -32,6 +32,7 @@ import { withoutMerged } from '@/lib/merge'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 import { canPin } from '@/lib/inbox/automated'
 import { loadDoneMarks, isCleared } from '@/lib/inbox/queue-state'
+import { countsAsWaitingInbound } from '@/lib/inbox/waiting-signals'
 
 export type MailBox = 'support' | 'gmail'
 export type ChannelKey = 'whatsapp' | MailBox
@@ -88,9 +89,15 @@ const phoneKey = (p: string | null | undefined) => (p || '').replace(/\D/g, '').
 
 /** Our own bookkeeping rows, never conversation. Same predicate as
  *  unified/route.ts:81 and the skip in messages/route.ts:76, so the list and the
- *  open thread finally agree on what counts as a message. */
+ *  open thread finally agree on what counts as a message.
+ *
+ *  Covers:
+ *    - [NEEDS_HUMAN], [HUMAN_HANDOVER_ON], [vendor_application_approved]
+ *    - [PENDING_ACTION:{...}] and [PENDING_ACTION_DONE:{...}] confirmation gates
+ *    - Internal notification pings like "🛎️ ..."
+ */
 export const isMarker = (b: string) =>
-  /^\s*\[[A-Z_]+\]/.test(b) || /HUMAN_HANDOVER/.test(b) || /^\s*🛎/u.test(b)
+  /^\s*\[[A-Z_]+[:\]]/.test(b) || /HUMAN_HANDOVER/.test(b) || /^\s*🛎/u.test(b)
 
 /** Preview label for a media-only message, so the list reads "📷 Photo" rather
  *  than an empty row. Mirrors the kinds the webhook stores on metadata.media. */
@@ -191,11 +198,10 @@ async function buildVendorIndex(db: ReturnType<typeof createAdminClient>) {
 /**
  * WhatsApp threads, aggregated from wa_messages by phone. Reads no mail table.
  *
- * needs_response mirrors the derivation the retired Needs You queue used: the
- * latest [NEEDS_HUMAN] escalation marker counts as outstanding until a HUMAN
- * reply (an outbound carrying sent_by, i.e. sent through the composer rather
- * than by the bot) lands after it. A bot reply does not clear it, which is the
- * whole point: the bot replying is often why a human is needed.
+ * needs_response = the vendor wrote something and nobody has replied yet, OR
+ * the bot dropped a [NEEDS_HUMAN] marker and the conversation has not moved on
+ * since then. A later reply (human OR bot) clears the marker, because the marker
+ * is a point-in-time escalation, not a permanent label.
  */
 export async function loadWhatsAppThreads(viewerEmail: string | null | undefined): Promise<ChannelThread[]> {
   const db = createAdminClient()
@@ -220,7 +226,6 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
 
   const threads = new Map<string, ChannelThread>()
   const needsHumanAt = new Map<string, string>()
-  const humanReplyAt = new Map<string, string>()
   const lastInboundAt = new Map<string, string>()
   const lastOutboundAt = new Map<string, string>()
   const botPaused = new Map<string, boolean>()
@@ -284,7 +289,6 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
         else if (/^\[HUMAN_HANDOVER_OFF\]/.test(raw)) { botPaused.set(k, false); handoverSeen.add(k) }
       }
       if (/\[NEEDS_HUMAN\]/.test(raw) && !needsHumanAt.has(k)) needsHumanAt.set(k, m.created_at)
-      if (m.direction === 'out' && m.metadata?.sent_by && !humanReplyAt.has(k)) humanReplyAt.set(k, m.created_at)
 
       // Markers are OUR bookkeeping, not conversation. 115 of them were winning
       // last_preview in the list while messages/route.ts categorically refuses
@@ -292,7 +296,12 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
       // different things for the same conversation.
       if (isMarker(raw)) continue
 
-      if (m.direction === 'in' && !lastInboundAt.has(k)) lastInboundAt.set(k, m.created_at)
+      if (m.direction === 'in' && !lastInboundAt.has(k)) {
+        const media = (m.metadata as { media?: { kind?: string } } | null)?.media
+        if (countsAsWaitingInbound(m.body, { hasMedia: !!media })) {
+          lastInboundAt.set(k, m.created_at)
+        }
+      }
       if (m.direction === 'out' && !lastOutboundAt.has(k)) lastOutboundAt.set(k, m.created_at)
 
       if (!threads.has(k)) {
@@ -358,7 +367,6 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
     if (t.application_id) t.starred = starredApps.has(t.application_id)
     const inAt = lastInboundAt.get(k)
     const anyOut = lastOutboundAt.get(k)
-    const humanOut = humanReplyAt.get(k)
     // Unread = they wrote something we have not LOOKED AT. A reply also counts
     // as having seen it, so answering without opening still clears the badge.
     const seen = readAt.get(k)
@@ -375,7 +383,12 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
     // operator has not marked it done. The manual clear is the part that
     // matters: derived state alone can never be emptied by the person working it.
     const escalated = needsHumanAt.get(k)
-    const escalationOpen = !!escalated && (!humanOut || new Date(humanOut) < new Date(escalated))
+    // A [NEEDS_HUMAN] marker is only outstanding if nothing has happened on the
+    // thread since it was dropped. The marker is a point-in-time request for a
+    // person; a later bot or human reply (the visible conversation) means the
+    // thread has moved on. Without this, every bot send after an old escalation
+    // still showed "Waiting on a person".
+    const escalationOpen = !!escalated && (!anyOut || new Date(anyOut) < new Date(escalated))
     const nobodyAnswered = !!inAt && (!anyOut || new Date(anyOut) < new Date(inAt))
     t.needs_response =
       (nobodyAnswered || escalationOpen) && !isCleared(doneMarks.get(t.id), inAt ?? null)
@@ -411,7 +424,7 @@ export async function loadMailThreads(
   const owner = new Map<string, MailBox>()
   const latest = new Map<string, MailRow>()
   const lastInbound = new Map<string, string>()
-  const lastHumanOut = new Map<string, string>()
+  const lastAnyOut = new Map<string, string>()
 
   // PAGE, do not cap. This loader carried `.limit(4000)`, which PostgREST
   // silently truncates to 1000 (db-max-rows on this project) — the exact bug the
@@ -452,7 +465,7 @@ export async function loadMailThreads(
       const box: MailBox = m.mailbox === 'gmail' ? 'gmail' : 'support'
       if (!owner.has(m.thread_id)) { owner.set(m.thread_id, box); latest.set(m.thread_id, m) }
       if (m.direction === 'in' && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at)
-      if (m.direction === 'out' && m.sent_by && !lastHumanOut.has(m.thread_id)) lastHumanOut.set(m.thread_id, m.created_at)
+      if (m.direction === 'out' && !lastAnyOut.has(m.thread_id)) lastAnyOut.set(m.thread_id, m.created_at)
     }
 
     emptyPages = owner.size === before ? emptyPages + 1 : 0
@@ -515,7 +528,7 @@ export async function loadMailThreads(
     // thread, so a row past the vendor's cutoff does not render at all.
     if (scope.hidesMessage({ email: t.peer_email, applicationId: appId }, newest?.created_at || t.last_inbound_at)) continue
     const inAt = lastInbound.get(t.id) || t.last_inbound_at
-    const outAt = lastHumanOut.get(t.id)
+    const outAt = lastAnyOut.get(t.id)
     out.push({
       id: `mail:${t.id}`,
       channel: mailbox,
@@ -535,10 +548,11 @@ export async function loadMailThreads(
       last_preview: (mailPreview(newest?.body_text) || t.subject || '').slice(0, 120),
       last_direction: newest?.direction ?? null,
       unread: (t.unread_count ?? 0) > 0,
-      // A human owes a reply when the newest inbound is newer than the newest
-      // HUMAN outbound. Derived from real message direction, never from
-      // unread_count: reading a thread used to mark it answered and evict it
-      // from the queue with the customer still waiting.
+      // A reply is owed when the newest inbound is newer than the newest
+      // outbound of ANY kind (human, bot, script, system). Derived from real
+      // message direction, never from unread_count: reading a thread used to
+      // mark it answered and evict it from the queue with the customer still
+      // waiting.
       // canPin keeps newsletters and no-reply senders OUT of the pin while
       // leaving them in the list. Without it 37 of 45 Gmail threads pinned as
       // "waiting on a person", which is a queue nobody can read. A thread that

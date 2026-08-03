@@ -20,6 +20,7 @@ import { computePaymentDue, fmtDate } from '@/lib/exhibitor-paygate'
 import { segmentCount, SEGMENT_LABELS, type SegmentKey } from '@/lib/bot/segments'
 import { hasEftMarker, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
 import { pendingStallChangeRequests } from '@/lib/stall-change-action'
+import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
 
 export const MASTER_TOOL_DEFS = [
   {
@@ -94,6 +95,17 @@ export const MASTER_TOOL_DEFS = [
       required: ['vendor_id'],
     },
   },
+  {
+    name: 'vendor_login_activity',
+    description:
+      'List vendor portal logins and recent portal activity for a specific date. Call when Taona asks "who logged in on the 31st", "who logged in yesterday", "what did vendors do today", or any question about vendor login/activity history. The date can be a day like "31", "31 July", "2026-07-31", "today", or "yesterday".',
+    strict: true,
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: { date: { type: 'string', description: 'The date to look up: day-of-month (e.g. "31"), "today", "yesterday", or an ISO date like "2026-07-31".' } },
+      required: ['date'],
+    },
+  },
 ] as const
 
 export interface MasterToolOutcome { content: string; isError?: boolean }
@@ -131,9 +143,21 @@ export type VRow = {
   id: string; business_name: string | null; contact_name: string | null; email: string | null
   phone: string | null; status: string | null; admin_notes: string | null; paid_at: string | null
   preferred_booth_tier: string | null; special_requirements: unknown; reviewed_at: string | null
+  payment_due_date: string | null
 }
 
 const DAY = 86400000
+
+/** Extract the approval timestamp from the APPROVED_NOTIFIED marker, if present. */
+function approvedAtFromNotes(admin_notes: string | null): Date | null {
+  if (!admin_notes) return null
+  const m = admin_notes.match(APPROVED_NOTIFIED_RE)
+  if (!m) return null
+  const ts = m[0].match(/:(\d{4}-\d{2}-\d{2}T[^⟧]+)/)?.[1]
+  if (!ts) return null
+  const d = new Date(ts)
+  return isNaN(d.getTime()) ? null : d
+}
 
 export function vendorSummary(r: VRow, ownerScoped = false): string {
   const state = parsePortalState(r.admin_notes || '')
@@ -145,15 +169,22 @@ export function vendorSummary(r: VRow, ownerScoped = false): string {
   const outstanding = Math.max(0, total - received)
   const alloc = parseAllocation(r.admin_notes || '')
 
-  // DUE DATE: the ONE rule, computePaymentDue (explicit due date if ever set,
-  // else reviewed_at + 30 days), the same function the vendor dashboard and the
-  // vendor bot use. This tool used to read pay?.due from portal state, which
-  // NOTHING writes, so the master brain saw no due date on any unpaid vendor and
-  // told Taona her date "genuinely isn't there yet" while her own dashboard was
-  // showing 25 August. A rule wired into some readers and not this one (Barfi
-  // Bliss, 2026-07-30). Now the master brain reads the same date everyone else
-  // does. pay?.due is kept as an override for the rare hand-set case.
-  const due = pay?.due ? new Date(pay.due) : computePaymentDue({ reviewed_at: r.reviewed_at })
+  // DUE DATE: portal state override → computePaymentDue (explicit column or
+  // reviewed_at + 30 days) → APPROVED_NOTIFIED marker + 30 days. This matches
+  // the vendor dashboard and the vendor bot so the master brain never says "no
+  // due date" while the vendor's own portal shows one.
+  let due: Date | null = pay?.due ? new Date(pay.due) : null
+  if (due && isNaN(due.getTime())) due = null
+  if (!due) {
+    due = computePaymentDue({ payment_due_date: r.payment_due_date, reviewed_at: r.reviewed_at })
+  }
+  if (!due) {
+    const approvedAt = approvedAtFromNotes(r.admin_notes)
+    if (approvedAt) {
+      approvedAt.setDate(approvedAt.getDate() + 30)
+      due = approvedAt
+    }
+  }
   let dueLine = ''
   let overdue = ''
   if (!paid && due && !isNaN(due.getTime())) {
@@ -175,11 +206,55 @@ export function vendorSummary(r: VRow, ownerScoped = false): string {
   return `${r.business_name || 'Unnamed'} (${r.contact_name || 'no contact'}, ${r.email || 'no email'}, ${r.phone || 'no phone'}) [vendor_id ${r.id}]: application ${r.status || 'unknown'}, ${payLine}, stall ${alloc.stall || 'not allocated'}${r.preferred_booth_tier ? ` (${tierLabel(r.preferred_booth_tier)})` : ''}${eft}.`
 }
 
+/**
+ * Character-insensitive normalisation for vendor matching. The straight vs
+ * curly apostrophe cost the master a live lookup: the row is stored as
+ * "It’s SnackTime" (U+2019) and a search for "It's SnackTime" (U+0027)
+ * returned zero rows, so the brain concluded the vendor did not exist while
+ * the login alert for them was still warm in the chat (2026-08-01).
+ */
+export function normalizeVendorText(s: string | null | undefined): string {
+  return (s || '')
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[’‘`´ʼ]/g, "'")
+    .replace(/[“”„]/g, '"')
+    .replace(/[^\p{L}\p{N}\s@.]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .trim()
+}
+
+/** True when any of the vendor's name/contact/email/phone fields contains the
+ *  (already normalised) query, or the query contains a full field for short
+ *  lookups. Pure: unit-tested without a DB. */
+export function vendorMatchesQuery(
+  row: { business_name?: string | null; contact_name?: string | null; email?: string | null; phone?: string | null },
+  normQuery: string,
+): boolean {
+  if (!normQuery) return false
+  const fields = [row.business_name, row.contact_name, row.email, row.phone].map(normalizeVendorText)
+  for (const f of fields) {
+    if (!f) continue
+    if (f.includes(normQuery)) return true
+    // Short query fully covered by one field word ("snacktime" in "it s snacktime"
+    // is handled above; this covers field-inside-query like "hoosain allie cth").
+    if (normQuery.includes(f) && f.length >= 4) return true
+  }
+  // Token overlap: every query token of 4+ chars appears in some field.
+  const tokens = normQuery.split(' ').filter((t) => t.length >= 4)
+  if (tokens.length && tokens.every((t) => fields.some((f) => f.includes(t)))) return true
+  return false
+}
+
 async function findVendors(query: string, ownerScoped = false): Promise<string> {
   const q = (query || '').trim()
   if (!q) return 'Give me a name, business, email, or phone to search for.'
   const db = createAdminClient()
-  const like = `%${q.replace(/[%_]/g, '')}%`
+  // Strip PostgREST-structural characters as well as wildcards: a comma, paren
+  // or dot in the query can break the .or() filter string (same misparse class
+  // as the +27 wa_phone bug fixed 2026-08-01).
+  const like = `%${q.replace(/[%_,().]/g, '')}%`
   // Filter AFTER the query, not with a WHERE clause: the lane lives in markers
   // on admin_notes plus paid_at, and vendorInOwnerScope is the single canonical
   // predicate for it. Re-expressing that as PostgREST filters would be a second
@@ -187,10 +262,34 @@ async function findVendors(query: string, ownerScoped = false): Promise<string> 
   // uses. Over-fetch instead and let the predicate decide.
   const { data } = await db
     .from('vendor_applications')
+    // NO payment_due_date: the column does not exist on this project (DDL is
+    // blocked, Law 8) and selecting it fails the WHOLE query with 42703, which
+    // read downstream as "No vendor matches" for every search. The due date is
+    // computed from reviewed_at + 30 by computePaymentDue instead.
     .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, reviewed_at')
     .or(`business_name.ilike.${like},contact_name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
     .limit(ownerScoped ? 40 : 12)
   let rows = (data || []) as VRow[]
+
+  // FUZZY FALLBACK. The direct query is character-literal: curly apostrophes,
+  // diacritics, doubled spaces and case all defeat it, and a zero result then
+  // reads to the brain as "this vendor does not exist". Only fires when the
+  // direct query found nothing, so every search that works today is unchanged.
+  if (!rows.length) {
+    const nq = normalizeVendorText(q)
+    // Broadest distinctive anchor: the longest word of 4+ letters.
+    const anchor = nq.split(' ').filter((t) => t.length >= 4).sort((a, b) => b.length - a.length)[0]
+    if (anchor) {
+      const broad = `%${anchor.replace(/[%_,().]/g, '')}%`
+      const { data: candidates } = await db
+        .from('vendor_applications')
+        .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, reviewed_at')
+        .or(`business_name.ilike.${broad},contact_name.ilike.${broad},email.ilike.${broad}`)
+        .limit(50)
+      rows = ((candidates || []) as VRow[]).filter((r) => vendorMatchesQuery(r, nq))
+    }
+  }
+
   if (ownerScoped) rows = rows.filter((r) => vendorInOwnerScope(r.admin_notes, r.paid_at))
   rows = rows.slice(0, 12)
   if (!rows.length) {
@@ -225,12 +324,12 @@ async function vendorConversation(vendorId: string, ownerScoped = false): Promis
     const { data: wa } = await db
       .from('wa_messages')
       .select('direction, body, created_at')
-      .or(`wa_phone.eq.+${phone},wa_phone.eq.${phone}`)
+      .in('wa_phone', [`+${phone}`, phone])
       .order('created_at', { ascending: false })
       .limit(12)
     for (const m of (wa || []) as Array<{ direction: string; body: string | null; created_at: string }>) {
       const raw = (m.body || '').trim()
-      if (!raw || /^\s*\[[A-Z_]+\]/.test(raw) || /^\s*🛎/u.test(raw)) continue
+      if (!raw || /^\s*\[[A-Z_]+[:\]]/.test(raw) || /HUMAN_HANDOVER/.test(raw) || /^\s*🛎/u.test(raw)) continue
       lines.push({ at: m.created_at, who: m.direction === 'in' ? 'vendor' : 'us', body: raw.slice(0, 240) })
     }
   }
@@ -358,6 +457,99 @@ async function vendorStaff(vendorId: string): Promise<string> {
   }).join('\n')
 }
 
+function resolveDateRange(phrase: string): { start: Date; end: Date; label: string } | null {
+  const now = new Date()
+  const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+  const p = (phrase || '').trim().toLowerCase()
+
+  if (p === 'today') {
+    return { start: today, end: new Date(today.getTime() + 86400000), label: 'today' }
+  }
+  if (p === 'yesterday') {
+    const y = new Date(today.getTime() - 86400000)
+    return { start: y, end: today, label: 'yesterday' }
+  }
+
+  // ISO date: 2026-07-31
+  if (/^\d{4}-\d{2}-\d{2}$/.test(p)) {
+    const d = new Date(`${p}T00:00:00Z`)
+    if (!isNaN(d.getTime())) {
+      return { start: d, end: new Date(d.getTime() + 86400000), label: p }
+    }
+  }
+
+  // Day-of-month: "31" → current month/year
+  const dayOnly = /^\d{1,2}$/.exec(p)
+  if (dayOnly) {
+    const day = parseInt(dayOnly[0], 10)
+    if (day >= 1 && day <= 31) {
+      const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), day))
+      if (!isNaN(d.getTime())) {
+        return { start: d, end: new Date(d.getTime() + 86400000), label: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}` }
+      }
+    }
+  }
+
+  // "31 July" / "July 31" / "31 jul"
+  const monthDay = /^(\d{1,2})\s+([a-z]{3,})$/.exec(p)
+  const dayMonth = /^([a-z]{3,})\s+(\d{1,2})$/.exec(p)
+  const parsed = monthDay ? { day: parseInt(monthDay[1], 10), month: monthDay[2] }
+    : dayMonth ? { day: parseInt(dayMonth[2], 10), month: dayMonth[1] }
+    : null
+  if (parsed) {
+    const monthIdx = new Date(`${parsed.month} 1, 2000`).getMonth()
+    if (!isNaN(monthIdx) && parsed.day >= 1 && parsed.day <= 31) {
+      const d = new Date(Date.UTC(now.getFullYear(), monthIdx, parsed.day))
+      return { start: d, end: new Date(d.getTime() + 86400000), label: `${now.getFullYear()}-${String(monthIdx + 1).padStart(2, '0')}-${String(parsed.day).padStart(2, '0')}` }
+    }
+  }
+
+  return null
+}
+
+async function vendorLoginActivity(datePhrase: string): Promise<string> {
+  const range = resolveDateRange(datePhrase)
+  if (!range) return `I did not understand the date "${datePhrase}". Try "31", "31 July", "2026-07-31", "today", or "yesterday".`
+
+  const db = createAdminClient()
+  const { data: events } = await db
+    .from('site_events')
+    .select('created_at, metadata')
+    .eq('event_type', 'vendor_login')
+    .gte('created_at', range.start.toISOString())
+    .lt('created_at', range.end.toISOString())
+    .order('created_at', { ascending: false })
+    .limit(500)
+
+  const logins = (events || []) as Array<{ created_at: string; metadata: { business_name?: string; application_id?: string; ip?: string | null; place?: string; source?: string } | null }>
+  if (!logins.length) return `No vendor portal logins recorded for ${range.label}.`
+
+  const dubaiTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Dubai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const dubaiDate = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Dubai',
+    day: 'numeric',
+    month: 'short',
+  })
+
+  const lines = logins.map((e) => {
+    const m = e.metadata || {}
+    const biz = m.business_name || 'Unnamed vendor'
+    const at = new Date(e.created_at)
+    const time = dubaiTime.format(at)
+    const date = dubaiDate.format(at)
+    const place = m.place || 'unknown location'
+    const source = m.source || 'portal'
+    return `- ${time} UAE (${date}) · ${biz} · ${place}${m.ip ? ` · ${m.ip}` : ''} · via ${source}`
+  })
+
+  return `${logins.length} vendor login${logins.length === 1 ? '' : 's'} on ${range.label}:\n` + lines.join('\n')
+}
+
 /**
  * Execute a master tool. THE WALL: refuses unless role === 'master'. Every tool
  * here reads across vendors, so a non-master caller (festival_owner, vendor,
@@ -382,6 +574,7 @@ export async function executeMasterTool(role: string, name: string, args: unknow
       case 'stall_occupancy': return { content: await stallOccupancy() }
       case 'vendor_documents': return { content: await vendorDocuments((args as { vendor_id?: string })?.vendor_id || '') }
       case 'vendor_staff': return { content: await vendorStaff((args as { vendor_id?: string })?.vendor_id || '') }
+      case 'vendor_login_activity': return { content: await vendorLoginActivity((args as { date?: string })?.date || '') }
       default: return { content: `Unknown tool: ${name}`, isError: true }
     }
   } catch (e) {

@@ -35,7 +35,7 @@ export const brand = {
   contact: {
     email: 'support@youngatheart.co.za',
     phone: '+27 65 943 5012',
-    venue: 'Youngsfield Military Base, Cape Town',
+    venue: 'Youngsfield Military Base, corner of Wetton Road and Chucker Road, Cape Town',
     dates: '11-13 December 2026',
   },
 } as const

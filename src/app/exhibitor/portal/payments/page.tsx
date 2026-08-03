@@ -130,7 +130,7 @@ export default async function PaymentsPage() {
           ? 'Extra charges were added to your stall. Please settle the balance below to stay confirmed.'
           : inEftLane
           ? 'Please pay your stall fee by EFT using the details below, then upload your proof of payment.'
-          : 'Your portal unlocks the moment your stall fee clears. Pay by card via Yoco, EFT details on request via support.'}
+          : 'Your portal unlocks the moment your stall fee clears. Pay securely by card via Yoco below.'}
       />
 
       {/* Wrong size? Let the vendor change stall size before paying so the fee
@@ -259,6 +259,7 @@ export default async function PaymentsPage() {
             bank={getEftBankDetails()}
             reference={eftRef}
             amount={outstanding ?? amount}
+            dueDate={due}
             businessName={(app?.business_name as string) || 'your business'}
           />
         ) : (

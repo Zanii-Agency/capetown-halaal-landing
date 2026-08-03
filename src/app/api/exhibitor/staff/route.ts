@@ -10,6 +10,7 @@ import {
 import { parseAllocation } from '@/lib/stalls'
 import { stripAllHtml } from '@/lib/sanitize'
 import { normalizePhone } from '@/lib/phone/normalize'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 import {
   createStaffBadgeOrder,
   cancelStaffBadgeOrder,
@@ -240,6 +241,13 @@ export async function POST(req: NextRequest) {
   })
 
   // Best-effort owner notification. Failure here never blocks the vendor's add.
+  await recordVendorAction({
+    applicationId,
+    eventType: 'staff_added',
+    actorEmail: ctx.email,
+    note: `${cleaned.name} (${cleaned.role})`,
+  })
+
   try {
     const { notifyOwners } = await import('@/lib/bot/notify')
     await notifyOwners({

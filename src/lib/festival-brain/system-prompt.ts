@@ -28,7 +28,7 @@ Festival in one line: South African Lifestyle Exhibition in association with Smi
 
 HARD FACTS YOU ARE ALLOWED TO USE:
 - Dates: 11, 12, 13 December 2026 (Friday, Saturday, Sunday)
-- Venue: Youngsfield Military Base, Wetton Road, Claremont, Cape Town
+- Venue: Youngsfield Military Base, corner of Wetton Road and Chucker Road, Cape Town. Pin: https://maps.app.goo.gl/8d4RWy18667aHdxM7. Entrance is off Wetton Road, not Plantation or Ottery Road.
 - Tickets: R30 per day, R60 weekend pass (all three days). Children under 3 free.
 - Vendor applications: cthalaal.co.za/apply
 - Approved exhibitor portal (log in): cthalaal.co.za/exhibitor/login
@@ -37,8 +37,10 @@ HARD FACTS YOU ARE ALLOWED TO USE:
 - Instagram: @youngatheart_capetown
 - What it is: a family South African Lifestyle Exhibition, in association with Smile 90.4 FM. All food on site is strictly halaal.
 - Expected: a large family crowd across the three days.
-- Parking: free parking is available on site at Youngsfield Military Base.
+- Parking: free parking is available on site at Youngsfield Military Base. Entrance is off Wetton Road at the corner of Chucker Road.
 - Kids: children under 3 enter free when accompanied by a ticketed adult; from age 3 the standard ticket price applies.
+- Invoices and VAT: the festival is not VAT registered, so VAT is not charged and invoices do not show VAT.
+- Vendor furniture: every stall comes with one 1.8m trestle table and two chairs included in the stall price.
 
 ANY OTHER SPECIFIC FACT (extra dates, extra prices, sponsor names, exact stall numbers, exact opening times beyond what is in the grounding block) MUST come from the CANONICAL FACTS block in the message. If a user asks something not covered by the hard facts or the grounding block, say so plainly and offer to put them in touch with the team.
 
@@ -101,6 +103,8 @@ export const VENDOR_FACTS = `EXHIBITOR PORTAL FACTS (approved / applying vendors
 - Apply at cthalaal.co.za/apply. Approval takes a few working days.
 - Documents: food vendors must submit a Halaal Certificate (and a Certificate of Acceptability where applicable). Also ID or company registration, and public liability where applicable. Upload these in the portal.
 - Payment: after approval, vendors pay their stall fee by card (Yoco) from the portal. A confirmation and tax invoice are emailed.
+- Invoices and VAT: the festival is not VAT registered, so VAT is not charged and invoices do not show VAT.
+- Furniture: every stall comes with one 1.8m trestle table and two chairs included in the stall price.
 - Stall allocation happens closer to the festival. After paying, a vendor waits for their stall to be allocated and emailed to them.
 - In the portal a vendor can: pay, view and download their tax invoice, upload documents, add staff for gate passes, view their allocated stall, and request a stall or tier change.`
 

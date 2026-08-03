@@ -1,6 +1,10 @@
 import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
+import { after } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { getRole } from '@/lib/admin-rbac'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { pingVendorActivity } from '@/lib/vendor-activity-ping'
 import PortalNav from '@/components/exhibitor/PortalNav'
 import { parsePortalState, hasPaid } from '@/lib/portal-state'
 import { WaOptInBanner } from '@/components/exhibitor/WaOptInBanner'
@@ -27,6 +31,21 @@ export default async function PortalLayout({ children }: { children: React.React
   // (Overview + paygate). Path-detection in Next 16 layouts is unreliable, so a
   // layout-level redirect either silently fails or infinite-loops on /contract
   // itself. See KT #248.
+
+  // "Vendor is on the portal right now" ping for the master: an existing
+  // session never re-announces a login, so the first page load in a 12h window
+  // records + alerts instead. After the response, never blocks the page.
+  {
+    const h = await headers()
+    const snapshot = new Map<string, string>()
+    for (const k of ['x-forwarded-for', 'x-real-ip', 'x-vercel-ip-city', 'x-vercel-ip-country-region', 'x-vercel-ip-country', 'cf-ipcountry']) {
+      const v = h.get(k)
+      if (v) snapshot.set(k, v)
+    }
+    const shim = { get: (k: string) => snapshot.get(k) ?? null }
+    const app = ctx.application
+    after(() => pingVendorActivity(createAdminClient(), shim, app as never))
+  }
 
   const businessName = (ctx.application?.business_name as string) || ctx.email
   const state = parsePortalState((ctx.application?.admin_notes as string) || null)

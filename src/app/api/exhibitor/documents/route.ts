@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState, type DocRecord } from '@/lib/portal-state'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 
 const BUCKET = 'vendor-docs'
 // Canonical doc-type keys. Must match portal.docs[].type and the admin
@@ -79,6 +80,14 @@ export async function POST(req: NextRequest) {
 
   // Activity timeline + admin notification fanout. site_events drives both
   // the admin inbox feed and the vendor profile Activity tab.
+  await recordVendorAction({
+    applicationId,
+    eventType: 'document_uploaded',
+    actorEmail: ctx.email,
+    note: `${docType}: ${file.name}`,
+    afterValue: path,
+  })
+
   try {
     await admin.from('site_events').insert({
       session_id: `vendor-${applicationId}`,

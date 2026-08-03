@@ -8,7 +8,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import {
-  Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check, Eye, AlertTriangle,
+  Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check, Eye, AlertTriangle, Clock,
 } from 'lucide-react'
 import { EFT_TERMS, EFT_TERMS_HEADING } from '@/lib/eft-terms'
 import {
@@ -50,12 +50,13 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 export default function EftPanel({
-  submitted, bank, reference, amount, businessName,
+  submitted, bank, reference, amount, dueDate, businessName,
 }: {
   submitted: boolean
   bank: Bank | null
   reference: string
   amount: number | null
+  dueDate: string
   businessName: string
 }) {
   const [file, setFile] = useState<File | null>(null)
@@ -235,6 +236,10 @@ export default function EftPanel({
             <p className="text-sm text-white/60">Pay by EFT</p>
             <p className="text-xl sm:text-2xl font-bold text-white truncate">
               {amount ? `R${amount.toFixed(2)} due` : 'Amount pending'}
+            </p>
+            <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 shrink-0" />
+              Payable by <span className="text-white/90 font-medium">{dueDate}</span>
             </p>
           </div>
         </div>

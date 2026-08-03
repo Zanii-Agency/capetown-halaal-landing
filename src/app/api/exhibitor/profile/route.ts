@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState, type VendorProfile } from '@/lib/portal-state'
 import { vendorSlug } from '@/lib/slugify'
 import { stripAllHtml } from '@/lib/sanitize'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 
 const BUCKET = 'vendor-assets'
 const MAX_LOGO_BYTES = 5 * 1024 * 1024       // 5MB
@@ -104,6 +105,7 @@ export async function POST(req: NextRequest) {
       })
       if (error) return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
       await updatePortalState(applicationId, (s) => ({ ...s, profile: { ...(s.profile || {}), logo_path: path } }))
+      await recordVendorAction({ applicationId, eventType: 'profile_logo_uploaded', actorEmail: ctx.email, afterValue: path })
       return NextResponse.json({ success: true, logo_url: publicUrl(path) })
     }
 
@@ -129,6 +131,7 @@ export async function POST(req: NextRequest) {
         ...s,
         profile: { ...(s.profile || {}), photo_gallery: [...(s.profile?.photo_gallery || []), path] },
       }))
+      await recordVendorAction({ applicationId, eventType: 'profile_gallery_photo_added', actorEmail: ctx.email, afterValue: path })
       return NextResponse.json({ success: true, path, url: publicUrl(path) })
     }
 
@@ -158,6 +161,7 @@ export async function POST(req: NextRequest) {
     ...s,
     profile: { ...(s.profile || {}), ...clean },
   }))
+  await recordVendorAction({ applicationId, eventType: 'profile_updated', actorEmail: ctx.email, note: Object.keys(clean).join(', ') })
   return NextResponse.json({ success: true, profile: next.profile })
 }
 

@@ -86,7 +86,11 @@ export function WhatsAppWorkspace() {
     if (!t.phone) return
     if (!opts?.silent) { setMsgLoading(true); setMsgError(null) }
     try {
-      const r = await fetch(`/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}`, { cache: 'no-store' })
+      // Include the vendor's email so cross-channel messages (e.g. a payment
+      // reminder email that triggered this WhatsApp reply) appear in the same
+      // thread instead of leaving the operator blind.
+      const emailParam = t.email ? `&email=${encodeURIComponent(t.email)}` : ''
+      const r = await fetch(`/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}${emailParam}`, { cache: 'no-store' })
       // Same rule as VendorTimeline: a lane refusal renders as an EMPTY
       // conversation, never as a message naming the lane. Telling the viewer
       // "outside your lane" discloses that a wall exists and that this specific
@@ -123,8 +127,9 @@ export function WhatsAppWorkspace() {
     if (!t?.phone || !oldest || loadingOlder) return
     setLoadingOlder(true)
     try {
+      const emailParam = t.email ? `&email=${encodeURIComponent(t.email)}` : ''
       const r = await fetch(
-        `/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}&before=${encodeURIComponent(oldest)}`,
+        `/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}${emailParam}&before=${encodeURIComponent(oldest)}`,
         { cache: 'no-store' })
       if (!r.ok) return
       const j = await r.json()

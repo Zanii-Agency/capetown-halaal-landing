@@ -31,7 +31,7 @@ interface Row {
   added_at?: string | null
   added_by?: string | null
 }
-interface Candidate { id: string; business_name: string | null; contact_name: string | null; email: string | null }
+interface Candidate { id: string; business_name: string | null; contact_name: string | null; email: string | null; phone: string | null; reference: string }
 
 
 /** The date this row last MOVED: proof upload if there is one, else the recorded
@@ -123,8 +123,16 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
   const filterCandidates = (q: string) => {
     const term = q.trim().toLowerCase()
     if (!term) return [] as Candidate[]
+    const normaliseRef = (s: string) => s.replace(/[^a-z0-9]/gi, '').toLowerCase()
+    const normalisedTerm = normaliseRef(term)
     return candidates
-      .filter((c) => `${c.business_name || ''} ${c.contact_name || ''} ${c.email || ''}`.toLowerCase().includes(term))
+      .filter((c) => {
+        const haystack = `${c.business_name || ''} ${c.contact_name || ''} ${c.email || ''} ${c.phone || ''}`.toLowerCase()
+        if (haystack.includes(term)) return true
+        // Reference search: accept "YAH-ABCDEF12" or just "ABCDEF12".
+        if (normalisedTerm && normaliseRef(c.reference).includes(normalisedTerm)) return true
+        return false
+      })
       .slice(0, 8)
   }
   const matches = useMemo(() => filterCandidates(query), [query, candidates]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -177,7 +185,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by business, contact, or email"
+            placeholder="Search by reference, business, contact, email or phone"
             className="w-full text-sm rounded-lg border border-neutral-200 pl-9 pr-3 py-2.5 focus:border-[#cd2653] focus:outline-none"
           />
           {matches.length > 0 && (
@@ -191,7 +199,8 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                 >
                   <span className="min-w-0">
                     <span className="font-medium text-[#1B1A17]">{c.business_name || 'Unnamed'}</span>
-                    <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}</span>
+                    <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}{c.phone ? ` · ${c.phone}` : ''}</span>
+                    <span className="ml-1.5 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#1B1A17]/60">{c.reference}</span>
                   </span>
                   {busy === `add-${c.id}` && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
                 </button>
@@ -210,7 +219,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
           <input
             value={exQuery}
             onChange={(e) => setExQuery(e.target.value)}
-            placeholder="Search by business, contact, or email"
+            placeholder="Search by reference, business, contact, email or phone"
             className="w-full text-sm rounded-lg border border-neutral-200 pl-9 pr-3 py-2.5 focus:border-[#cd2653] focus:outline-none"
           />
           {exMatches.length > 0 && (
@@ -224,7 +233,8 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                 >
                   <span className="min-w-0">
                     <span className="font-medium text-[#1B1A17]">{c.business_name || 'Unnamed'}</span>
-                    <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}</span>
+                    <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}{c.phone ? ` · ${c.phone}` : ''}</span>
+                    <span className="ml-1.5 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#1B1A17]/60">{c.reference}</span>
                   </span>
                   {busy === `ex-${c.id}` && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
                 </button>

@@ -78,6 +78,7 @@ function ilikeEscape(s: string): string {
 }
 
 const UUID_FRAGMENT_RE = /^[0-9a-f]{8,}$/i
+const REFERENCE_RE = /^(?:YAH[-_])?([0-9a-f]{8,})$/i
 
 export async function GET(req: NextRequest) {
   try {
@@ -148,6 +149,12 @@ export async function GET(req: NextRequest) {
         // If query is UUID-shaped, add id match
         if (UUID_FRAGMENT_RE.test(safe)) {
           orParts.push(`id.ilike.${pattern}`)
+        }
+        // Payment reference search: "YAH-ABCDEF12" or "ABCDEF12" → match the
+        // application id prefix that the reference is derived from.
+        const refMatch = q.match(REFERENCE_RE)
+        if (refMatch) {
+          orParts.push(`id.ilike.${refMatch[1]}%`)
         }
         qry = qry.or(orParts.join(','))
       }

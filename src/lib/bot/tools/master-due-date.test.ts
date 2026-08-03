@@ -17,7 +17,7 @@ function row(over: Partial<VRow>): VRow {
   return {
     id: 'v1', business_name: 'Barfi Bliss', contact_name: 'Shereen', email: null, phone: null,
     status: 'approved', admin_notes: null, paid_at: null, preferred_booth_tier: 'marquee-full-3x3',
-    special_requirements: null, reviewed_at: null, ...over,
+    special_requirements: null, reviewed_at: null, payment_due_date: null, ...over,
   }
 }
 
@@ -51,4 +51,14 @@ test('a vendor never reviewed genuinely has no date, and says so plainly', () =>
 test('the summary carries no long dash (law 7)', () => {
   const s = vendorSummary(row({ reviewed_at: '2026-07-26T14:08:26Z' }))
   assert.equal(/[—–]/.test(s), false)
+})
+
+test('a vendor with no reviewed_at but an APPROVED_NOTIFIED marker gets a due date', () => {
+  // Thaaniyah Malander scenario: reviewed_at is empty but the approval template
+  // went out on 2026-07-26. The master brain should still say 25 August 2026.
+  const s = vendorSummary(row({
+    reviewed_at: null,
+    admin_notes: '⟦APPROVED_NOTIFIED:2026-07-26T14:17:31.081Z⟧ Some note.',
+  }))
+  assert.match(s, /stall fee due 25 August 2026/)
 })

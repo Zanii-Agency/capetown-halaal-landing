@@ -117,26 +117,16 @@ export async function GET(request: NextRequest) {
       .or('is_duplicate.is.null,is_duplicate.eq.false')
 
     // Approved counter: drives the capacity view (approved of 308 total spaces,
-    // remaining = 308 - approved). For the festival owner this must count only
-    // vendors in her scope; master-lane approved vendors are hidden from her.
-    let approvedTotal = 0
-    if (restrict) {
-      const { data: approvedRows } = await admin
-        .from('vendor_applications')
-        .select('admin_notes, paid_at')
-        .eq('status', 'approved')
-        .or('is_duplicate.is.null,is_duplicate.eq.false')
-      approvedTotal = (approvedRows || []).filter((a: { admin_notes?: string | null; paid_at?: string | null }) =>
-        vendorInOwnerScope(a.admin_notes, a.paid_at)
-      ).length
-    } else {
-      const { count } = await admin
-        .from('vendor_applications')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'approved')
-        .or('is_duplicate.is.null,is_duplicate.eq.false')
-      approvedTotal = count ?? 0
-    }
+    // remaining = 308 - approved). GLOBAL for every viewer (2026-08-01): the
+    // owner saw 67 while the master saw 169, and a "241 spaces left" lie would
+    // have her approve a hundred vendors beyond capacity. A bare count names no
+    // one, so it leaks nothing — the LIST above stays lane-sealed for her.
+    const { count: approvedCount } = await admin
+      .from('vendor_applications')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'approved')
+      .or('is_duplicate.is.null,is_duplicate.eq.false')
+    const approvedTotal = approvedCount ?? 0
 
     return NextResponse.json({
       applications,

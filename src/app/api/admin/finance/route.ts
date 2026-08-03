@@ -63,15 +63,38 @@ export async function GET(req: NextRequest) {
     const viewerEmail = user.email
     const restrict = !isEftAdmin(viewerEmail)
     const scopedRows = restrict ? rows.filter((v) => vendorInOwnerScope(v.admin_notes, v.paid_at)) : rows
+
+    // Full operational aggregates: dashboard-level totals must match for every
+    // admin. The per-vendor list below stays scoped so master-lane records stay
+    // hidden from the festival owner's detail view.
+    const allPayments = rows.map((v) => {
+      const portal = parsePortalState(v.admin_notes || '')
+      const p = portal.payment || {}
+      const isPaid = !!v.paid_at || p.status === 'paid'
+      const amount = p.amount ?? computeVendorPricing(v).total
+      const dueDate = p.due || null
+      const paymentStatus = p.status ?? (v.paid_at ? 'paid' : 'none')
+      let overdue = false
+      if (paymentStatus === 'pending' && dueDate) {
+        overdue = new Date(dueDate) < new Date()
+      }
+      return { is_paid: isPaid, payment_status: paymentStatus, payment_amount: amount, overdue }
+    })
+
+    // Stats from the full operational view.
+    const totalPaid = allPayments.filter(p => p.is_paid).length
+    const totalPending = allPayments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
+    const totalNone = allPayments.filter(p => !p.is_paid && p.payment_status === 'none').length
+    const totalOverdue = allPayments.filter(p => p.overdue).length
+    const totalRevenue = allPayments
+      .filter(p => p.is_paid)
+      .reduce((sum, p) => sum + (p.payment_amount || 0), 0)
+
+    // Scoped detail list for the festival owner's view.
     const payments = scopedRows.map((v) => {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
 
-      // Derived from REAL sources only (no phantom columns). isPaid mirrors the
-      // exhibitor-paygate rule: the real paid_at column OR a marker status of
-      // 'paid'. amount prefers the marker, else the computed stall+electrical+
-      // hire total. due/paid_at come from the marker, paid_at falls back to the
-      // real column.
       const isPaid = !!v.paid_at || p.status === 'paid'
       const paidAt = p.paid_at || v.paid_at || null
       const amount = p.amount ?? computeVendorPricing(v).total
@@ -100,15 +123,6 @@ export async function GET(req: NextRequest) {
         overdue,
       }
     })
-
-    // Stats
-    const totalPaid = payments.filter(p => p.is_paid).length
-    const totalPending = payments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
-    const totalNone = payments.filter(p => !p.is_paid && p.payment_status === 'none').length
-    const totalOverdue = payments.filter(p => p.overdue).length
-    const totalRevenue = payments
-      .filter(p => p.is_paid)
-      .reduce((sum, p) => sum + (p.payment_amount || 0), 0)
 
     // WooCommerce reconciliation: fetch completed orders for comparison
     let wcOrders: WCOrder[] = []

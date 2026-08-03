@@ -170,7 +170,7 @@ export async function GET(req: Request) {
     },
     // Owner cutoff, same rule as everywhere else: a handed-over vendor's later
     // conversation is master-first.
-    messages: stripEftMessages(messages, (m) => m.body, hide, {
+    messages: stripEftMessages(messages, (m) => `${(m as { subject?: string | null }).subject || ''}\n${m.body}`, hide, {
       scope,
       identity: thread.channel === 'wa' ? { phone: thread.thread_key } : { email: thread.thread_key },
       at: (m) => (m as { at?: string; created_at?: string }).at || (m as { created_at?: string }).created_at,

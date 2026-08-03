@@ -163,10 +163,16 @@ export async function POST(req: NextRequest) {
       const { parseAllocation, tierLabel } = await import('@/lib/stalls')
       const { identityBriefing } = await import('@/lib/bot/identity')
       const { computeVendorPricing, formatRand } = await import('@/lib/payments/pricing')
+      const { computePaymentDue, daysUntil } = await import('@/lib/exhibitor-paygate')
 
       const portal = parsePortalState((appRow.admin_notes as string) || null)
       const alloc = parseAllocation((appRow.admin_notes as string) || null)
       const vName = (appRow.contact_name as string) || (appRow.business_name as string) || null
+      const due = computePaymentDue({
+        payment_due_date: (appRow.payment_due_date as string) || null,
+        reviewed_at: (appRow.reviewed_at as string) || null,
+      })
+      const dueIso = due ? due.toISOString() : null
       const identity: ResolvedIdentity = {
         role: 'vendor',
         name: vName,
@@ -180,8 +186,10 @@ export async function POST(req: NextRequest) {
           status: (appRow.status as string) || 'pending',
           stall: alloc.stall,
           payment_status: portal.payment?.status || 'none',
-          tier_label: appRow.preferred_booth_tier ? tierLabel(appRow.preferred_booth_tier as string) : null,
           contract_signed_at: (appRow.contract_signed_at as string) || null,
+          payment_due_date: dueIso,
+          payment_due_days: due ? daysUntil(due) : null,
+          tier_label: appRow.preferred_booth_tier ? tierLabel(appRow.preferred_booth_tier as string) : null,
         },
       }
       const owed = computeVendorPricing({

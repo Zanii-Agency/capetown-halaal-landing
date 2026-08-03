@@ -11,6 +11,7 @@ import { splitQuotedText, splitQuotedHtml } from '@/lib/inbox/quote'
 import { sanitizeEmailHtml } from '@/lib/sanitize'
 import { hidesEftContent, laneScopeFor } from '@/lib/inbox-lane'
 import { ownerCutoff, applyOwnerCutoff } from '@/lib/owner-view'
+import { isMarker } from '@/lib/inbox/channel-threads'
 
 /** The one message a handed-over vendor shows the festival owner in place of the
  *  real confirmation. Static by design: it states the fact she needs (payment
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
     let q = db
       .from('wa_messages')
       .select('id, direction, body, created_at, wa_phone, template_name, metadata, status, error')
-      .or(`wa_phone.eq.+${noPlus},wa_phone.eq.${noPlus}`)
+      .in('wa_phone', [`+${noPlus}`, noPlus])
       // DESC + limit, reversed below: ascending + limit returns the OLDEST N,
       // so past N messages a thread froze on ancient history and new messages
       // never appeared at all. We want the newest N.
@@ -89,7 +90,7 @@ export async function GET(req: NextRequest) {
       // Internal owner-notification pings ("🛎️ …") and bracket markers are not
       // part of the customer conversation. A real inbound with no text is media.
       const raw = (m.body || '').trim()
-      if (/^\s*\[[A-Z_]+\]/.test(raw) || /HUMAN_HANDOVER/.test(raw) || /^\s*🛎/u.test(raw)) continue
+      if (isMarker(raw)) continue
       // Media descriptor captured at webhook time (metadata.media). Newer rows
       // carry the Meta media id; the client renders via a same-origin proxy
       // keyed on the wa_messages row id. Legacy media rows have no id => url null
