@@ -71,6 +71,12 @@ export const TOOL_DEFS = [
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
   {
+    name: 'get_electrical_setup',
+    description: "Report the electrical power, appliances and gas THIS vendor booked for their stall, and how it affects their total. Call whenever a verified vendor asks about power, electricity, plug points, whether they have power for a freezer/fridge/appliance, a generator, load-in setup, or gas at their stall. If they booked no power, this says so plainly so they are not caught out on the day.",
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
     name: 'send_contract',
     description: "Give THIS vendor their contract: a link to their signed contract if signed, otherwise the portal link to review and sign it. Call when a verified vendor asks for or about their contract.",
     strict: true,
@@ -350,6 +356,57 @@ async function getBadgeAllocation(vendorId: string): Promise<string> {
   const active = (state.staff || []).filter((s) => !s.revoked_at).length
   const allowed = typeof state.passAllowance === 'number' ? ` of ${state.passAllowance} allowed` : ''
   return `You have ${active} staff badge${active === 1 ? '' : 's'} registered${allowed}. Manage them in the portal at ${PORTAL_LOGIN}.`
+}
+
+// What POWER, appliances and gas the vendor booked at application time.
+//
+// DATA REALITY (measured over 242 approved vendors): electrical_appliances is a
+// human-readable STRING for 218 of them ("1x Charger/Lighting (R400)"), an
+// object for 7, empty for 17. computeVendorPricing only parses the OBJECT form,
+// so 83 string-form vendors who DID book power read as zero electrical items
+// there. Relying on the pricing parser would tell those 83 "you have no power",
+// a false negative worse than the gap. So the RAW string is the source of truth,
+// and the pricing parser is used only to pretty-print the rare object form.
+//
+// The no-power case is stated LOUDLY: a vendor arriving with a freezer they
+// never booked power for is the exact festival-day problem this closes.
+async function getElectricalSetup(vendorId: string): Promise<string> {
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not find your application.'
+
+  let reqs: Record<string, unknown> = {}
+  const raw = row.special_requirements
+  if (typeof raw === 'string') { try { reqs = JSON.parse(raw) } catch { /* keep empty */ } }
+  else if (raw && typeof raw === 'object') reqs = raw as Record<string, unknown>
+
+  let power = ''
+  const elec = reqs.electrical_appliances
+  if (typeof elec === 'string') {
+    power = elec.trim()
+  } else if (elec && typeof elec === 'object') {
+    try {
+      const items = computeVendorPricing({ preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: raw }).electricalItems
+      power = items.map((i) => `${i.qty && i.qty > 1 ? `${i.qty}x ` : ''}${i.label} (R${i.amount.toLocaleString('en-ZA')})`).join(', ')
+    } catch { power = '' }
+  }
+  // "1x None (R0)" / "None" / "" all mean they chose no electrical.
+  const noPower = !power || /^\s*(\d+\s*x\s*)?none\b/i.test(power)
+
+  const usesGas = String(reqs.uses_gas ?? '').trim().toLowerCase().startsWith('y')
+  const appliances = String(reqs.appliance_details ?? '').trim()
+  const totalEstimate = Number(reqs.total_estimate) || 0
+
+  const parts: string[] = []
+  if (noPower) {
+    parts.push('You have NOT booked any electrical power, so there will be no power point at your stall. If you need power for a fridge, freezer, lights or an appliance, tell me and I will flag it to the team to add before the festival.')
+  } else {
+    parts.push(`Electrical power you booked: ${power}.`)
+  }
+  if (appliances) parts.push(`Appliances you listed bringing: ${appliances}.`)
+  if (usesGas) parts.push('You noted you will use gas. A gas compliance certificate is required, so please upload it in your portal documents if you have not already.')
+  else parts.push('No gas use is noted on your application.')
+  if (totalEstimate) parts.push(`Your total including any add-ons is R${totalEstimate.toLocaleString('en-ZA')}.`)
+  return parts.join(' ')
 }
 
 /**
@@ -1108,6 +1165,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'check_application_status': content = await checkApplicationStatus(session.vendorId!); break
       case 'get_payment_status': content = await getPaymentStatus(session.vendorId!); break
       case 'get_badge_allocation': content = await getBadgeAllocation(session.vendorId!); break
+      case 'get_electrical_setup': content = await getElectricalSetup(session.vendorId!); break
       case 'send_contract':
         deferred = sendContractDeferred(session)
         content = await contractStatusLine(session.vendorId!)
