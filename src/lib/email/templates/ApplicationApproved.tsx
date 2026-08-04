@@ -79,6 +79,16 @@ export function ApplicationApproved({
 
       <Divider />
 
+      <Subheading>Manage your stall anytime</Subheading>
+      <Paragraph>
+        You do not have to wait for us. Message us on WhatsApp, on the same number
+        that sent you your approval, or log into your portal to check your stall
+        size and price, see your payment due date, get your invoice, or upload your
+        documents. Just ask and you will get an answer straight away.
+      </Paragraph>
+
+      <Divider />
+
       <EventDetails
         rows={[
           `📅  ${brand.contact.dates}`,

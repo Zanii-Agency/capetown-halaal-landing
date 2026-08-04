@@ -222,20 +222,12 @@ export async function notifyApplicationDecision({
         console.error('[approve] WA template send failed:', (e as Error).message)
       }
 
-      // Follow-up: the "here is how to use it" message — tells the newly-approved
-      // vendor the TWO ways to manage their stall (WhatsApp + portal) with simple
-      // examples (template: vendor_welcome_options). Best-effort + gated: until
-      // Meta approves the template this skips and NEVER affects the approval flow.
-      try {
-        const phoneW = (app.phone || app.whatsapp_number) as string | null
-        if (phoneW) {
-          const fnW = String(app.contact_name || '').trim().split(/\s+/)[0] || 'there'
-          const wo = await sendTemplate(toE164(phoneW), 'vendor_welcome_options', [fnW], { category: 'utility' })
-          if (wo.skipped) console.warn('[approve] welcome_options skipped (template pending Meta approval?):', wo.skipped)
-        }
-      } catch (e) {
-        console.warn('[approve] welcome_options send failed (non-fatal):', (e as Error).message)
-      }
+      // The "here is how to use it" follow-up (WhatsApp + portal self-serve) now
+      // lives in the approval EMAIL's "Manage your stall anytime" section, not a
+      // second WhatsApp template. The old vendor_welcome_options template was
+      // never registered in Meta, so it 404'd (#132001) on EVERY approval, a
+      // guaranteed-failing API call that told no one anything. The email reaches
+      // everyone, needs no Meta approval, and does not stack a second WA message.
 
       // Stamp the idempotency marker ONLY when the email actually went out, so a
       // failed send stays un-marked and remediation can retry it.
