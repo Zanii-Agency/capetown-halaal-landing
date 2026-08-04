@@ -36,22 +36,39 @@ export async function POST(req: NextRequest) {
   if (!app) return NextResponse.json({ error: 'application not found' }, { status: 404 })
 
   const state = parsePortalState(app.admin_notes as string)
-  if (state.payment?.status === 'paid' || app.paid_at) {
-    return NextResponse.json({ error: 'already settled' }, { status: 400 })
-  }
-  if (state.payment?.status !== 'collected') {
-    return NextResponse.json({ error: 'not collected: only EFT-collected vendors can be settled via Yoco' }, { status: 400 })
-  }
+  const acc = state.payment?.acc
+  const accPending = !!acc?.collected_at && !acc?.settled_at
+  const isPaid = state.payment?.status === 'paid' || !!app.paid_at
 
-  const pricing = computeVendorPricing({
-    preferred_booth_tier: app.preferred_booth_tier as string,
-    special_requirements: app.special_requirements,
-  })
-  // Settle the amount that was collected (falls back to the full computed total).
-  const amount = Number(state.payment?.amount) || pricing.total
+  // ACCESSORY settlement (split-bill, 2026-08-04): a vendor whose stall is
+  // already settled has an accessory EFT marked collected. Settle exactly that
+  // amount through Yoco; the webhook folds it into payment.amount via the
+  // top-up path (notifyVendor:false, see accPending detection there).
+  let amount: number
+  let description: string
+  if (isPaid) {
+    if (!accPending) return NextResponse.json({ error: 'already settled' }, { status: 400 })
+    amount = Number(acc?.amount) || 0
+    description = `Accessory settlement, ${app.business_name}, Young at Heart Festival 2026`
+  } else {
+    if (state.payment?.status !== 'collected') {
+      return NextResponse.json({ error: 'not collected: only EFT-collected vendors can be settled via Yoco' }, { status: 400 })
+    }
+    const pricing = computeVendorPricing({
+      preferred_booth_tier: app.preferred_booth_tier as string,
+      special_requirements: app.special_requirements,
+    })
+    // Settle the amount that was collected (falls back to the full computed total).
+    amount = Number(state.payment?.amount) || pricing.total
+    description = `EFT settlement, ${app.business_name}, Young at Heart Festival 2026`
+  }
   if (!amount || amount <= 0) return NextResponse.json({ error: 'nothing to settle' }, { status: 400 })
 
-  const reference = state.payment?.reference || paymentReference(id)
+  // Accessory settle carries the vendor's -ACC reference so the Yoco checkout,
+  // the bank statement, and the admin lane all name the same deposit.
+  const reference = isPaid
+    ? (await import('@/lib/payments/vendor-bill')).accEftReference({ id, admin_notes: app.admin_notes as string })
+    : state.payment?.reference || paymentReference(id)
   try {
     const { url, providerRef } = await activeProvider().createPayment({
       applicationId: id,
@@ -60,23 +77,29 @@ export async function POST(req: NextRequest) {
       reference,
       email: (app.email as string) || '',
       businessName: (app.business_name as string) || 'Exhibitor',
-      description: `EFT settlement, ${app.business_name}, Young at Heart Festival 2026`,
+      description,
       // The OPERATOR pays this checkout, so return to the master lane, not the
       // vendor portal.
       returnUrl: `${SITE}/admin/eft?settled=1`,
       cancelUrl: `${SITE}/admin/eft?settled=cancelled`,
       failureUrl: `${SITE}/admin/eft?settled=failed`,
     })
-    // Record the settlement attempt WITHOUT changing status: it stays 'collected'
-    // until the webhook confirms the real paid transition.
+    // Record the settlement attempt WITHOUT changing status. For an ACCESSORY
+    // settle the attempt lives on the acc sub-ledger: the vendor's real stall
+    // provider_ref/reference must not be clobbered by the operator's checkout.
     await updatePortalState(id, (s) => ({
       ...s,
-      payment: {
-        ...(s.payment || {}),
-        provider_ref: providerRef,
-        reference,
-        attempted_at: new Date().toISOString(),
-      },
+      payment: isPaid
+        ? {
+            ...(s.payment || {}),
+            acc: { ...(s.payment?.acc || {}), attempted_at: new Date().toISOString() },
+          }
+        : {
+            ...(s.payment || {}),
+            provider_ref: providerRef,
+            reference,
+            attempted_at: new Date().toISOString(),
+          },
     }))
     return NextResponse.json({ ok: true, url, amount })
   } catch (e) {

@@ -20,9 +20,22 @@ export async function POST(req: NextRequest) {
   if (!gate.ok) return gate.response
   if (!isEftAdmin(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
-  const body = (await req.json().catch(() => ({}))) as { applicationId?: string; amount?: number }
+  const body = (await req.json().catch(() => ({}))) as { applicationId?: string; amount?: number; accessories?: boolean }
   const id = String(body.applicationId || '')
   if (!id) return NextResponse.json({ error: 'applicationId required' }, { status: 400 })
+
+  // ACCESSORY collect (split-bill, 2026-08-04): the vendor's STALL is already
+  // settled; this confirms their accessory-balance EFT landed. Writes the
+  // payment.acc sub-ledger (collected_at + amount): the vendor's bill flips to
+  // accessories PAID and they get the same methodless acknowledgment as a stall
+  // collect, but finance does NOT count it until the accessory Yoco settlement
+  // folds it into payment.amount (webhook top-up path). Owner is NOT pinged.
+  if (body.accessories) {
+    const { markAccessoriesCollected } = await import('@/lib/payments/confirm')
+    const result = await markAccessoriesCollected(id, typeof body.amount === 'number' ? body.amount : undefined)
+    if (!result.ok) return NextResponse.json({ error: result.error || 'accessory collect failed' }, { status: 500 })
+    return NextResponse.json({ ok: true, status: 'acc_collected', amount: result.amount })
+  }
 
   const result = await markEftCollected(id, typeof body.amount === 'number' ? body.amount : undefined)
   if (!result.ok) return NextResponse.json({ error: result.error || 'collect failed' }, { status: 500 })

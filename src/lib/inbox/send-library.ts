@@ -27,7 +27,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
-import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
+import { computeVendorPricing } from '@/lib/payments/pricing'
 import { paymentReference } from '@/lib/payments'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 
@@ -101,17 +101,14 @@ const DEFINITIONS: Definition[] = [
       let amount = state.payment?.amount ?? 0
       if (!amount) {
         try {
-          amount = vendorFacingPricing({
-            id: v.id,
+          amount = computeVendorPricing({
             preferred_booth_tier: v.preferred_booth_tier as string,
             special_requirements: v.special_requirements,
-            admin_notes: v.admin_notes,
           }).total
         } catch { return null }
       }
       const bytes = await renderInvoicePdf({
         applicationId: v.id,
-        adminNotes: v.admin_notes,
         businessName: v.business_name || '',
         contactName: v.contact_name || '',
         email: v.email || '',

@@ -61,3 +61,7 @@ scripts/.verification-blast.DONE
 public/stalls.excel-extracted.json.bak
 .gstack/
 .migration-baseline.json
+
+# session scratch files: never part of a deploy (Law 1: the tree is the manifest)
+scratchpad/
+tmp-*

@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing } from '@/lib/payments/pricing'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { CustomerInboxClient } from '../customer-inbox/CustomerInboxClient'
 import EftAdminClient from './EftAdminClient'
 
@@ -87,7 +88,11 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     marked: boolean
     collected: boolean
     reconciled: boolean
-    proofs: Array<{ url: string; uploaded_at: string; note?: string }>
+    accOwing: number
+    accSubmitted: boolean
+    accCollected: boolean
+    accSettled: boolean
+    proofs: Array<{ url: string; uploaded_at: string; note?: string; accessory?: boolean }>
   }
 
   // When each vendor was ADDED to the lane. Read from the audit trail rather
@@ -135,10 +140,16 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     const collected = state.payment?.status === 'collected'
     const reconciled = state.payment?.status === 'paid' || !!a.paid_at
     const inLane = marked // individually selected (global-on vendors are handled in bulk, not listed until they submit)
+    // ACCESSORY sub-ledger (split-bill, 2026-08-04): settled vendors paying
+    // their accessory-electricity balance by EFT with a <ref>-ACC reference.
+    const acc = state.payment?.acc
+    const accSubmitted = !!acc?.submitted_at
+    const accCollected = !!acc?.collected_at
+    const accSettled = !!acc?.settled_at
 
-    // Actionable set: individually marked, uploaded EFT proof, OR EFT-collected
-    // (awaiting Yoco settlement — must be listed even if not ⟦EFT⟧-marked).
-    if (marked || submitted || collected) {
+    // Actionable set: individually marked, uploaded EFT proof (stall OR
+    // accessory), OR EFT-collected (awaiting Yoco settlement).
+    if (marked || submitted || collected || accSubmitted) {
       const pricing = computeVendorPricing({
         preferred_booth_tier: a.preferred_booth_tier as string,
         special_requirements: a.special_requirements,
@@ -147,13 +158,13 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
       // 'collected' amount is interim, so it still shows the full amount to settle.
       const paidSoFar = reconciled ? (Number(state.payment?.amount) || 0) : 0
       const outstanding = Math.max(0, pricing.total - paidSoFar)
-      const proofFiles = (state.payment?.proofs || []).filter((p) => p.kind === 'eft_submission')
+      const proofFiles = (state.payment?.proofs || []).filter((p) => p.kind === 'eft_submission' || p.kind === 'eft_accessories')
       const proofs: Row['proofs'] = []
       for (const p of proofFiles) {
         if (!p.path) continue
         try {
           const { data } = await db.storage.from('vendor-docs').createSignedUrl(p.path, 60 * 60)
-          if (data?.signedUrl) proofs.push({ url: data.signedUrl, uploaded_at: p.uploaded_at, note: p.note })
+          if (data?.signedUrl) proofs.push({ url: data.signedUrl, uploaded_at: p.uploaded_at, note: p.note, accessory: p.kind === 'eft_accessories' })
         } catch { /* skip unreachable proof */ }
       }
       rows.push({
@@ -175,6 +186,14 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         marked,
         collected,
         reconciled,
+        // The figure the accessory-collect confirm dialog quotes. From the SAME
+        // source markAccessoriesCollected writes from (vendorBill), so the
+        // operator confirms the number that will actually be recorded, not the
+        // generic outstanding (which can include non-accessory arrears).
+        accOwing: (() => { try { return vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: notes, paid_at: a.paid_at as string | null }).accessories.owing } catch { return 0 } })(),
+        accSubmitted,
+        accCollected,
+        accSettled,
         proofs,
       })
     } else if (!reconciled && !inLane) {
@@ -185,7 +204,8 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
 
   // Submitted-not-reconciled first (they need action), then the rest.
   rows.sort((x, y) => {
-    const rank = (r: Row) => (r.submitted && !r.reconciled ? 0 : r.reconciled ? 2 : 1)
+    const accActionable = (r: Row) => r.accSubmitted && !r.accSettled
+    const rank = (r: Row) => ((r.submitted && !r.reconciled) || accActionable(r) ? 0 : r.reconciled ? 2 : 1)
     return rank(x) - rank(y)
   })
 

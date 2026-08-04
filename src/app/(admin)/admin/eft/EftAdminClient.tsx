@@ -28,7 +28,11 @@ interface Row {
   marked: boolean
   collected: boolean       // EFT money marked collected (interim); awaiting Yoco settlement
   reconciled: boolean
-  proofs: Array<{ url: string; uploaded_at: string; note?: string }>
+  accOwing: number         // accessory balance still owing on the split bill
+  accSubmitted: boolean    // vendor uploaded an accessory (-ACC) EFT proof
+  accCollected: boolean    // operator confirmed the accessory EFT landed (interim)
+  accSettled: boolean      // accessory amount folded into payment.amount via Yoco
+  proofs: Array<{ url: string; uploaded_at: string; note?: string; accessory?: boolean }>
   added_at?: string | null
   added_by?: string | null
 }
@@ -333,7 +337,13 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                     </td>
                     <td className={`px-3 py-3 whitespace-nowrap text-right tabular-nums ${isDemoRow(r) ? 'text-[#1B1A17]/35 line-through' : 'font-medium'}`}>{rand(r.outstanding ?? r.amount)}</td>
                     <td className="px-3 py-3">
-                      {r.reconciled ? (
+                      {r.reconciled && r.accCollected && !r.accSettled ? (
+                        <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1.5" />Accessories collected, settle via Yoco</span>
+                      ) : r.reconciled && r.accSubmitted && !r.accCollected ? (
+                        <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5" />Accessory proof uploaded</span>
+                      ) : r.reconciled && r.accOwing > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-[#1B1A17]"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> Stall paid, accessories owing</span>
+                      ) : r.reconciled ? (
                         <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Reconciled</span>
                       ) : r.collected ? (
                         <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1.5" />Collected (EFT), settle via Yoco</span>
@@ -368,7 +378,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                         <div className="space-y-1">
                           {r.proofs.map((p, i) => (
                             <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#cd2653] hover:underline">
-                              <ExternalLink className="w-3 h-3" /> View{r.proofs.length > 1 ? ` ${i + 1}` : ''}
+                              <ExternalLink className="w-3 h-3" /> {p.accessory ? 'Accessory' : 'View'}{r.proofs.length > 1 ? ` ${i + 1}` : ''}
                             </a>
                           ))}
                         </div>
@@ -392,6 +402,31 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                               className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
                             >
                               {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark collected
+                            </button>
+                          )}
+                          {/* ACCESSORY collect (split-bill): stall already settled, the
+                              vendor's -ACC EFT proof is in. Confirms the money landed:
+                              vendor sees accessories PAID + gets acknowledged, finance
+                              does not count it until the accessory Yoco settlement. */}
+                          {r.reconciled && r.accSubmitted && !r.accCollected && (
+                            <button
+                              onClick={() => { if (confirm(`Collect ACCESSORY EFT for ${r.business_name || 'this vendor'} (${rand(r.accOwing)})? Their bill shows accessories PAID and they are acknowledged, but it is NOT counted until you settle it via Yoco. Do this only after the -ACC deposit has landed.`)) post('/api/admin/eft/reconcile', { applicationId: r.id, accessories: true }, `rec-${r.id}`) }}
+                              disabled={busy === `rec-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Collect accessories
+                            </button>
+                          )}
+                          {/* Accessory collected, not settled: same settle flow; the route
+                              detects the paid+acc state and charges only the accessory
+                              amount. Webhook folds it into the cumulative paid total. */}
+                          {r.reconciled && r.accCollected && !r.accSettled && (
+                            <button
+                              onClick={() => { if (confirm(`Settle ${r.business_name || 'this vendor'}'s ACCESSORY amount through Yoco? This opens a Yoco checkout you pay on your card, funded by the -ACC EFT cash. It records the additional payment and notifies Samreen as an ordinary top-up.`)) settle(r.id) }}
+                              disabled={busy === `set-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `set-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Settle via Yoco
                             </button>
                           )}
                           {/* Collected but not yet settled: pay it through Yoco (opens a

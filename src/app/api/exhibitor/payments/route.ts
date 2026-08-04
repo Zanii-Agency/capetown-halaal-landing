@@ -37,17 +37,10 @@ export async function POST() {
   // automatically re-bills on the next Pay with no manual step. A stored
   // state.payment.amount is the locked RECORD of what was actually paid (written
   // at payment time), not a pre-payment quote, so it never overrides here.
-  // vendorFacingPricing: a settled vendor's total stays frozen at what they paid
-  // (the 8d2c788 reprice must not surface a new balance to them), so for those
-  // vendors amount computes to 0 and the settled branch below answers. Unpaid
-  // vendors and REPRICE_ACK vendors still get the live total.
-  const { vendorFacingPricing } = await import('@/lib/payments/vendor-pricing')
-  const pricing = vendorFacingPricing({
-    id: applicationId,
+  const { computeVendorPricing } = await import('@/lib/payments/pricing')
+  const pricing = computeVendorPricing({
     preferred_booth_tier: app.preferred_booth_tier as string,
     special_requirements: app.special_requirements,
-    admin_notes: app.admin_notes as string,
-    paid_at: (app as { paid_at?: string | null }).paid_at ?? null,
   })
   // Bill the OUTSTANDING balance: the live total minus what the vendor has
   // already paid. For a first payment that is the full total. For a top-up

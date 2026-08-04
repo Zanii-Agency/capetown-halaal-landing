@@ -29,6 +29,11 @@ export interface EftProofInput {
   }
   note?: string
   source: 'portal' | 'whatsapp' | 'email'
+  /** 'accessories' = an ACCESSORY-balance EFT from a vendor whose stall fee is
+   *  already settled (split-bill, 2026-08-04). Uses the `payment.acc` sub-ledger
+   *  and the `<ref>-ACC` reference; gated on an actual accessory balance owing,
+   *  not on the (paid-excluding) stall EFT lane. Default: stall proof. */
+  purpose?: 'stall' | 'accessories'
 }
 
 export type EftProofResult =
@@ -64,9 +69,37 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
     note,
     source,
   } = input
+  const forAccessories = input.purpose === 'accessories'
 
-  // Same guard the portal route uses: only EFT-lane vendors may submit proof.
-  if (!vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })) {
+  if (forAccessories) {
+    // Accessory proof: the vendor's STALL is settled, so the stall lane gate
+    // (which excludes paid vendors) is the wrong test. The gate is: an accessory
+    // balance is actually owing on the split bill, AND the EFT lane switch is
+    // still on (global mode or individual marker) so one switch closes the
+    // whole rail (doctrine review 2026-08-04).
+    const { hasEftMarker } = await import('@/lib/eft')
+    if (!(await getEftMode()) && !hasEftMarker(admin_notes || '')) {
+      return { ok: false, error: 'EFT is not enabled for your account', status: 403 }
+    }
+    const db = createAdminClient()
+    const { data: row } = await db
+      .from('vendor_applications')
+      .select('preferred_booth_tier, special_requirements')
+      .eq('id', applicationId)
+      .maybeSingle()
+    const { vendorBill } = await import('@/lib/payments/vendor-bill')
+    const bill = vendorBill({
+      id: applicationId,
+      preferred_booth_tier: (row?.preferred_booth_tier as string) || null,
+      special_requirements: row?.special_requirements,
+      admin_notes,
+      paid_at,
+    })
+    if (!bill.settled || bill.accessories.owing <= 0) {
+      return { ok: false, error: 'No accessory balance is owing on your account', status: 403 }
+    }
+  } else if (!vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })) {
+    // Same guard the portal route uses: only EFT-lane vendors may submit proof.
     return { ok: false, error: 'EFT is not enabled for your account', status: 403 }
   }
 
@@ -91,23 +124,26 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   }
 
   const uploaded_at = new Date().toISOString()
-  const prior = parsePortalState(admin_notes || '').payment?.eft_submitted_at
-  const isFirst = !prior
+  const priorState = parsePortalState(admin_notes || '').payment
+  const isFirst = forAccessories ? !priorState?.acc?.submitted_at : !priorState?.eft_submitted_at
 
   await updatePortalState(applicationId, (s) => ({
     ...s,
     payment: {
       ...s.payment,
-      eft_submitted_at: s.payment?.eft_submitted_at || uploaded_at,
+      ...(forAccessories
+        ? { acc: { ...(s.payment?.acc || {}), submitted_at: s.payment?.acc?.submitted_at || uploaded_at } }
+        : { eft_submitted_at: s.payment?.eft_submitted_at || uploaded_at }),
       proofs: [
         ...(s.payment?.proofs || []),
-        { path, kind: 'eft_submission' as const, note: note || undefined, uploaded_at },
+        { path, kind: (forAccessories ? 'eft_accessories' : 'eft_submission') as 'eft_accessories' | 'eft_submission', note: note || undefined, uploaded_at },
       ],
     },
   }))
 
   const name = String(business_name || 'A vendor')
-  const ref = eftReference({ id: applicationId, admin_notes: admin_notes || '' })
+  const baseRef = eftReference({ id: applicationId, admin_notes: admin_notes || '' })
+  const ref = forAccessories ? `${baseRef}-ACC` : baseRef
   const noteSnippet = note ? `, note: "${note.slice(0, 120)}"` : ''
 
   // Master-only heads-up.
@@ -115,7 +151,9 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
     await notifyOwners({
       event: 'system_alert',
       audience: 'master',
-      body: `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. Reconcile it on /admin/eft.`,
+      body: forAccessories
+        ? `${name} uploaded ${isFirst ? 'their ACCESSORY EFT proof' : 'ANOTHER accessory EFT proof'} via ${source} (accessory electricity balance). Ref ${ref}${noteSnippet}. Collect it on /admin/eft.`
+        : `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. Reconcile it on /admin/eft.`,
     })
   } catch (e) {
     console.error(`[eft-proof-shared:${source}] notifyOwners failed:`, (e as Error).message)

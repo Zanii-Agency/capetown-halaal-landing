@@ -67,10 +67,18 @@ export async function POST(req: NextRequest) {
   const admin = createAdminClient()
   const { data: cur } = await admin
     .from('vendor_applications')
-    .select('admin_notes')
+    .select('admin_notes, paid_at')
     .eq('id', applicationId)
     .maybeSingle()
-  const isEftSettlement = parsePortalState(cur?.admin_notes as string).payment?.status === 'collected'
+  const curPay = parsePortalState(cur?.admin_notes as string).payment
+  // ACCESSORY settlement (split-bill): the vendor is already paid and their
+  // accessory EFT is collected-but-unsettled; this Yoco payment settles exactly
+  // that. Runs confirmPayment's top-up path (folds the amount into the
+  // cumulative payment.amount, owner alerted as an ordinary additional payment,
+  // no EFT content), vendor NOT re-pinged (acknowledged at accessory collect).
+  const curPaid = curPay?.status === 'paid' || !!cur?.paid_at
+  const isAccSettlement = curPaid && !!curPay?.acc?.collected_at && !curPay?.acc?.settled_at
+  const isEftSettlement = curPay?.status === 'collected' || isAccSettlement
   const out = await confirmPayment({
     applicationId,
     method: 'yoco',
@@ -79,6 +87,19 @@ export async function POST(req: NextRequest) {
     notifyVendor: !isEftSettlement,
   })
   if (!out.ok) return NextResponse.json({ ok: false, error: out.error }, { status: 500 })
+
+  // Close the accessory two-state: once settled, the amount lives inside
+  // payment.amount (top-up above), so stamp settled_at or the bill would count
+  // the collected amount twice. Idempotent: only the first settle stamps.
+  if (isAccSettlement) {
+    await updatePortalState(applicationId, (s) => ({
+      ...s,
+      payment: {
+        ...(s.payment || {}),
+        acc: { ...(s.payment?.acc || {}), settled_at: s.payment?.acc?.settled_at || new Date().toISOString() },
+      },
+    }))
+  }
 
   return NextResponse.json({ ok: true, alreadyPaid: out.alreadyPaid })
 }

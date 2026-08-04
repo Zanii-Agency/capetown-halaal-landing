@@ -6,8 +6,7 @@
 // gated /admin/applications/[id]/invoice page — that needs an admin session
 // which the server-side render path doesn't have).
 
-import { formatRand, type VendorPricing } from '@/lib/payments/pricing'
-import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
+import { computeVendorPricing, formatRand, type VendorPricing } from '@/lib/payments/pricing'
 import { brand } from '@/lib/email/brand'
 
 interface InvoiceData {
@@ -188,17 +187,12 @@ export async function renderInvoicePdf(input: {
   method?: InvoiceData['method']
   preferredBoothTier: string
   specialRequirements?: unknown
-  /** Pass the row's admin_notes so a SETTLED vendor's itemisation freezes at the
-   *  computation they paid under (vendorFacingPricing). Omitted = live pricing. */
-  adminNotes?: string | null
 }): Promise<Buffer | null> {
   let pricing: VendorPricing
   try {
-    pricing = vendorFacingPricing({
-      id: input.applicationId,
+    pricing = computeVendorPricing({
       preferred_booth_tier: input.preferredBoothTier,
       special_requirements: input.specialRequirements,
-      admin_notes: input.adminNotes ?? null,
     })
   } catch (e) {
     console.error('[invoice-pdf] pricing failed:', (e as Error).message)

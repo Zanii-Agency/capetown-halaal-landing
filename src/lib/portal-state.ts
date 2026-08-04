@@ -131,12 +131,22 @@ export interface PortalState {
      *  scripts stop billing a vendor we have promised more time. Writer:
      *  scripts/confirm-arrangement.tsx. */
     arrangement?: { until: string; agreed_at?: string; note?: string }
+    /** ACCESSORY (electricity/furniture) EFT sub-ledger for vendors whose STALL
+     *  fee is already settled but whose accessories were under-billed by the
+     *  pre-2026-08-04 pricing bug. Mirrors the stall two-state so revenue counts
+     *  once: `collected_at` = operator confirmed the accessory EFT landed (vendor
+     *  sees accessories PAID, NOT counted in finance); `settled_at` = the Yoco
+     *  settlement webhook folded `amount` into the cumulative payment.amount via
+     *  the top-up path (now counted, exactly once). revealed/submitted mirror the
+     *  stall lane's intent/proof stamps. Writers: eft-intent, eft-proof-shared,
+     *  admin/eft/reconcile (accessories:true), yoco webhook. */
+    acc?: { amount?: number; revealed_at?: string; submitted_at?: string; collected_at?: string; settled_at?: string; attempted_at?: string }
     /** EFT receipt / refund proof files. The file lives in the private
      *  vendor-docs bucket; only the storage path is stored here, the vendor
      *  portal mints a short-lived signed URL server-side (Law 2). kind:
      *  'receipt'|'refund' = operator-uploaded (/api/admin/vendors/[id]/payment-proof);
      *  'eft_submission' = the vendor's own EFT proof (/api/exhibitor/eft-proof). */
-    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission'; note?: string; uploaded_at: string }>
+    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string }>
   }
   docs?: DocRecord[]
   staff?: StaffMember[]

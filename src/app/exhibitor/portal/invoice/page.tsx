@@ -1,7 +1,7 @@
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
 import { formatRand } from '@/lib/payments/pricing'
-import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { brand } from '@/lib/email/brand'
 import { PrintBar } from './PrintBar'
@@ -21,17 +21,24 @@ export default async function InvoicePage() {
   }
   const app = ctx.application
   const state = parsePortalState(app.admin_notes as string)
-  const pricing = vendorFacingPricing({
+  const bill = vendorBill({
     id: app.id as string,
     preferred_booth_tier: app.preferred_booth_tier as string,
     special_requirements: app.special_requirements,
     admin_notes: app.admin_notes as string,
     paid_at: (app as { paid_at?: string | null }).paid_at ?? null,
   })
+  const pricing = bill.pricing
   const status = state.payment?.status || 'none'
   // 'collected' (EFT interim) shows as PAID to the vendor, same as a real 'paid'.
   const isPaid = status === 'paid' || status === 'collected'
-  const total = state.payment?.amount ?? pricing.total
+  // SPLIT BILL (2026-08-04): the invoice total is the LIVE total (stall +
+  // accessories). What has been paid and any accessory balance still owing are
+  // shown as their own rows, so a settled vendor's invoice explains the
+  // difference instead of hiding it.
+  const total = pricing.total
+  const paidAmount = bill.paidTotal
+  const balanceDue = bill.settled ? bill.accessories.owing : Math.max(0, total - paidAmount)
   const reference = state.payment?.reference || paymentReference(app.id as string)
   const providerRef = state.payment?.provider_ref || ''
   const paidStamp = state.payment?.paid_at || state.payment?.eft_collected_at
@@ -144,9 +151,21 @@ export default async function InvoicePage() {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={2} className="pt-6 text-right font-semibold">Total due</td>
+                <td colSpan={2} className="pt-6 text-right font-semibold">Total</td>
                 <td className="pt-6 text-right invoice-fraunces text-2xl font-semibold text-[#cd2653]">{formatRand(total)}</td>
               </tr>
+              {paidAmount > 0 && (
+                <tr>
+                  <td colSpan={2} className="pt-2 text-right text-neutral-500">Paid</td>
+                  <td className="pt-2 text-right font-semibold text-green-700">{formatRand(paidAmount)}</td>
+                </tr>
+              )}
+              {balanceDue > 0 && paidAmount > 0 && (
+                <tr>
+                  <td colSpan={2} className="pt-1 text-right text-neutral-500">{bill.settled ? 'Balance due, accessory electricity' : 'Balance due'}</td>
+                  <td className="pt-1 text-right font-semibold text-[#cd2653]">{formatRand(balanceDue)}</td>
+                </tr>
+              )}
             </tfoot>
           </table>
         </section>

@@ -76,8 +76,9 @@ function readReqs(app: ApplicationLike): SpecialRequirementsShape {
 export function computeVendorPricing(
   app: ApplicationLike,
   /** stringElectrical:false reproduces the pre-2026-08-04 computation (free-text
-   *  electrical ignored). Used by vendorFacingPricing to freeze already-paid
-   *  vendors on the total they actually settled. */
+   *  electrical ignored). Kept for tests and historical comparisons; the interim
+   *  vendorFacingPricing freeze that used it was replaced by the split bill
+   *  (vendor-bill.ts) the same day. */
   opts?: { stringElectrical?: boolean },
 ): VendorPricing {
   const reqs = readReqs(app)

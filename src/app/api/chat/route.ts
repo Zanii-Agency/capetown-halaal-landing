@@ -163,7 +163,6 @@ export async function POST(req: NextRequest) {
       const { parseAllocation, tierLabel } = await import('@/lib/stalls')
       const { identityBriefing } = await import('@/lib/bot/identity')
       const { formatRand } = await import('@/lib/payments/pricing')
-      const { vendorFacingPricing } = await import('@/lib/payments/vendor-pricing')
       const { computePaymentDue, daysUntil } = await import('@/lib/exhibitor-paygate')
 
       const portal = parsePortalState((appRow.admin_notes as string) || null)
@@ -193,18 +192,23 @@ export async function POST(req: NextRequest) {
           tier_label: appRow.preferred_booth_tier ? tierLabel(appRow.preferred_booth_tier as string) : null,
         },
       }
-      // vendorFacingPricing: a settled vendor is told the total they paid under,
-      // not the 2026-08-04 repriced one (outstanding stays 0 for them).
-      const owed = vendorFacingPricing({
+      // SPLIT BILL (2026-08-04): stall fee and accessory electricity are two
+      // separate charges. A settled vendor's outstanding is their accessory
+      // balance; the assistant must say so in those words, matching the
+      // Payments page, not present it as an unexplained bigger total.
+      const { vendorBill } = await import('@/lib/payments/vendor-bill')
+      const bill = vendorBill({
         id: (appRow.id as string) || null,
         preferred_booth_tier: appRow.preferred_booth_tier as string,
         special_requirements: appRow.special_requirements,
         admin_notes: (appRow.admin_notes as string) || null,
         paid_at: (appRow.paid_at as string) ?? null,
-      }).total
-      const paid = Number(portal.payment?.amount) || 0
-      const outstanding = Math.max(0, owed - paid)
-      const moneyLine = `Stall fee: total ${formatRand(owed)}, paid ${formatRand(paid)}, outstanding ${formatRand(outstanding)}. If they ask what to pay, the amount due now is ${formatRand(outstanding)}, payable by card in the portal.`
+      })
+      const moneyLine = bill.settled && bill.accessories.owing > 0
+        ? `Stall fee ${formatRand(bill.stall.price)} is PAID and the booth is confirmed. Accessory electricity (billed separately from the stall fee) has ${formatRand(bill.accessories.owing)} still owing. If they ask what to pay or why they owe: it is the electricity for the appliances they booked, payable on the portal Payments page (${bill.payClass === 'eft' ? 'by EFT with their -ACC reference' : 'by card'}).`
+        : bill.settled && bill.accessories.state === 'pending'
+        ? `Stall fee is PAID. Their accessory electricity proof is uploaded and awaiting confirmation (up to 24 hours). Nothing else is due right now.`
+        : `Stall fee: total ${formatRand(bill.liveTotal)}, paid ${formatRand(bill.paidTotal)}, outstanding ${formatRand(bill.owing)}. If they ask what to pay, the amount due now is ${formatRand(bill.owing)}, payable by card in the portal.`
       const brief = `${identityBriefing(identity)}\n\n${moneyLine}`
 
       const result = await askFestivalBrain(last?.content ?? '', {

@@ -50,7 +50,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 export default function EftPanel({
-  submitted, bank, reference, amount, dueDate, businessName,
+  submitted, bank, reference, amount, dueDate, businessName, purpose = 'stall',
 }: {
   submitted: boolean
   bank: Bank | null
@@ -58,7 +58,13 @@ export default function EftPanel({
   amount: number | null
   dueDate: string
   businessName: string
+  /** 'accessories' = the split-bill accessory-electricity balance of a vendor
+   *  whose stall fee is already settled. Same rail, -ACC reference, copy that
+   *  does not promise a portal unlock (theirs is already unlocked). */
+  purpose?: 'stall' | 'accessories'
 }) {
+  const forAccessories = purpose === 'accessories'
+  const feeNoun = forAccessories ? 'accessory electricity balance' : 'stall fee'
   const [file, setFile] = useState<File | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -85,7 +91,7 @@ export default function EftPanel({
   function revealDetails() {
     setRevealed(true)
     // Fire-and-forget: the heads-up to the operator must never block the reveal.
-    fetch('/api/exhibitor/eft-intent', { method: 'POST' }).catch(() => {})
+    fetch('/api/exhibitor/eft-intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose }) }).catch(() => {})
   }
 
   function scrollToUpload() {
@@ -99,6 +105,7 @@ export default function EftPanel({
     try {
       const fd = new FormData()
       fd.append('file', file)
+      fd.append('purpose', purpose)
       if (note.trim()) fd.append('note', note.trim())
       const res = await fetch('/api/exhibitor/eft-proof', { method: 'POST', body: fd })
       const j = await res.json().catch(() => ({}))
@@ -170,7 +177,9 @@ export default function EftPanel({
           <DialogHeader>
             <DialogTitle>Proof received, thank you</DialogTitle>
             <DialogDescription>
-              Please allow up to 24 hours for our team to confirm your payment and contact you. Once we have confirmed it, we will mark you as paid and your full portal will unlock so you can continue. You do not need to do anything else in the meantime.
+              {forAccessories
+                ? 'Please allow up to 24 hours for our team to confirm your payment. Once confirmed, your accessories will show as paid here. You do not need to do anything else in the meantime.'
+                : 'Please allow up to 24 hours for our team to confirm your payment and contact you. Once we have confirmed it, we will mark you as paid and your full portal will unlock so you can continue. You do not need to do anything else in the meantime.'}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="sm:justify-center">
@@ -188,7 +197,9 @@ export default function EftPanel({
           <div>
             <p className="font-bold">Proof received, thank you</p>
             <p className="text-sm mt-1 opacity-90">
-              Please allow up to 24 hours for our team to confirm your payment and contact you. Once we have confirmed it, we will mark you as paid and your full portal will unlock so you can continue. You do not need to do anything else in the meantime.
+              {forAccessories
+                ? 'Please allow up to 24 hours for our team to confirm your payment. Once confirmed, your accessories will show as paid here. You do not need to do anything else in the meantime.'
+                : 'Please allow up to 24 hours for our team to confirm your payment and contact you. Once we have confirmed it, we will mark you as paid and your full portal will unlock so you can continue. You do not need to do anything else in the meantime.'}
             </p>
           </div>
         </div>
@@ -203,7 +214,7 @@ export default function EftPanel({
             plainly that a personal chat will not be answered, is the whole point
             of this notice (Taona, 2026-07-27). */}
         <p className="text-sm">
-          Please pay your stall fee by EFT using the details below and upload your proof of payment on this page. To reach us, use your portal inbox, email{' '}
+          Please pay your {feeNoun} by EFT using the details below and upload your proof of payment on this page. To reach us, use your portal inbox, email{' '}
           <a href="mailto:support@youngatheart.co.za" className="font-semibold underline">support@youngatheart.co.za</a>, or WhatsApp our official number{' '}
           <a href="https://wa.me/27659435012" className="font-semibold underline whitespace-nowrap">065 943 5012</a>.{' '}
           <span className="font-semibold">Please WhatsApp that number only.</span> Messages sent to any other number, including someone from the team you know personally, will not be answered and will not reach us. We also cannot see or reply to messages on social media. Your payment status updates here on your portal.
@@ -233,7 +244,7 @@ export default function EftPanel({
             <Building2 className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm text-white/60">Pay by EFT</p>
+            <p className="text-sm text-white/60">{forAccessories ? 'Pay accessories by EFT' : 'Pay by EFT'}</p>
             <p className="text-xl sm:text-2xl font-bold text-white truncate">
               {amount ? `R${amount.toFixed(2)} due` : 'Amount pending'}
             </p>

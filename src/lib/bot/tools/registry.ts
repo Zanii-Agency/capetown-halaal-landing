@@ -23,7 +23,7 @@ import { sendMedia, sendText, fetchMediaBytes } from '@/lib/whatsapp'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 import { computeVendorPricing } from '@/lib/payments/pricing'
-import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
@@ -311,9 +311,7 @@ async function checkApplicationStatus(vendorId: string): Promise<string> {
   const size = row.preferred_booth_tier ? tierLabel(row.preferred_booth_tier) : ''
   let sizeLine = size
   try {
-    // vendorFacingPricing: settled vendors keep the total they paid under (the
-    // 2026-08-04 electrical reprice is not quoted back at them by the bot).
-    const total = vendorFacingPricing({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null }).total
+    const total = computeVendorPricing({ preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements }).total
     if (size && total) sizeLine = `${size} at R${total.toLocaleString('en-ZA')}`
   } catch { /* keep the size without a price */ }
   const applied = row.created_at
@@ -336,6 +334,19 @@ async function getPaymentStatus(vendorId: string): Promise<string> {
   const row = await ownRow(vendorId)
   if (!row) return 'I could not find your application.'
   const state = parsePortalState(row.admin_notes || '')
+  // SPLIT BILL (2026-08-04): a settled vendor may still owe their accessory
+  // electricity (billed separately from the stall fee). The bot must tell the
+  // same story the Payments page shows, or "why do I owe money?" gets two
+  // different answers.
+  try {
+    const bill = vendorBill({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null })
+    if (bill.settled && bill.accessories.state === 'owing' && bill.accessories.owing > 0) {
+      return `Your stall fee of R${bill.stall.price.toLocaleString('en-ZA')} is paid and your booth is confirmed. The electricity for the appliances you booked is billed separately, and R${bill.accessories.owing.toLocaleString('en-ZA')} is still due for it. You can settle it on the Payments page of your portal at ${PORTAL_LOGIN}.`
+    }
+    if (bill.settled && bill.accessories.state === 'pending') {
+      return `Your stall fee is paid, and we have your proof for the accessory electricity balance. Please allow up to 24 hours for the team to confirm it.`
+    }
+  } catch { /* fall through to the recorded status */ }
   const ref = state.payment?.provider_ref
   const key = (process.env.YOCO_SECRET_KEY || '').trim()
   // Live Yoco check when we have a checkout ref and a key; else the recorded status.
@@ -587,11 +598,10 @@ function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
       if (!row) return
       const state = parsePortalState(row.admin_notes || '')
       const amount = state.payment?.amount ?? (() => {
-        try { return vendorFacingPricing({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null }).total } catch { return 0 }
+        try { return computeVendorPricing({ preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements }).total } catch { return 0 }
       })()
       const pdf = await renderInvoicePdf({
         applicationId: vendorId,
-        adminNotes: row.admin_notes || null,
         businessName: row.business_name,
         contactName: row.contact_name || '',
         email: row.email || '',

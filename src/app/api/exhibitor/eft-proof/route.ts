@@ -22,11 +22,15 @@ export async function POST(req: NextRequest) {
   const form = await req.formData().catch(() => null)
   const file = form?.get('file')
   const note = String(form?.get('note') || '').slice(0, 500)
+  // 'accessories' = split-bill accessory balance proof from a settled vendor
+  // (payment.acc sub-ledger); anything else is a stall proof as before.
+  const purpose = String(form?.get('purpose') || '') === 'accessories' ? 'accessories' as const : 'stall' as const
   if (!(file instanceof File)) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
 
   const buffer = Buffer.from(await file.arrayBuffer())
 
   const result = await recordEftProof({
+    purpose,
     applicationId,
     admin_notes: ctx.application.admin_notes as string | null,
     paid_at: ctx.application.paid_at as string | null,
@@ -43,7 +47,7 @@ export async function POST(req: NextRequest) {
 
   await recordVendorAction({
     applicationId,
-    eventType: 'eft_proof_uploaded',
+    eventType: purpose === 'accessories' ? 'eft_acc_proof_uploaded' : 'eft_proof_uploaded',
     actorEmail: ctx.email,
     note: note || file.name,
     afterValue: result.path,

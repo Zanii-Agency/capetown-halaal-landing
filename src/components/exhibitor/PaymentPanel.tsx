@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { CreditCard, CheckCircle2, Clock, Loader2, Info, RefreshCw, MessageSquare } from 'lucide-react'
 
 export default function PaymentPanel({
-  enabled, status, amount, outstanding, reference, dueDate, attemptedAt, failedAttempts,
+  enabled, status, amount, outstanding, reference, dueDate, attemptedAt, failedAttempts, topUpNote,
 }: {
   enabled: boolean
   status: string
@@ -16,6 +16,9 @@ export default function PaymentPanel({
   dueDate: string
   attemptedAt?: string | null
   failedAttempts?: number
+  /** Sub-line shown when a paid vendor has a balance due. Defaults to the
+   *  operator-added-charges wording; the accessories split bill passes its own. */
+  topUpNote?: string
 }) {
   const params = useSearchParams()
   const justPaid = params.get('paid') === '1'
@@ -70,7 +73,7 @@ export default function PaymentPanel({
             <p className={`text-xl sm:text-2xl font-bold truncate ${fullyPaid ? 'text-green-900' : 'text-white'}`}>
               {fullyPaid ? 'Paid' : payAmount ? `R${payAmount.toFixed(2)} due` : 'Amount pending'}
             </p>
-            {!fullyPaid && <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 shrink-0" /> {topUpDue ? 'Extra charges were added to your stall' : `Payable by ${dueDate}`}{reference ? ` · ref ${reference}` : ''}</p>}
+            {!fullyPaid && <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 shrink-0" /> {topUpDue ? (topUpNote || 'Extra charges were added to your stall') : `Payable by ${dueDate}`}{reference ? ` · ref ${reference}` : ''}</p>}
           </div>
         </div>
       </div>

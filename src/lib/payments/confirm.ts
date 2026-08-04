@@ -235,6 +235,88 @@ export async function markEftCollected(applicationId: string, amountOverride?: n
   return { ok: true, amount }
 }
 
+/**
+ * Split-bill ACCESSORY collect (2026-08-04). The vendor's STALL fee is already
+ * settled; this confirms their accessory-electricity EFT landed. Mirrors the
+ * stall two-state: writes payment.acc { amount, collected_at } so the vendor's
+ * bill shows accessories PAID and they get the same methodless acknowledgment,
+ * but payment.amount (what finance counts) is untouched until the accessory
+ * Yoco settlement folds it in via the webhook top-up path — so revenue counts
+ * exactly once. Owner is NOT pinged (EFT stays master-only). Re-runnable.
+ */
+export async function markAccessoriesCollected(applicationId: string, amountOverride?: number): Promise<{ ok: boolean; amount: number; error?: string }> {
+  const admin = createAdminClient()
+  const { data: app, error } = await admin
+    .from('vendor_applications')
+    .select('id, business_name, contact_name, email, phone, admin_notes, special_requirements, preferred_booth_tier, paid_at')
+    .eq('id', applicationId)
+    .maybeSingle()
+  if (error || !app) return { ok: false, amount: 0, error: error?.message || 'application not found' }
+
+  const { vendorBill } = await import('@/lib/payments/vendor-bill')
+  const bill = vendorBill({
+    id: applicationId,
+    preferred_booth_tier: app.preferred_booth_tier as string,
+    special_requirements: app.special_requirements,
+    admin_notes: app.admin_notes as string | null,
+    paid_at: app.paid_at as string | null,
+  })
+  if (!bill.settled) return { ok: false, amount: 0, error: 'stall fee not settled yet: collect the stall EFT first (this is the accessory flow)' }
+  if (bill.acc?.collected_at && !bill.acc?.settled_at) {
+    return { ok: false, amount: Number(bill.acc.amount) || 0, error: 'accessories already collected (settle via Yoco next)' }
+  }
+  const amount = amountOverride ?? bill.accessories.owing
+  if (!amount || amount <= 0) return { ok: false, amount: 0, error: 'no accessory balance owing' }
+
+  const collectedAtIso = new Date().toISOString()
+  await updatePortalState(applicationId, (s) => ({
+    ...s,
+    payment: {
+      ...(s.payment || {}),
+      acc: { ...(s.payment?.acc || {}), amount, collected_at: collectedAtIso },
+    },
+  }))
+
+  const contactName = (app.contact_name as string) || 'there'
+  const firstName = contactName.trim().split(/\s+/)[0] || contactName
+  const businessName = (app.business_name as string) || 'your business'
+  const paidDate = new Date(collectedAtIso).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
+
+  // Vendor acknowledgment ONLY (owner is not pinged). NOT the stall payment
+  // confirmation template: that one says "your trading spot is confirmed",
+  // which is false-in-a-way-that-matters for a R400 accessory collect (their
+  // spot was confirmed when the stall fee settled). Purpose-written copy that
+  // names the accessory electricity and their -ACC reference instead.
+  const { accEftReference } = await import('@/lib/payments/vendor-bill')
+  const accRef = accEftReference({ id: applicationId, admin_notes: app.admin_notes as string | null })
+  try {
+    await sendEmail({
+      to: app.email as string,
+      subject: `Accessory electricity payment received, ${businessName}`,
+      text: [
+        `Hi ${contactName},`,
+        '',
+        `We've received your payment of ${formatRand(amount)} for the accessory electricity at your ${businessName} stall. This covers the appliances you booked on your application.`,
+        '',
+        `Reference: ${accRef}`,
+        `Received: ${paidDate}`,
+        '',
+        `Your stall fee was already settled, so there is nothing else to do. Your Payments page now shows your accessories as paid.`,
+        '',
+        `The Young at Heart Festival Team`,
+      ].join('\n'),
+    })
+  } catch (e) {
+    console.error('[markAccessoriesCollected] vendor email failed:', (e as Error).message)
+  }
+  // WhatsApp ack via the registered payment-confirmation template (the only
+  // approved template with an amount slot). Its copy is amount-first and
+  // method-free, so it reads correctly for an accessory amount too.
+  await sendVendorPaymentWa({ admin, waPhone: (app.phone as string) || '', firstName, amount, stallLabel: bill.stall.label })
+
+  return { ok: true, amount }
+}
+
 export async function confirmPayment(input: ConfirmPaymentInput): Promise<ConfirmPaymentResult> {
   const admin = createAdminClient()
   const { data: app, error: appErr } = await admin
