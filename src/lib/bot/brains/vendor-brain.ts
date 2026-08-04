@@ -25,7 +25,7 @@ import { identityBriefing } from '@/lib/bot/identity'
 import { notifyOwners } from '@/lib/bot/notify'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendMedia } from '@/lib/whatsapp'
-import { computeVendorPricing } from '@/lib/payments/pricing'
+import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
 import { paymentReference } from '@/lib/payments'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 
@@ -255,10 +255,11 @@ function doGetInvoice(identity: ResolvedIdentity): VendorActionResult {
       const app = data as Record<string, unknown>
       const state = parsePortalState((app.admin_notes as string) || null)
       const amount = state.payment?.amount ?? (() => {
-        try { return computeVendorPricing({ preferred_booth_tier: app.preferred_booth_tier as string, special_requirements: app.special_requirements }).total } catch { return 0 }
+        try { return vendorFacingPricing({ id: vendor.id, preferred_booth_tier: app.preferred_booth_tier as string, special_requirements: app.special_requirements, admin_notes: (app.admin_notes as string) || null }).total } catch { return 0 }
       })()
       const pdf = await renderInvoicePdf({
         applicationId: vendor.id,
+        adminNotes: (app.admin_notes as string) || null,
         businessName: (app.business_name as string) || vendor.business_name,
         contactName: (app.contact_name as string) || '',
         email: (app.email as string) || '',

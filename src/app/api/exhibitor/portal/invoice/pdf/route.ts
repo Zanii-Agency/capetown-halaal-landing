@@ -15,7 +15,7 @@ import { NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
 import { paymentReference } from '@/lib/payments'
-import { computeVendorPricing } from '@/lib/payments/pricing'
+import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 
 export const runtime = 'nodejs'
@@ -32,9 +32,12 @@ export async function GET() {
 
   let pricing
   try {
-    pricing = computeVendorPricing({
+    pricing = vendorFacingPricing({
+      id: app.id as string,
       preferred_booth_tier: app.preferred_booth_tier as string,
       special_requirements: app.special_requirements,
+      admin_notes: (app.admin_notes as string) || null,
+      paid_at: (app.paid_at as string) ?? null,
     })
   } catch {
     return NextResponse.json({ error: 'Could not compute pricing' }, { status: 500 })
@@ -53,6 +56,7 @@ export async function GET() {
 
   const pdf = await renderInvoicePdf({
     applicationId: app.id as string,
+    adminNotes: (app.admin_notes as string) || null,
     businessName: (app.business_name as string) || ctx.email,
     contactName: (app.contact_name as string) || '',
     email: (app.email as string) || ctx.email,

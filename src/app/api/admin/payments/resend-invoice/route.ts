@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { sendVendorPaymentEmail } from '@/lib/payments/confirm'
-import { computeVendorPricing } from '@/lib/payments/pricing'
+import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
 import { requireOperator } from '@/lib/admin-rbac'
 
 export const runtime = 'nodejs'
@@ -42,9 +42,13 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const pricing = computeVendorPricing({
+  // Vendor-facing output: a settled vendor's itemisation stays frozen at the
+  // computation they paid under (see vendor-pricing.ts).
+  const pricing = vendorFacingPricing({
+    id: app.id as string,
     preferred_booth_tier: app.preferred_booth_tier as string,
     special_requirements: app.special_requirements,
+    admin_notes: app.admin_notes as string,
   })
   const amount = state.payment.amount ?? pricing.total
   const providerRef = state.payment.provider_ref || state.payment.reference || 'manual'

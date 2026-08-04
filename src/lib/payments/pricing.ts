@@ -73,7 +73,13 @@ function readReqs(app: ApplicationLike): SpecialRequirementsShape {
   return {}
 }
 
-export function computeVendorPricing(app: ApplicationLike): VendorPricing {
+export function computeVendorPricing(
+  app: ApplicationLike,
+  /** stringElectrical:false reproduces the pre-2026-08-04 computation (free-text
+   *  electrical ignored). Used by vendorFacingPricing to freeze already-paid
+   *  vendors on the total they actually settled. */
+  opts?: { stringElectrical?: boolean },
+): VendorPricing {
   const reqs = readReqs(app)
   // SOURCE OF TRUTH for the charge is the price the SYSTEM stored: the amount the
   // vendor selected/agreed at application time (special_requirements.stall_price),
@@ -120,7 +126,7 @@ export function computeVendorPricing(app: ApplicationLike): VendorPricing {
       if (!meta) continue
       electrical.push({ label: meta.label, amount: meta.price * q, qty: q })
     }
-  } else if (typeof elec === 'string' && elec.trim() && !hasCustom) {
+  } else if (typeof elec === 'string' && elec.trim() && !hasCustom && opts?.stringElectrical !== false) {
     // THE FORM 218 OF 242 VENDORS ACTUALLY HAVE. The application stores the
     // electrical selection as human-readable text, "1x Charger/Lighting (R400),
     // 1x Double Fryer (R800)", and the object branch above never matched it, so

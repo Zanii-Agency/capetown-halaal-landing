@@ -23,6 +23,7 @@ import { sendMedia, sendText, fetchMediaBytes } from '@/lib/whatsapp'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { renderInvoicePdf } from '@/lib/payments/invoice-pdf'
 import { computeVendorPricing } from '@/lib/payments/pricing'
+import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
@@ -310,7 +311,9 @@ async function checkApplicationStatus(vendorId: string): Promise<string> {
   const size = row.preferred_booth_tier ? tierLabel(row.preferred_booth_tier) : ''
   let sizeLine = size
   try {
-    const total = computeVendorPricing({ preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements }).total
+    // vendorFacingPricing: settled vendors keep the total they paid under (the
+    // 2026-08-04 electrical reprice is not quoted back at them by the bot).
+    const total = vendorFacingPricing({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null }).total
     if (size && total) sizeLine = `${size} at R${total.toLocaleString('en-ZA')}`
   } catch { /* keep the size without a price */ }
   const applied = row.created_at
@@ -584,10 +587,11 @@ function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
       if (!row) return
       const state = parsePortalState(row.admin_notes || '')
       const amount = state.payment?.amount ?? (() => {
-        try { return computeVendorPricing({ preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements }).total } catch { return 0 }
+        try { return vendorFacingPricing({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null }).total } catch { return 0 }
       })()
       const pdf = await renderInvoicePdf({
         applicationId: vendorId,
+        adminNotes: row.admin_notes || null,
         businessName: row.business_name,
         contactName: row.contact_name || '',
         email: row.email || '',

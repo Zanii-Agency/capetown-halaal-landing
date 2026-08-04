@@ -3,7 +3,8 @@ import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { paymentsEnabled, paymentReference } from '@/lib/payments'
-import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
+import { formatRand } from '@/lib/payments/pricing'
+import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
 import EftPanel from '@/components/exhibitor/EftPanel'
@@ -81,9 +82,12 @@ export default async function PaymentsPage() {
   // exactly what they're paying for. An organiser-set state.payment.amount
   // overrides only the total (e.g. for special-case quotes).
   const pricing = app
-    ? computeVendorPricing({
+    ? vendorFacingPricing({
+        id: app.id as string,
         preferred_booth_tier: app.preferred_booth_tier as string,
         special_requirements: app.special_requirements,
+        admin_notes: app.admin_notes as string,
+        paid_at: (app as { paid_at?: string | null }).paid_at ?? null,
       })
     : null
   // Balance model: state.payment.amount = cumulative amount PAID; owed = the live

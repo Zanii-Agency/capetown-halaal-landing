@@ -29,7 +29,9 @@ test('the bot reads the size the vendor applied for, not just the floor allocati
 })
 
 test('it states the price', () => {
-  assert.ok(/computeVendorPricing/.test(FN), 'price comes from the real pricing fn (incl add-ons)')
+  // vendorFacingPricing wraps computeVendorPricing: live for unpaid vendors,
+  // frozen at the settled computation for paid ones (2026-08-04 reprice rule).
+  assert.ok(/vendorFacingPricing/.test(FN), 'price comes from the vendor-facing pricing fn (incl add-ons)')
   assert.ok(/at R\$\{/.test(FN) || /R\$\{total/.test(FN), 'the price is put in the reply')
 })
 

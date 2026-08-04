@@ -1,6 +1,7 @@
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
-import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
+import { formatRand } from '@/lib/payments/pricing'
+import { vendorFacingPricing } from '@/lib/payments/vendor-pricing'
 import { paymentReference } from '@/lib/payments'
 import { brand } from '@/lib/email/brand'
 import { PrintBar } from './PrintBar'
@@ -20,9 +21,12 @@ export default async function InvoicePage() {
   }
   const app = ctx.application
   const state = parsePortalState(app.admin_notes as string)
-  const pricing = computeVendorPricing({
+  const pricing = vendorFacingPricing({
+    id: app.id as string,
     preferred_booth_tier: app.preferred_booth_tier as string,
     special_requirements: app.special_requirements,
+    admin_notes: app.admin_notes as string,
+    paid_at: (app as { paid_at?: string | null }).paid_at ?? null,
   })
   const status = state.payment?.status || 'none'
   // 'collected' (EFT interim) shows as PAID to the vendor, same as a real 'paid'.

@@ -162,7 +162,8 @@ export async function POST(req: NextRequest) {
       const { parsePortalState } = await import('@/lib/portal-state')
       const { parseAllocation, tierLabel } = await import('@/lib/stalls')
       const { identityBriefing } = await import('@/lib/bot/identity')
-      const { computeVendorPricing, formatRand } = await import('@/lib/payments/pricing')
+      const { formatRand } = await import('@/lib/payments/pricing')
+      const { vendorFacingPricing } = await import('@/lib/payments/vendor-pricing')
       const { computePaymentDue, daysUntil } = await import('@/lib/exhibitor-paygate')
 
       const portal = parsePortalState((appRow.admin_notes as string) || null)
@@ -192,9 +193,14 @@ export async function POST(req: NextRequest) {
           tier_label: appRow.preferred_booth_tier ? tierLabel(appRow.preferred_booth_tier as string) : null,
         },
       }
-      const owed = computeVendorPricing({
+      // vendorFacingPricing: a settled vendor is told the total they paid under,
+      // not the 2026-08-04 repriced one (outstanding stays 0 for them).
+      const owed = vendorFacingPricing({
+        id: (appRow.id as string) || null,
         preferred_booth_tier: appRow.preferred_booth_tier as string,
         special_requirements: appRow.special_requirements,
+        admin_notes: (appRow.admin_notes as string) || null,
+        paid_at: (appRow.paid_at as string) ?? null,
       }).total
       const paid = Number(portal.payment?.amount) || 0
       const outstanding = Math.max(0, owed - paid)
