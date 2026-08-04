@@ -20,6 +20,7 @@ interface Row {
   contact_name: string | null
   email: string | null
   phone: string | null
+  reference: string
   amount: number | null
   outstanding: number | null
   submitted: boolean
@@ -308,6 +309,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
               <thead>
                 <tr className="text-left text-[#1B1A17]/50 border-b border-[#E5DCC4]">
                   <th className="px-5 py-2 font-medium">Vendor</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Reference</th>
                   <th className="px-3 py-2 font-medium text-right">Owed</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Added to lane</th>
@@ -325,6 +327,9 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                         {isDemoRow(r) && <span className="ml-2 align-middle rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-neutral-100 text-[#1B1A17]/45">demo, not counted</span>}
                       </p>
                       <p className="text-xs text-[#1B1A17]/50">{r.contact_name || ''}{r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}</p>
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <span className="font-mono text-xs text-[#1B1A17]/80 select-all">{r.reference}</span>
                     </td>
                     <td className={`px-3 py-3 whitespace-nowrap text-right tabular-nums ${isDemoRow(r) ? 'text-[#1B1A17]/35 line-through' : 'font-medium'}`}>{rand(r.outstanding ?? r.amount)}</td>
                     <td className="px-3 py-3">
@@ -422,7 +427,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-[#E5DCC4] bg-[#FBF8F0]">
-                  <td className="px-5 py-3 font-semibold text-[#1B1A17]">
+                  <td className="px-5 py-3 font-semibold text-[#1B1A17]" colSpan={2}>
                     {sortedRows.filter((r) => !isDemoRow(r)).length} vendor{sortedRows.filter((r) => !isDemoRow(r)).length === 1 ? '' : 's'}
                     {sortedRows.some(isDemoRow) && <span className="ml-1 font-normal text-[#1B1A17]/40">+ demo</span>}
                   </td>

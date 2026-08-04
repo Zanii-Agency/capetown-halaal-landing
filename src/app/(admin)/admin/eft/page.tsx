@@ -2,10 +2,9 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing } from '@/lib/payments/pricing'
-import { paymentReference } from '@/lib/payments'
 import { CustomerInboxClient } from '../customer-inbox/CustomerInboxClient'
 import EftAdminClient from './EftAdminClient'
 
@@ -78,6 +77,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     contact_name: string | null
     email: string | null
     phone: string | null
+    reference: string
     amount: number | null
     outstanding: number | null
     submitted: boolean
@@ -123,7 +123,9 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
       contact_name: a.contact_name as string | null,
       email: a.email as string | null,
       phone: a.phone as string | null,
-      reference: paymentReference(a.id as string),
+      // Same EFT reference the vendor pays with (and the lane rows show), so the
+      // add / exclude search matches a reference read off a bank deposit.
+      reference: eftReference({ id: a.id as string, admin_notes: notes }),
     }
     // Excluded from EFT (handled manually): never in the lane list or the add picker.
     if (hasNoEftMarker(notes)) { excluded.push(contact); continue }
@@ -160,6 +162,10 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         contact_name: a.contact_name as string | null,
         email: a.email as string | null,
         phone: a.phone as string | null,
+        // The EFT reference the vendor was told to pay with (stall code if
+        // allocated, else CTH+id tail), i.e. what lands on the bank statement,
+        // so the operator can reconcile a deposit straight from the row.
+        reference: eftReference({ id: a.id as string, admin_notes: notes }),
         amount: pricing.total || null,
         outstanding,
         submitted,
