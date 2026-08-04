@@ -51,7 +51,7 @@ interface ApplicationLike {
 
 interface SpecialRequirementsShape {
   stall_type?: string
-  electrical_appliances?: Record<string, number> | string[]
+  electrical_appliances?: Record<string, number> | string[] | string
   electrical_custom?: Array<{ label: string; amount: number; qty?: number }>
   hired_chairs?: number | string
   hired_tables?: number | string
@@ -101,6 +101,14 @@ export function computeVendorPricing(app: ApplicationLike): VendorPricing {
 
   const electrical: LineItem[] = []
   const elec = reqs.electrical_appliances
+  // electrical_custom is the admin's authoritative electrical list. When it
+  // exists it SUPERSEDES the vendor's free-text electrical_appliances string:
+  // both name the same appliances, so reading both double-charges. (The OLD code
+  // already used custom and ignored the string, so this keeps those vendors
+  // unchanged; the string parse below only fills the gap for vendors who have a
+  // string and NO custom, which is who was being under-billed.)
+  const customList = Array.isArray(reqs.electrical_custom) ? reqs.electrical_custom : []
+  const hasCustom = customList.some((e) => e && typeof e === 'object' && Number((e as { amount?: unknown }).amount) > 0)
   if (elec && typeof elec === 'object') {
     const entries = Array.isArray(elec)
       ? elec.map((k) => [k, 1] as const)
@@ -112,15 +120,33 @@ export function computeVendorPricing(app: ApplicationLike): VendorPricing {
       if (!meta) continue
       electrical.push({ label: meta.label, amount: meta.price * q, qty: q })
     }
+  } else if (typeof elec === 'string' && elec.trim() && !hasCustom) {
+    // THE FORM 218 OF 242 VENDORS ACTUALLY HAVE. The application stores the
+    // electrical selection as human-readable text, "1x Charger/Lighting (R400),
+    // 1x Double Fryer (R800)", and the object branch above never matched it, so
+    // for those vendors electricalTotal was 0 and the whole total collapsed to
+    // the bare stall fee. The vendor portal, invoice, and the EFT "collected"
+    // amount all read this total, so accessories were silently dropped from the
+    // balance (2026-08-04 audit: R9,250 under-collected across 10 already-paid
+    // EFT vendors, and every unpaid vendor with add-ons was mis-quoted too).
+    //
+    // The (R…) in each item is the LINE total (quantity already applied), so we
+    // sum those directly. "1x None (R0)" and any zero amount are skipped.
+    for (const m of elec.matchAll(/(\d+)\s*x\s*([^()]+?)\s*\(\s*R\s*([\d\s.,]+?)\s*\)/gi)) {
+      const q = Math.max(1, Math.floor(Number(m[1]) || 1))
+      const label = m[2].trim()
+      const amount = Number(String(m[3]).replace(/[^\d.]/g, '')) || 0
+      if (amount <= 0 || /^none$/i.test(label)) continue
+      electrical.push({ label, amount, qty: q })
+    }
   }
 
   // Admin-set custom charges (Samreen): off-list appliances OR any additional
   // payment request. The AMOUNT is what matters: any entry with a finite amount
   // > 0 charges, even if the label is blank (default it). Only non-finite/<=0
   // amounts are skipped, so typing just an amount adds it to the total.
-  const custom = reqs.electrical_custom
-  if (Array.isArray(custom)) {
-    for (const entry of custom) {
+  if (customList.length) {
+    for (const entry of customList) {
       if (!entry || typeof entry !== 'object') continue
       const amt = Number(entry.amount)
       if (!Number.isFinite(amt) || amt <= 0) continue
