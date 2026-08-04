@@ -8,7 +8,7 @@ import { vendorBill, accEftReference } from '@/lib/payments/vendor-bill'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
 import EftPanel from '@/components/exhibitor/EftPanel'
-import { getEftBankDetails, eftReference, getEftMode, vendorInEftLane, hasEftMarker } from '@/lib/eft'
+import { getEftBankDetails, eftReference, getEftMode, resolveInEftLane, hasEftMarker } from '@/lib/eft'
 import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
   PageShell, PageHeader, Card
@@ -42,7 +42,15 @@ export default async function PaymentsPage() {
   const eftModeOn = await getEftMode()
   // Paid vendors are excluded from the lane (they keep their normal paid view even
   // under global mode); only unpaid lane vendors see the EFT panel.
-  const inEftLane = vendorInEftLane(app?.admin_notes as string, eftModeOn, app?.paid_at as string | null, { email: app?.email as string | null, phone: app?.phone as string | null })
+  // Per-tier rotation (2 Yoco:1 EFT on small tiers, 2 EFT:1 Yoco on the rest),
+  // advanced by payments received since the activation start line. Overrides
+  // (paid / ⟦NOEFT⟧ / ⟦EFT⟧ / committed-method) still win inside the resolver;
+  // before activation it behaves exactly like the old global-mode routing.
+  const inEftLane = await resolveInEftLane(
+    { admin_notes: app?.admin_notes as string, paid_at: app?.paid_at as string | null, preferred_booth_tier: app?.preferred_booth_tier as string },
+    eftModeOn,
+    { email: app?.email as string | null, phone: app?.phone as string | null },
+  )
   const eftSubmitted = !!state.payment?.eft_submitted_at
   const eftPending = eftSubmitted && status !== 'paid'
   const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null }) : 'CTH'

@@ -15,7 +15,7 @@
 // WhatsApp fires and the admin `payment.status`/`paid_at` stay unpaid. That is
 // the whole point: the main data stays clean and reconcilable.
 
-import { parseAllocation } from '@/lib/stalls'
+import { parseAllocation, SMALL_EFT_ROTATION_TIERS } from '@/lib/stalls'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, type PortalState } from '@/lib/portal-state'
 
@@ -363,6 +363,92 @@ export function vendorInEftLane(
   if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins over global
   if (parsePortalState(adminNotes).payment?.status === 'paid') return false
   return globalOn || hasEftMarker(adminNotes)
+}
+
+// ── PER-TIER PAYMENT-METHOD ROTATION ─────────────────────────────────────────
+//
+// Taona 2026-08-04: steer the Yoco/EFT mix per tier so cheap stalls stay on
+// instant low-fee Yoco and expensive stalls lean to fee-free EFT. The rotation
+// advances with PAYMENTS RECEIVED in each tier (not approval order), counting
+// only from an activation "start line" so the ~30 payments taken under the old
+// all-EFT system don't seed a random starting slot.
+//
+// Small tiers: 2 Yoco : 1 EFT (slots 0,1 Yoco, slot 2 EFT).
+// Big tiers  : 2 EFT : 1 Yoco (slots 0,1 EFT, slot 2 Yoco).
+// The slot of the NEXT payer = how many payments already landed since the start
+// line. Nothing is stored per vendor; the count is derived (repo convention).
+
+/** Pure rule: does the payment at position `receivedCount` (0-based) get EFT? */
+export function tierRotationSaysEft(receivedCount: number, tierSlug: string | null | undefined): boolean {
+  const slot = ((receivedCount % 3) + 3) % 3 // 0,1,2 even for negatives
+  return SMALL_EFT_ROTATION_TIERS.has(tierSlug || '') ? slot === 2 : slot !== 2
+}
+
+/** The activation "start line": the rotation counts payments received AFTER this
+ *  ISO timestamp. Null = rotation NOT activated (deploys inert; the resolver then
+ *  falls back to the existing global-mode behaviour). Latest `pm_rotation` event
+ *  wins, same pattern as getEftMode(). Fails closed to null. */
+export async function getRotationStartAt(): Promise<string | null> {
+  try {
+    const admin = createAdminClient()
+    const { data } = await admin
+      .from('site_events')
+      .select('metadata')
+      .eq('event_type', 'pm_rotation')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const at = (data?.metadata as { started_at?: string } | null)?.started_at
+    return typeof at === 'string' && at ? at : null
+  } catch {
+    return null
+  }
+}
+
+/** How many payments have been RECEIVED in a tier since the start line: a Yoco
+ *  settlement (`paid_at`) or an EFT collection (`payment.eft_collected_at`) that
+ *  landed after `startAtIso`. This is the 0-based slot for the next payer. */
+export async function tierReceivedCount(tierSlug: string, startAtIso: string): Promise<number> {
+  if (!tierSlug) return 0
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('vendor_applications')
+    .select('paid_at, admin_notes')
+    .eq('preferred_booth_tier', tierSlug)
+    .eq('status', 'approved')
+  let n = 0
+  for (const r of data || []) {
+    const paidAt = r.paid_at as string | null
+    if (paidAt && paidAt > startAtIso) { n++; continue }
+    const collectedAt = parsePortalState(r.admin_notes as string).payment?.eft_collected_at
+    if (typeof collectedAt === 'string' && collectedAt > startAtIso) n++
+  }
+  return n
+}
+
+/** THE payment-page routing decision. Same definite guards as vendorInEftLane,
+ *  but the global-mode fallback is replaced by the per-tier rotation once
+ *  activated. Order matters: overrides win, then committed-method stickiness (so
+ *  a vendor mid-payment never flips when the tier count moves under them), then
+ *  the rotation. Async because the rotation reads the DB. */
+export async function resolveInEftLane(
+  app: { admin_notes?: string | null; paid_at?: string | null; preferred_booth_tier?: string | null },
+  globalOn: boolean,
+  identity?: LaneIdentity,
+): Promise<boolean> {
+  if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator
+  if (app.paid_at) return false                                                   // already paid
+  if (hasNoEftMarker(app.admin_notes)) return false                               // ⟦NOEFT⟧ excluded
+  const p = parsePortalState(app.admin_notes).payment
+  if (p?.status === 'paid') return false
+  if (hasEftMarker(app.admin_notes)) return true                                  // ⟦EFT⟧ hand-picked
+  if (p?.eft_revealed_at || p?.eft_submitted_at) return true                      // committed to EFT, don't flip
+  if (p?.status === 'pending') return false                                       // Yoco checkout started, don't flip
+  if (!globalOn) return false                                                     // EFT master switch off
+  const startAt = await getRotationStartAt()
+  if (!startAt) return true                                                       // rotation not activated → prior all-EFT behaviour
+  const count = await tierReceivedCount(app.preferred_booth_tier || '', startAt)
+  return tierRotationSaysEft(count, app.preferred_booth_tier)
 }
 
 // A reply "tells a vendor they can pay by EFT" when it mentions EFT, a bank

@@ -63,6 +63,12 @@ export const TIER_META: Record<string, { label: string; suggestZone: StallType; 
   'food-truck-8m': { label: 'Food Truck 8m', suggestZone: 'FT', price: 8500 },
 }
 
+// The two cheap tiers that lean to instant, low-fee Yoco (2 Yoco : 1 EFT in the
+// payment-method rotation). Every other tier is a "big" tier and leans the other
+// way (2 EFT : 1 Yoco) so the card fee on expensive stalls is avoided. Used by
+// the tier rotation in lib/eft.ts.
+export const SMALL_EFT_ROTATION_TIERS = new Set<string>(['marquee-table-2x2', 'outdoor-bedouin-2x3'])
+
 export function tierLabel(slug: string | null | undefined): string {
   if (!slug) return 'Not specified'
   return TIER_META[slug]?.label || slug
