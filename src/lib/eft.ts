@@ -431,6 +431,18 @@ export async function tierReceivedCount(tierSlug: string, startAtIso: string): P
  *  activated. Order matters: overrides win, then committed-method stickiness (so
  *  a vendor mid-payment never flips when the tier count moves under them), then
  *  the rotation. Async because the rotation reads the DB. */
+// A vendor "opened EFT" when they revealed the bank details (eft_revealed_at).
+// This grace window holds them on EFT for `hours` after they last opened it, so a
+// vendor mid-transfer is never yanked to Yoco. Pure (nowMs passed in) so it is
+// unit-testable. Absent timestamp -> not in grace; present-but-unparseable ->
+// treated as in-grace (never flip a vendor off EFT on bad data).
+export function eftRevealWithinGrace(revealedAt: string | null | undefined, nowMs: number, hours = 48): boolean {
+  if (!revealedAt) return false
+  const t = new Date(revealedAt).getTime()
+  if (Number.isNaN(t)) return true
+  return nowMs - t <= hours * 3600 * 1000
+}
+
 export async function resolveInEftLane(
   app: { admin_notes?: string | null; paid_at?: string | null; preferred_booth_tier?: string | null },
   globalOn: boolean,
@@ -442,7 +454,16 @@ export async function resolveInEftLane(
   const p = parsePortalState(app.admin_notes).payment
   if (p?.status === 'paid') return false
   if (hasEftMarker(app.admin_notes)) return true                                  // ⟦EFT⟧ hand-picked
-  if (p?.eft_revealed_at || p?.eft_submitted_at) return true                      // committed to EFT, don't flip
+  // Money is already on the EFT rail (proof uploaded, or an operator marked it
+  // collected): NEVER flip these to Yoco, they have paid by EFT. Independent of
+  // the master switch and of the 48h grace below.
+  if (p?.eft_submitted_at || p?.status === 'collected' || p?.eft_collected_at) return true
+  // Opened the bank details but nothing in yet: hold on EFT for a 48h grace so a
+  // vendor mid-transfer is never yanked to Yoco. After 48h an unpaid opener falls
+  // through to the switch, so with EFT mode ON they stay EFT (rotation, unchanged)
+  // and with it OFF they return to card. Taona 2026-08-05: "turn off eft mode
+  // except those who opened eft in the past 48 hours".
+  if (p?.eft_revealed_at && (globalOn || eftRevealWithinGrace(p.eft_revealed_at, Date.now()))) return true
   if (p?.status === 'pending') return false                                       // Yoco checkout started, don't flip
   if (!globalOn) return false                                                     // EFT master switch off
   const startAt = await getRotationStartAt()

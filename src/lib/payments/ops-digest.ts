@@ -12,7 +12,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { TIER_META, SMALL_EFT_ROTATION_TIERS } from '@/lib/stalls'
-import { getRotationStartAt, tierReceivedCount, tierRotationSaysEft } from '@/lib/eft'
+import { getRotationStartAt, tierReceivedCount, tierRotationSaysEft, getEftMode, eftRevealWithinGrace } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { formatRand } from '@/lib/payments/pricing'
 import { isTestVendor } from '@/lib/test-vendors'
@@ -33,6 +33,10 @@ export interface RotationState {
   activated: boolean
   startedAt: string | null
   tiers: TierRotation[]
+  /** The EFT master switch. When false, vendors pay by card except recent openers. */
+  eftModeOn: boolean
+  /** Unpaid vendors still inside the 48h EFT-reveal grace (kept on EFT when off). */
+  recentEftOpeners: number
 }
 
 export interface PaidToday { who: string; amount: number; method: string }
@@ -57,11 +61,14 @@ function sastDayStartIso(now: Date): string {
 }
 
 export async function buildRotationState(): Promise<RotationState> {
-  const startedAt = await getRotationStartAt()
+  const [startedAt, eftModeOn] = await Promise.all([getRotationStartAt(), getEftMode()])
   const admin = createAdminClient()
 
-  // approved + unpaid vendors per tier -> which tiers have a live next-payer.
+  // approved + unpaid vendors per tier, plus a count of "recent EFT openers" still
+  // inside the 48h reveal grace (they keep EFT even when the switch is off).
   const pendingByTier = new Map<string, number>()
+  let recentEftOpeners = 0
+  const nowMs = Date.now()
   {
     const { data } = await admin
       .from('vendor_applications')
@@ -70,7 +77,9 @@ export async function buildRotationState(): Promise<RotationState> {
     for (const r of (data || []) as Array<Record<string, unknown>>) {
       if (r.paid_at) continue
       if (isTestVendor({ business_name: r.business_name as string, email: r.email as string })) continue
-      if (parsePortalState((r.admin_notes as string) || '').payment?.status === 'paid') continue
+      const pay = parsePortalState((r.admin_notes as string) || '').payment
+      if (pay?.status === 'paid') continue
+      if (pay?.eft_revealed_at && !pay?.eft_submitted_at && pay?.status !== 'collected' && eftRevealWithinGrace(pay.eft_revealed_at, nowMs)) recentEftOpeners++
       const t = (r.preferred_booth_tier as string) || ''
       pendingByTier.set(t, (pendingByTier.get(t) || 0) + 1)
     }
@@ -93,7 +102,7 @@ export async function buildRotationState(): Promise<RotationState> {
     }),
   )
 
-  return { activated: !!startedAt, startedAt, tiers }
+  return { activated: !!startedAt, startedAt, tiers, eftModeOn, recentEftOpeners }
 }
 
 export async function buildOpsDigest(now: Date = new Date()): Promise<OpsDigest> {
@@ -180,7 +189,10 @@ export function formatOpsDigestWa(d: OpsDigest): string {
   if (d.opensToday.count) L.push(cap(d.opensToday.names, 8))
   L.push('')
 
-  if (!d.rotation.activated) {
+  if (!d.rotation.eftModeOn) {
+    L.push('*EFT mode: OFF* (card only)')
+    L.push(`• ${d.rotation.recentEftOpeners} recent openers still on EFT (48h grace)`)
+  } else if (!d.rotation.activated) {
     L.push('*Payment rotation:* not activated')
   } else {
     L.push('*Payment rotation* (next payer per tier)')

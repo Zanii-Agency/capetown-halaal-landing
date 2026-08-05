@@ -54,31 +54,41 @@ function OpsPanel({ digest }: { digest: OpsDigest }) {
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold">Yoco / EFT rotation</p>
         <span className="text-[11px] text-[#1B1A17]/45">
-          {rotation.activated && rotation.startedAt
-            ? `live since ${new Date(rotation.startedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
-            : 'not activated'}
+          {!rotation.eftModeOn
+            ? 'EFT mode OFF'
+            : rotation.activated && rotation.startedAt
+              ? `live since ${new Date(rotation.startedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+              : 'not activated'}
         </span>
       </div>
-      <div className="rounded-xl bg-white border border-[#E5DCC4] divide-y divide-[#F0E9D6] overflow-hidden">
-        {tiers.map((t) => (
-          <div key={t.slug} className={`flex items-center gap-3 px-4 py-2.5 ${t.hasPending ? '' : 'opacity-45'}`}>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm text-[#1B1A17] truncate">
-                {t.label} {t.isSmall && <span className="text-[10px] text-[#1B1A17]/40">small</span>}
+      {!rotation.eftModeOn ? (
+        <div className="rounded-xl bg-white border border-[#E5DCC4] px-4 py-3 text-sm text-[#1B1A17]">
+          <span className="font-semibold">Card only.</span> Everyone pays by Yoco, except{' '}
+          <span className="font-semibold">{rotation.recentEftOpeners}</span> who opened EFT bank details in the last 48h
+          (still on EFT until they pay or the window lapses).
+        </div>
+      ) : (
+        <div className="rounded-xl bg-white border border-[#E5DCC4] divide-y divide-[#F0E9D6] overflow-hidden">
+          {tiers.map((t) => (
+            <div key={t.slug} className={`flex items-center gap-3 px-4 py-2.5 ${t.hasPending ? '' : 'opacity-45'}`}>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-[#1B1A17] truncate">
+                  {t.label} {t.isSmall && <span className="text-[10px] text-[#1B1A17]/40">small</span>}
+                </div>
+                <div className="text-[11px] text-[#1B1A17]/45">{t.received} paid since start</div>
               </div>
-              <div className="text-[11px] text-[#1B1A17]/45">{t.received} paid since start</div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-[#1B1A17]/40 mr-1">next</span>
+                {t.nextThree.map((m, i) => (
+                  <span key={i} className={i === 0 ? '' : 'opacity-40'}>
+                    <MethodChip m={m} />
+                  </span>
+                ))}
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-[#1B1A17]/40 mr-1">next</span>
-              {t.nextThree.map((m, i) => (
-                <span key={i} className={i === 0 ? '' : 'opacity-40'}>
-                  <MethodChip m={m} />
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
