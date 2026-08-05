@@ -154,7 +154,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-sm text-[#1B1A17]">
-                {globalOn ? 'ON. Every vendor sees EFT details, Yoco is hidden.' : 'OFF. Only vendors you add below are on EFT.'}
+                {globalOn ? 'ON. Every vendor sees EFT details, Yoco is hidden.' : 'OFF. Card only, except vendors you add and anyone who opened EFT in the last 48h.'}
               </p>
               <p className="text-xs text-[#1B1A17]/50 mt-1">
                 While on, all vendor emails and WhatsApp route to the Messages tab, off the main inbox.
