@@ -17,7 +17,7 @@
 
 import { parseAllocation, SMALL_EFT_ROTATION_TIERS } from '@/lib/stalls'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState, type PortalState } from '@/lib/portal-state'
+import { parsePortalState, setArrangement, type PortalState } from '@/lib/portal-state'
 
 const EFT_MARKER = '⟦EFT⟧'
 // Bare token; cannot collide with ⟦PORTAL:<base64>⟧ or ⟦STALL:...⟧ (different
@@ -147,6 +147,19 @@ export function withNoEftMarker(adminNotes?: string | null): string {
 /** Lift the EFT exclusion. Preserves prose and every other marker. */
 export function withoutNoEftMarker(adminNotes?: string | null): string {
   return (adminNotes || '').replace(NOEFT_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** Grant a vendor a payment extension AND exclude them from the EFT push in one
+ *  step. Operator rule 2026-08-10: "anyone who opts for payment end of month
+ *  (31 Aug) by default exclude them from the EFT list" — they settle by card
+ *  when ready, off the EFT rail. Writes the deferral first (portal marker), then
+ *  re-reads and appends ⟦NOEFT⟧ so neither write clobbers the other. */
+export async function grantExtension(applicationId: string, until: string, note?: string): Promise<void> {
+  await setArrangement(applicationId, until, note)
+  const admin = createAdminClient()
+  const { data } = await admin.from('vendor_applications').select('admin_notes').eq('id', applicationId).maybeSingle()
+  const next = withNoEftMarker((data?.admin_notes as string) || '')
+  await admin.from('vendor_applications').update({ admin_notes: next }).eq('id', applicationId)
 }
 
 export interface EftBankDetails {
