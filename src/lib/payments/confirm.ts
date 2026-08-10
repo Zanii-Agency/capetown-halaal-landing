@@ -165,11 +165,15 @@ export async function sendVendorPaymentWa(args: {
       return
     }
     const res = await sendTemplate(waTo, TEMPLATE_KEY, built.ordered, { category: spec.category })
-    if (res.skipped) console.error(`[sendVendorPaymentWa] not sent (${TEMPLATE_KEY}): ${res.skipped}`)
-    await admin.from('wa_messages').insert({
-      direction: 'out', wa_phone: waTo, body: previewBody,
-      status: res.skipped ? 'failed' : 'sent', provider_message_id: res.messageId || null, error: res.skipped || null,
-    })
+    // On success sendTemplate ALREADY logged the rendered body to wa_messages
+    // (whatsapp.ts logWhatsAppOutbound), so a second insert here was a duplicate
+    // inbox bubble (Kgotsos, Melonscape, Chocotag showed two "Payment received"
+    // rows at one timestamp, 2026-08-10). Only log the SKIP case, which
+    // sendTemplate returns before it logs anything.
+    if (res.skipped) {
+      console.error(`[sendVendorPaymentWa] not sent (${TEMPLATE_KEY}): ${res.skipped}`)
+      await logFail(res.skipped)
+    }
   } catch (e) {
     console.error('[sendVendorPaymentWa] failed:', (e as Error).message)
   }
