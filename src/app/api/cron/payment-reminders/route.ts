@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalState, isChaseSuppressed } from '@/lib/portal-state'
+import { buildSuppressedPeople, newSendDeduper } from '@/lib/payments/chase-targeting'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { sendEmail } from '@/lib/email/resend'
 import { VendorPaymentReminder } from '@/lib/email/templates/VendorPaymentReminder'
@@ -83,6 +84,15 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // Person-level suppression: a paid/deferred row on a person's OTHER approved
+  // application (a duplicate submission) must suppress ALL their rows. The
+  // per-row isChaseSuppressed inside the loop only sees one row, so a paid
+  // vendor with an empty twin row was chased on the shared phone (Melonscape,
+  // Chocotag, 2026-08-10). Built once from the full fetch.
+  const suppressed = buildSuppressedPeople((apps || []) as never[], today)
+  // A person with two unpaid rows must be messaged at most once per run.
+  const deduper = newSendDeduper()
+
   const results: Array<Record<string, unknown>> = []
 
   for (const app of apps || []) {
@@ -96,6 +106,8 @@ export async function GET(req: NextRequest) {
     // so a vendor told "you have until 31 August" got an escalating notice a
     // week later anyway.
     if (isChaseSuppressed(state, today)) continue
+    // Suppressed because a DIFFERENT row for this same person is paid/deferred.
+    if (suppressed.has(app as never)) continue
 
     const reviewedAt = app.reviewed_at ? new Date(app.reviewed_at as string) : null
     if (!reviewedAt) continue
@@ -114,6 +126,10 @@ export async function GET(req: NextRequest) {
     const history = ((state as unknown) as { payment_reminders?: { history?: { at: string; week: number }[] } }).payment_reminders?.history || []
     const lastSent = history.length ? new Date(history[history.length - 1].at) : null
     if (lastSent && daysBetween(lastSent, today) < 7) continue
+
+    // This row is chaseable. Claim the person so a second unpaid row for the
+    // same phone/email does not send them a second reminder this run.
+    if (!deduper.claim(app as never)) continue
 
     const weekNumber = Math.min(history.length + 1, 4)
     const pricing = computeVendorPricing({
