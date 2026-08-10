@@ -14,6 +14,7 @@ import {
   touchInbound,
   isStopKeyword,
   isStartKeyword,
+  isOptedOut,
 } from '@/lib/wa-consent'
 import { askFestivalBrain } from '@/lib/festival-brain'
 import { isPartPaymentAsk, FAQ } from '@/lib/festival-brain/faq'
@@ -275,8 +276,10 @@ async function handleInbound(msg: {
     return
   }
 
-  // 2) START — re-opt-in.
-  if (isStartKeyword(msg.text)) {
+  // 2) START — re-opt-in. ONLY for someone who actually opted out: otherwise a
+  // normal message that merely contains a start-like word (and previously "yes")
+  // fell in here and got "You're back in" instead of a real answer (2026-08-10).
+  if (isStartKeyword(msg.text) && (await isOptedOut(e164))) {
     await touchInbound(e164, msg.name)
     await recordConsent({ waPhone: e164, source: 'inbound', profileName: msg.name })
     await sendText(e164, "You're back in 🎉 You'll get Young at Heart Festival updates here. How can I help?")
