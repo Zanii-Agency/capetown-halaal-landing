@@ -171,6 +171,12 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'grant_payment_extension',
+    description: "Give THIS vendor until 31 August 2026 (the festival's final settlement date) to pay their stall fee in full. Call when a verified vendor asks for an extension, more time, or says they will pay by the end of the month, AFTER you have confirmed they want it. This records the arrangement so the reminder system stops chasing them for the earlier date and instead acknowledges the extension. It does NOT split the fee into instalments, it only moves the single full-payment date to 31 August. If they are already paid, do not call it.",
+    strict: true,
+    input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
     name: 'where_is_my_stall',
     description: "Return THIS vendor's allocated stall code, zone, and a link to the map in their portal. Call when a verified vendor asks where their stall is, what zone they are in, or for their stall number.",
     strict: true,
@@ -228,7 +234,7 @@ export const TOOL_DEFS = [
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
   'send_contract', 'sign_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
-  'get_payment_due_date', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'upload_eft_proof',
+  'get_payment_due_date', 'grant_payment_extension', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'upload_eft_proof',
   'escalate_to_human',
 ])
 
@@ -835,6 +841,21 @@ async function getPaymentDueDate(vendorId: string): Promise<string> {
   return `Your stall fee is due on ${fmtDate(due)}. ${when} You can pay in your portal at ${PORTAL_LOGIN}.`
 }
 
+async function grantPaymentExtension(vendorId: string): Promise<string> {
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not load your application just now. Please try again shortly.'
+  const st = parsePortalState(row.admin_notes || '')
+  if (st.payment?.status === 'paid' || st.payment?.status === 'collected') {
+    return 'Your stall fee is already settled, thank you, so there is nothing to extend.'
+  }
+  // Persist the arrangement (deferral to 31 Aug) AND exclude from the EFT push,
+  // so the reminder cron acknowledges the new date instead of chasing the old
+  // one, and the vendor pays by card when ready (operator, 2026-08-10).
+  const { grantExtension } = await import('@/lib/eft')
+  await grantExtension(vendorId, '2026-08-31', 'extension to 31 Aug granted via WhatsApp')
+  return "Done, you have until 31 August 2026 to settle your stall fee in full. Your spot stays reserved until then, just pay through Payments in your portal when you're ready."
+}
+
 async function whereIsMyStall(vendorId: string): Promise<string> {
   const row = await ownRow(vendorId)
   if (!row) return 'I could not load your application just now. Please try again shortly.'
@@ -1193,6 +1214,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'update_my_email': content = await updateMyEmail(session, (args as { email?: string })?.email || ''); break
       case 'request_stall_change': content = await requestStallChange(session, (args as { requested_tier?: string })?.requested_tier || ''); break
       case 'get_payment_due_date': content = await getPaymentDueDate(session.vendorId!); break
+      case 'grant_payment_extension': content = await grantPaymentExtension(session.vendorId!); break
       case 'withdraw_application': content = await withdrawSelf(session, (args as { reason?: string; confirmed?: boolean })); break
       case 'where_is_my_stall': content = await whereIsMyStall(session.vendorId!); break
       case 'report_issue': content = await reportIssue(session, args as { issue_type?: string; description?: string }); break
