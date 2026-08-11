@@ -14,10 +14,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
-import { buildLaneScope, type LaneVendorRow } from '@/lib/inbox-lane'
-import { isEftAdmin } from '@/lib/eft'
+import { reconciledPaid } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -77,10 +75,13 @@ export async function GET(req: NextRequest) {
     contract_signed_at: string | null
   }>)
 
-  // Scope the export: master-lane vendors must not appear in the festival
-  // owner's CSV. Unapproved applicants stay visible (they have no lane yet).
-  const scope = buildLaneScope(rawRows as unknown as LaneVendorRow[], false, isEftAdmin(user.email ?? null))
-  const rows = rawRows.filter((r) => !scope.blocksApplicationId(r.id))
+  // NO row-scoping. The lane hides payment POSTURE, not the pipeline: every
+  // vendor appears, and only payment_status is normalised — a master-lane vendor
+  // (EFT, manual_card, capture 'manual', collected) reads 'unpaid' until Yoco
+  // reconciles them (reconciledPaid). This route used to drop those rows via
+  // buildLaneScope (Taona 2026-08-10: "all vendors show, EFT shows as unpaid,
+  // they only show paid once yoco reconciled").
+  const rows = rawRows
 
   // H5: audit log every export so we can trace PII flows. We anchor the
   // event on the first exported vendor's application_id (the audit table FK
@@ -116,10 +117,9 @@ export async function GET(req: NextRequest) {
   ]
   const lines: string[] = [headers.join(',')]
   for (const row of rows) {
-    const portal = parsePortalState(row.admin_notes || '')
     const { stall } = parseAllocation(row.admin_notes || '')
     const sector = row.product_categories?.[0] || ''
-    const paymentStatus = portal.payment?.status || 'none'
+    const paymentStatus = reconciledPaid(row.admin_notes, row.paid_at) ? 'paid' : 'unpaid'
     lines.push([
       escapeCsv(row.business_name),
       escapeCsv(row.contact_name),

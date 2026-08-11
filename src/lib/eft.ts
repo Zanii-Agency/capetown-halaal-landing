@@ -230,8 +230,32 @@ export async function getEftMode(): Promise<boolean> {
  *  an allowlist: 20 of 47 paid vendors carry no `method` at all (settled before
  *  the field existed, all pre-dating EFT mode), and an allowlist would blank them
  *  out of her world. Every new payment records its method, so a blank can only be
- *  historical. */
-const MASTER_ONLY_METHODS = new Set(['eft', 'manual_card'])
+ *  historical.
+ *
+ *  'manual' is the method finance/capture writes for an operator-entered EFT
+ *  capture (audience:'master'; it overwrites confirmPayment's 'eft' at
+ *  capture/route.ts). It belongs here for the same reason 'eft' does. Leaving it
+ *  out let a master-lane capture (Table Art, captured 2026-07-05) read as
+ *  hers/paid on every surface until 2026-08-10. */
+const MASTER_ONLY_METHODS = new Set(['eft', 'manual_card', 'manual'])
+
+/** The vendor-roster PAID/UNPAID label — permanent rule (Taona 2026-08-10:
+ *  "all vendors show, EFT shows as unpaid, they only show paid once Yoco
+ *  reconciled"). A vendor reads PAID only once money settled through a channel
+ *  the festival owner reconciles (Yoco, cash, waived): a real paid_at, or portal
+ *  status 'paid', via a NON-master method. Every master-lane settlement — EFT,
+ *  manual_card, finance/capture 'manual' — and the 'collected' interim reads
+ *  UNPAID until a Yoco reconciliation flips it.
+ *
+ *  This is vendorInOwnerScope's settledHerWay, extracted so the roster export and
+ *  the visibility scope share ONE rule and cannot drift. */
+export function reconciledPaid(
+  adminNotes: string | null | undefined,
+  paidAt?: string | null,
+): boolean {
+  const p = parsePortalState(adminNotes).payment
+  return (!!paidAt || p?.status === 'paid') && !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+}
 
 /** Is this vendor inside the festival owner's world at all?
  *
@@ -266,8 +290,8 @@ export function vendorInOwnerScope(
   // Settled through a channel she handles. Yoco reconciliation is what ENDS the
   // arrangement, so a vendor who touched EFT and then settled by card is hers
   // again. Y&K gifts and toys is exactly this case and must stay visible.
-  const settledHerWay =
-    (!!paidAt || p?.status === 'paid') && !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+  // Shared with the roster export via reconciledPaid so the two cannot drift.
+  const settledHerWay = reconciledPaid(adminNotes, paidAt)
 
   // DELIBERATE HAND-OVER. The only way an UNPAID vendor reaches the festival
   // owner. Taona 2026-07-27: vendors who write in asking for an extension or a

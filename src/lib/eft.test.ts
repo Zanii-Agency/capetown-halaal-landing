@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
+import { vendorInOwnerScope, reconciledPaid, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -179,6 +179,24 @@ test('vendorInOwnerScope: the festival owner only ever sees vendors who paid thr
   // blanked out of her world, which is why the rule is a denylist.
   assert.equal(vendorInOwnerScope(updatePortalStateImpl('note', { v: 1, payment: { status: 'paid' } }), null), true)
   assert.equal(vendorInOwnerScope('just a note', '2026-07-19T00:00:00Z'), true)
+})
+
+test('reconciledPaid: the roster reads PAID only for a Yoco-reconcilable channel', () => {
+  const paidVia = (method: string) => updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method } as never })
+  // Her channels settle to PAID.
+  assert.equal(reconciledPaid(paidVia('yoco'), '2026-07-19T00:00:00Z'), true)
+  assert.equal(reconciledPaid(paidVia('cash'), null), true)
+  assert.equal(reconciledPaid(paidVia('waived'), null), true)
+  // Master-lane settlements read UNPAID until Yoco reconciles them. 'manual' is
+  // finance/capture's EFT capture — the gap that let Table Art read as paid.
+  assert.equal(reconciledPaid(paidVia('eft'), '2026-07-05T00:00:00Z'), false)
+  assert.equal(reconciledPaid(paidVia('manual_card'), '2026-07-05T00:00:00Z'), false)
+  assert.equal(reconciledPaid(paidVia('manual'), '2026-07-05T00:00:00Z'), false)
+  // The 'collected' EFT interim and a plain unpaid vendor are UNPAID.
+  assert.equal(reconciledPaid(updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }), null), false)
+  assert.equal(reconciledPaid('just a note', null), false)
+  // Legacy paid_at with no method is still hers (denylist, not allowlist).
+  assert.equal(reconciledPaid('just a note', '2026-07-19T00:00:00Z'), true)
 })
 
 test('vendorInOwnerScope: every unpaid state is outside her world', () => {
