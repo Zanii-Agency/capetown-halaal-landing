@@ -69,6 +69,28 @@ export function visiblePaymentStatus(status: string | null | undefined, viewerEm
   return isEftAdmin(viewerEmail) ? s : 'none'
 }
 
+/** The payment status to DISPLAY on a roster that shows EVERY vendor (the
+ *  vendors page and the outside roster, the on-screen twins of the export).
+ *  visiblePaymentStatus only masks 'collected'; it cannot see the method, so an
+ *  EFT/manual settlement stamped status:'paid' still read 'paid' to the festival
+ *  owner (Amc cookware, Africa Muslims Agency, Elegant Muslimah, Table Art on
+ *  2026-08-11). Permanent rule (Taona): a vendor is 'paid' to her only once Yoco
+ *  reconciles it; every master-lane state ('paid' via eft/manual_card/manual, or
+ *  the 'collected' interim) masks to 'none', exactly as 'collected' already did.
+ *  The EFT admin still reads the true state. Method-aware, so it needs the notes
+ *  and paid_at, not just the status string. Reuses reconciledPaid so it cannot
+ *  drift from the export. */
+export function rosterPaymentStatus(
+  adminNotes: string | null | undefined,
+  paidAt: string | null | undefined,
+  viewerEmail?: string | null,
+): string {
+  const raw = parsePortalState(adminNotes).payment?.status || (paidAt ? 'paid' : 'none')
+  if (isEftAdmin(viewerEmail)) return raw
+  if (reconciledPaid(adminNotes, paidAt)) return 'paid'
+  return raw === 'paid' || raw === 'collected' ? 'none' : raw
+}
+
 // Operator PREVIEW addresses: emails an operator uses to preview vendor-facing
 // output (e.g. a self-sent invoice preview). Their unified-inbox threads are
 // confined to the dev-only EFT feed so a preview never surfaces in the festival

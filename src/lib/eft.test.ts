@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaymentStatus, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -279,6 +279,26 @@ test('visiblePaymentStatus leaves every other state untouched for everyone', () 
     assert.equal(visiblePaymentStatus(s, 'capetownhalaal@gmail.com'), s, s)
     assert.equal(visiblePaymentStatus(s, EFT_ADMIN_EMAIL), s, s)
   }
+})
+
+test('rosterPaymentStatus: a master-lane paid vendor never reads "paid" to the owner', () => {
+  const SAM = 'capetownhalaal@gmail.com'
+  const notes = (payment: Record<string, unknown>) =>
+    updatePortalStateImpl('note', { v: 1, payment } as never)
+  const paidAt = '2026-07-05T00:00:00Z'
+  // Master-lane settlements collapse to 'none' for her (the leak: these read
+  // 'paid' under visiblePaymentStatus). Amc cookware / Table Art are these.
+  assert.equal(rosterPaymentStatus(notes({ status: 'paid', method: 'eft' }), paidAt, SAM), 'none')
+  assert.equal(rosterPaymentStatus(notes({ status: 'paid', method: 'manual' }), paidAt, SAM), 'none')
+  assert.equal(rosterPaymentStatus(notes({ status: 'paid', method: 'manual_card' }), paidAt, SAM), 'none')
+  assert.equal(rosterPaymentStatus(notes({ status: 'collected' }), null, SAM), 'none')
+  // A Yoco-reconciled vendor reads 'paid'; unpaid states pass through untouched.
+  assert.equal(rosterPaymentStatus(notes({ status: 'paid', method: 'yoco' }), paidAt, SAM), 'paid')
+  assert.equal(rosterPaymentStatus(notes({ status: 'pending' }), null, SAM), 'pending')
+  assert.equal(rosterPaymentStatus('just a note', null, SAM), 'none')
+  // The EFT admin always sees the raw truth.
+  assert.equal(rosterPaymentStatus(notes({ status: 'paid', method: 'eft' }), paidAt, EFT_ADMIN_EMAIL), 'paid')
+  assert.equal(rosterPaymentStatus(notes({ status: 'collected' }), null, EFT_ADMIN_EMAIL), 'collected')
 })
 
 // ---------------------------------------------------------------------------
