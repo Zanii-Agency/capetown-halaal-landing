@@ -18,7 +18,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parseVendorExtras } from '@/lib/vendor-extras'
-import { reconciledPaid } from '@/lib/eft'
+import { rosterPaid } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -145,7 +145,7 @@ export async function GET(req: NextRequest) {
       extras.usesGas,
       extras.totalEstimate ?? '',
       stall || '',
-      reconciledPaid(notes, r.paid_at as string | null) ? 'paid' : 'unpaid',
+      rosterPaid(notes, r.paid_at as string | null) ? 'paid' : 'unpaid',
       contractSigned ? 'Yes' : 'No',
       (r.status as string) || '',
     ])

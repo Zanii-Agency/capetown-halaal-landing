@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation } from '@/lib/stalls'
-import { reconciledPaid } from '@/lib/eft'
+import { rosterPaid } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
   for (const row of rows) {
     const { stall } = parseAllocation(row.admin_notes || '')
     const sector = row.product_categories?.[0] || ''
-    const paymentStatus = reconciledPaid(row.admin_notes, row.paid_at) ? 'paid' : 'unpaid'
+    const paymentStatus = rosterPaid(row.admin_notes, row.paid_at) ? 'paid' : 'unpaid'
     lines.push([
       escapeCsv(row.business_name),
       escapeCsv(row.contact_name),

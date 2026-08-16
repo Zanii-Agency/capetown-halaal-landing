@@ -87,7 +87,7 @@ export function rosterPaymentStatus(
 ): string {
   const raw = parsePortalState(adminNotes).payment?.status || (paidAt ? 'paid' : 'none')
   if (isEftAdmin(viewerEmail)) return raw
-  if (reconciledPaid(adminNotes, paidAt)) return 'paid'
+  if (rosterPaid(adminNotes, paidAt)) return 'paid'
   return raw === 'paid' || raw === 'collected' ? 'none' : raw
 }
 
@@ -277,6 +277,31 @@ export function reconciledPaid(
 ): boolean {
   const p = parsePortalState(adminNotes).payment
   return (!!paidAt || p?.status === 'paid') && !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+}
+
+/** The roster PAID label. A vendor reads PAID once it has SETTLED — paid_at set, or
+ *  portal status 'paid' — regardless of method. This is byte-for-byte the same rule
+ *  the finance dashboard already uses for is_paid/totalRevenue, so the vendors page,
+ *  the export and the total can never disagree.
+ *
+ *  Taona 2026-08-16: a settled EFT payment is a DONE deal, whoever reconciled it —
+ *  Samreen from her portal (Amc cookware, Elegant Muslimah, Table Art), the EFT
+ *  admin handing a ⟦NOEFT⟧/⟦OWNERVIS⟧ vendor to her (Islamic Relief SA, Africa
+ *  Muslims Agency), or a Yoco settlement (Y&K, Vanilla Cream). "The 5 are correct,
+ *  make sure their payments reflect on the total." What stays masked is the
+ *  IN-FLIGHT master lane — 'collected' (money recorded, not reconciled) is NOT a
+ *  settlement, so it is not paid here and rosterPaymentStatus renders it 'none'.
+ *  That is where the earlier method-based masking went too far: it hid settled EFT
+ *  the owner had every right to see, while the leak it was guarding against
+ *  (EFT-in-progress) is the 'collected' state, which this correctly withholds.
+ *
+ *  reconciledPaid (Yoco/cash/waived only) stays the predicate for vendorInOwnerScope
+ *  — that wall decides VISIBILITY, a separate concern from the paid/unpaid label. */
+export function rosterPaid(
+  adminNotes: string | null | undefined,
+  paidAt?: string | null,
+): boolean {
+  return !!paidAt || parsePortalState(adminNotes).payment?.status === 'paid'
 }
 
 /** Is this vendor inside the festival owner's world at all?
