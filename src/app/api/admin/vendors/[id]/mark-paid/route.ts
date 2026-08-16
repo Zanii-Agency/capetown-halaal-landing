@@ -51,15 +51,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // paid (first payment OR top-up) instead of overwriting it, sets the paid_at
   // column atomically, and de-dups by providerRef. A unique ref per manual entry
   // (or the operator's reference) prevents a double-click from double-counting.
-  // silent: the operator is recording an offline payment, so no auto vendor /
-  // owner sends (matches the prior behaviour of this endpoint).
+  // Notifies the vendor by default: marking someone paid here should send them
+  // the "Payment received" confirmation, exactly like Yoco and the sister
+  // /admin/payments/mark-paid endpoint. Africa Muslims Agency was marked paid
+  // here on 2026-08-10 and got NO confirmation because this was hardcoded
+  // silent:true. Pass { silent: true } explicitly for a quiet backfill.
   const providerRef = reference || `manual-${id}-${Date.now()}`
   const result = await confirmPayment({
     applicationId: id,
     method,
     amount,
     providerRef,
-    silent: true,
+    silent: !!body.silent,
   })
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error }, { status: 500 })

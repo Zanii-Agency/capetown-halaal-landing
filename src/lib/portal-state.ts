@@ -278,6 +278,46 @@ export function hasPaid(state: PortalState): boolean {
   return !!state.payment?.paid_at || PAID_STATES.has(state.payment?.status || '')
 }
 
+/** True if the vendor withdrew their application. Never chase a withdrawn vendor. */
+export function isWithdrawn(state: PortalState): boolean {
+  return !!state.withdrawn?.at
+}
+
+/** The in-force operator-agreed extension for this vendor, or null. An
+ *  extension is in force when status is 'deferred' and either no end date was
+ *  set (open-ended) or the end date has not passed. `until` is null for an
+ *  open-ended arrangement. Unlike isChaseSuppressed, this does NOT silence the
+ *  vendor: the cron still sends a gentle, extension-aware reminder that
+ *  acknowledges the date and asks them to pay by it (operator, 2026-08-10). */
+export function getArrangement(
+  state: PortalState,
+  now: Date = new Date()
+): { until: string | null } | null {
+  if (state.payment?.status !== 'deferred') return null
+  const until = state.payment?.arrangement?.until
+  if (until && now > new Date(`${until}T23:59:59.999Z`)) return null // lapsed
+  return { until: until ?? null }
+}
+
+/** Record an operator-agreed payment extension: status='deferred' + the date
+ *  the vendor must settle by (YYYY-MM-DD). Persists what was previously only
+ *  spoken in chat, so every chase reader (cron, batch) honours it. Used by the
+ *  backfill and by the bot when it grants more time. */
+export async function setArrangement(
+  applicationId: string,
+  until: string,
+  note?: string
+): Promise<PortalState> {
+  return updatePortalState(applicationId, (s) => ({
+    ...s,
+    payment: {
+      ...(s.payment || {}),
+      status: 'deferred',
+      arrangement: { until, agreed_at: new Date().toISOString(), ...(note ? { note } : {}) },
+    },
+  }))
+}
+
 /**
  * True if the vendor must NOT be chased for payment right now, either because
  * they have already settled or because an operator agreed a deferral that has
@@ -290,6 +330,7 @@ export function hasPaid(state: PortalState): boolean {
  */
 export function isChaseSuppressed(state: PortalState, now: Date = new Date()): boolean {
   if (hasPaid(state)) return true
+  if (isWithdrawn(state)) return true
   if (state.payment?.status !== 'deferred') return false
   const until = state.payment?.arrangement?.until
   // A deferral with no end date is open-ended. One WITH an end date lapses on

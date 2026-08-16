@@ -192,7 +192,10 @@ const STOP_RE = /\b(stop|unsubscribe|optout|opt[\s\-]?out)\b/i
 // cancel/end/quit are ambiguous mid-sentence ("can I cancel my stall?",
 // "when does the festival end?"), so they only opt out as the WHOLE trimmed body.
 const STOP_COMMAND_RE = /^(cancel|end|quit)$/i
-const START_RE = /\b(start|unstop|subscribe|optin|opt[\s\-]?in|yes)\b/i
+// 'yes' was here and matched ANYWHERE, so "Yes please send contract" / "Yes we
+// can sign" / "Oh yes I can't open the portal" all fired the re-opt-in greeting
+// (2026-08-10). 'yes' is an affirmation, not an opt-in keyword; removed.
+const START_RE = /\b(start|unstop|subscribe|optin|opt[\s\-]?in)\b/i
 
 function isStopText(t: string): boolean {
   return STOP_RE.test(t) || STOP_COMMAND_RE.test(t)
@@ -209,4 +212,11 @@ export function isStartKeyword(text: string): boolean {
   // Guard: don't let an inbound that contains BOTH "start" and "stop" be treated as start.
   if (isStopText(t)) return false
   return START_RE.test(t)
+}
+
+/** True if this number has opted out (STOP). Used to gate the "You're back in"
+ *  re-opt-in confirmation so it only fires for someone who actually left, not
+ *  for anyone whose message happens to contain a start-like word. */
+export async function isOptedOut(waPhone: string): Promise<boolean> {
+  return !!(await getContact(waPhone))?.opted_out
 }

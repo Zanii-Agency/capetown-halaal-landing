@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
-import { visiblePaymentStatus } from '@/lib/eft'
+import { rosterPaymentStatus } from '@/lib/eft'
 import { parseVendorExtras } from '@/lib/vendor-extras'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { VendorsList, type VendorRow } from '@/components/admin/vendors/VendorsList'
@@ -17,10 +17,12 @@ export const dynamic = 'force-dynamic'
 // filter that used to live here was a comms predicate glued onto an operational
 // list, and it left her at "67 approved" while Applications said 167.
 //
-// THE MASK IS UNCHANGED. visiblePaymentStatus still collapses every EFT-lane
-// state (collected included) to 'none' for her, and only Yoco-settled payments
-// (Y&K, Farfashions) read as paid. The list is global; the EFT truth stays hers
-// never.
+// THE MASK IS METHOD-AWARE. rosterPaymentStatus collapses every master-lane
+// state to 'none' for her: not only 'collected' but an EFT/manual settlement
+// stamped status:'paid' (visiblePaymentStatus missed those, so Amc cookware and
+// three others read 'paid' to her until 2026-08-11). Only a Yoco-reconciled
+// payment (Y&K, Farfashions, Vanilla Cream) reads as paid. The list is global;
+// the EFT truth stays hers never.
 export default async function VendorsListPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -33,13 +35,14 @@ export default async function VendorsListPage() {
   const { data: apps } = await admin
     .from('vendor_applications')
     .select(
-      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, paid_at, contract_signed_at, contract_pdf_path, docs_complete_at, created_at, status'
+      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, paid_at, contract_signed_at, contract_pdf_path, docs_complete_at, created_at, status, is_duplicate'
     )
     .in('status', ['approved', 'rejected'])
     .order('business_name', { ascending: true })
 
   const rows: VendorRow[] = (apps || [])
     .filter((a) => {
+      if (a.is_duplicate) return false // merged duplicate (applications/merge)
       if (a.status === 'approved') return true
       // status='rejected' doubles as withdrawn (CHECK constraint, Law 8). Keep
       // only the marker-carriers; genuine rejections never render here.
@@ -49,7 +52,7 @@ export default async function VendorsListPage() {
       const notes = (a.admin_notes as string) || ''
       const { stall, status: stallStatus } = parseAllocation(notes)
       const portal = parsePortalState(notes)
-      const paymentStatus = visiblePaymentStatus(portal.payment?.status, user.email)
+      const paymentStatus = rosterPaymentStatus(notes, a.paid_at as string | null, user.email)
       const paymentAmount = portal.payment?.amount || null
       const docsCount = (portal.docs || []).length
       const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)

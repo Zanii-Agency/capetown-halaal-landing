@@ -30,7 +30,8 @@ config({ path: '.env.local' })
 
 import { sendTemplate, toE164 } from '../src/lib/whatsapp'
 import { sendEmail } from '../src/lib/email/resend'
-import { parsePortalState, updatePortalStateImpl } from '../src/lib/portal-state'
+import { parsePortalState, updatePortalStateImpl, isWithdrawn } from '../src/lib/portal-state'
+import { buildSuppressedPeople } from '../src/lib/payments/chase-targeting'
 import { computeVendorPricing, formatRand } from '../src/lib/payments/pricing'
 import { isTestVendor } from '../src/lib/test-vendors'
 import { EmailLayout, Heading, Paragraph, Button, Signoff, Divider } from '../src/lib/email/components'
@@ -217,10 +218,17 @@ async function main() {
   const url = `${BASE}/rest/v1/vendor_applications?status=eq.approved&select=id,business_name,contact_name,email,phone,admin_notes,reviewed_at,created_at,preferred_booth_tier,special_requirements`
   const all = (await (await fetch(url, { headers: h })).json()) as Row[]
 
-  // Keep approved + unpaid + not a test row.
+  // Person-level hard-suppression: a paid/withdrawn row on this person's OTHER
+  // application (duplicate submission) must protect the empty twin on the same
+  // phone (Melonscape, Chocotag, 2026-08-10). Built from the full fetch.
+  const hardIdx = buildSuppressedPeople(all as never[], today)
+
+  // Keep approved + unpaid + not withdrawn + not a test row + not a paid twin.
   const unpaid = all.filter((r) => {
     if (isTestVendor(r)) return false
     const st = parsePortalState(r.admin_notes)
+    if (isWithdrawn(st)) return false
+    if (hardIdx.hardHas(r as never)) return false
     return !isPaid(st, r)
   })
 

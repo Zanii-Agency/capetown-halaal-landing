@@ -4,8 +4,9 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
-import { computeVendorPricing } from '@/lib/payments/pricing'
+import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
+import { buildOpsDigest, type OpsDigest } from '@/lib/payments/ops-digest'
 import { CustomerInboxClient } from '../customer-inbox/CustomerInboxClient'
 import EftAdminClient from './EftAdminClient'
 
@@ -15,6 +16,83 @@ export const dynamic = 'force-dynamic'
 // the admin layout's auth: every other operator (including Samreen) is redirected
 // away and never sees this in the nav. Two tabs: Payments (lane management +
 // reconcile) and Messages (the EFT-only inbox, reusing CustomerInboxClient).
+function MethodChip({ m }: { m: 'yoco' | 'eft' }) {
+  const eft = m === 'eft'
+  return (
+    <span className={`inline-flex items-center justify-center w-11 h-6 rounded text-[10px] font-bold ${eft ? 'bg-[#cd2653]/10 text-[#cd2653]' : 'bg-[#1f8a4a]/12 text-[#1f8a4a]'}`}>
+      {eft ? 'EFT' : 'Yoco'}
+    </span>
+  )
+}
+
+// Master-only daily pulse, rendered above the lane table: opens today, payments
+// today, and the live Yoco/EFT rotation state (received-so-far + the next 3
+// payers per tier). Same data the 20:00 WhatsApp digest carries.
+function OpsPanel({ digest }: { digest: OpsDigest }) {
+  const { opensToday, paymentsToday, paidTotal, rotation } = digest
+  const tiers = [...rotation.tiers].sort(
+    (a, b) => Number(b.hasPending) - Number(a.hasPending) || a.label.localeCompare(b.label),
+  )
+  return (
+    <div className="mb-8 rounded-2xl border border-[#E5DCC4] bg-[#FBF7ED] p-5">
+      <div className="flex items-baseline justify-between mb-4">
+        <h2 className="font-serif text-lg text-[#1B1A17]">Today · {digest.dateLabel}</h2>
+        <span className="text-[11px] text-[#1B1A17]/45">pushed to your WhatsApp at 20:00</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="rounded-xl bg-white border border-[#E5DCC4] px-4 py-3">
+          <div className="text-2xl font-semibold text-[#1B1A17]">{opensToday.count}</div>
+          <div className="text-xs text-[#1B1A17]/55">opened the portal today</div>
+        </div>
+        <div className="rounded-xl bg-white border border-[#E5DCC4] px-4 py-3">
+          <div className="text-2xl font-semibold text-[#1B1A17]">
+            {paymentsToday.length} <span className="text-sm font-normal text-[#1B1A17]/55">· {formatRand(paidTotal)}</span>
+          </div>
+          <div className="text-xs text-[#1B1A17]/55">paid today</div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold">Yoco / EFT rotation</p>
+        <span className="text-[11px] text-[#1B1A17]/45">
+          {!rotation.eftModeOn
+            ? 'EFT mode OFF'
+            : rotation.activated && rotation.startedAt
+              ? `live since ${new Date(rotation.startedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+              : 'not activated'}
+        </span>
+      </div>
+      {!rotation.eftModeOn ? (
+        <div className="rounded-xl bg-white border border-[#E5DCC4] px-4 py-3 text-sm text-[#1B1A17]">
+          <span className="font-semibold">Card only.</span> Everyone pays by Yoco, except{' '}
+          <span className="font-semibold">{rotation.recentEftOpeners}</span> who opened EFT bank details in the last 48h
+          (still on EFT until they pay or the window lapses).
+        </div>
+      ) : (
+        <div className="rounded-xl bg-white border border-[#E5DCC4] divide-y divide-[#F0E9D6] overflow-hidden">
+          {tiers.map((t) => (
+            <div key={t.slug} className={`flex items-center gap-3 px-4 py-2.5 ${t.hasPending ? '' : 'opacity-45'}`}>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-[#1B1A17] truncate">
+                  {t.label} {t.isSmall && <span className="text-[10px] text-[#1B1A17]/40">small</span>}
+                </div>
+                <div className="text-[11px] text-[#1B1A17]/45">{t.received} paid since start</div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-[#1B1A17]/40 mr-1">next</span>
+                {t.nextThree.map((m, i) => (
+                  <span key={i} className={i === 0 ? '' : 'opacity-40'}>
+                    <MethodChip m={m} />
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default async function EftAdminPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -209,9 +287,12 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     return rank(x) - rank(y)
   })
 
+  const digest = await buildOpsDigest()
+
   return (
     <div className="p-6">
       {header}
+      <OpsPanel digest={digest} />
       <EftAdminClient globalOn={globalOn} bank={getEftBankDetails()} rows={rows} candidates={candidates} excluded={excluded} />
     </div>
   )

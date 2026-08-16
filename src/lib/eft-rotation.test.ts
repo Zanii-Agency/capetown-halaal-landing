@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tierRotationSaysEft } from '@/lib/eft'
+import { tierRotationSaysEft, eftRevealWithinGrace } from '@/lib/eft'
 import { SMALL_EFT_ROTATION_TIERS } from '@/lib/stalls'
 
 // Taona 2026-08-04: steer the Yoco/EFT mix per tier. Cheap stalls (2×2, 2×3)
@@ -57,10 +57,10 @@ test('the slot math is stable for large and negative counts', () => {
 // future edit can't reorder the guards (a rotation that ran before the paid or
 // ⟦NOEFT⟧ checks would be a real routing/privacy bug).
 const SRC = readFileSync(join(process.cwd(), 'src/lib/eft.ts'), 'utf8')
-const FN = SRC.slice(SRC.indexOf('export async function resolveInEftLane'), SRC.indexOf('export async function resolveInEftLane') + 1400)
+const FN = SRC.slice(SRC.indexOf('export async function resolveInEftLane'), SRC.indexOf('export async function resolveInEftLane') + 2400)
 
 test('resolver overrides win before the rotation, in the right order', () => {
-  const order = ['isInternalAccount', 'app.paid_at', 'hasNoEftMarker', "status === 'paid'", 'hasEftMarker', 'eft_revealed_at', "status === 'pending'", '!globalOn', 'getRotationStartAt', 'tierReceivedCount']
+  const order = ['isInternalAccount', 'app.paid_at', 'hasNoEftMarker', "status === 'paid'", 'hasEftMarker', 'eft_submitted_at', 'eft_revealed_at', 'eftRevealWithinGrace', "status === 'pending'", '!globalOn', 'getRotationStartAt', 'tierReceivedCount']
   let last = -1
   for (const token of order) {
     const at = FN.indexOf(token)
@@ -74,4 +74,23 @@ test('the rotation is inert until activated (no start line -> old behaviour)', (
   // globalOn with no start line returns the prior all-EFT behaviour (true), so a
   // deploy does nothing until the start line is set.
   assert.ok(/if \(!startAt\) return true/.test(FN))
+})
+
+test('eftRevealWithinGrace: 48h rolling window; unparseable stays in grace', () => {
+  const now = Date.parse('2026-08-05T12:00:00Z')
+  assert.equal(eftRevealWithinGrace('2026-08-05T06:00:00Z', now), true)  // 6h ago -> in grace
+  assert.equal(eftRevealWithinGrace('2026-08-03T12:00:00Z', now), true)  // exactly 48h -> inclusive
+  assert.equal(eftRevealWithinGrace('2026-08-03T11:00:00Z', now), false) // 49h ago -> out
+  assert.equal(eftRevealWithinGrace('2026-08-01T12:00:00Z', now), false) // 4 days ago -> out
+  assert.equal(eftRevealWithinGrace(null, now), false)                   // never opened -> not in grace
+  assert.equal(eftRevealWithinGrace('garbage', now), true)               // present but unparseable -> keep on EFT
+})
+
+test('an already-EFT-paid vendor is caught before the grace guard, so mode OFF never flips them', () => {
+  // The eft_submitted_at/collected guard returns EFT above the reveal grace, so a
+  // proof-uploader or collected vendor is never yanked to Yoco. And the grace guard
+  // is (globalOn || withinGrace): with the switch OFF an OLD opener fails it and
+  // falls through to `if (!globalOn) return false` = Yoco.
+  assert.match(FN, /eft_submitted_at \|\| p\?\.status === 'collected' \|\| p\?\.eft_collected_at/)
+  assert.match(FN, /globalOn \|\| eftRevealWithinGrace\(/)
 })

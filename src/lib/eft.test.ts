@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -181,6 +181,24 @@ test('vendorInOwnerScope: the festival owner only ever sees vendors who paid thr
   assert.equal(vendorInOwnerScope('just a note', '2026-07-19T00:00:00Z'), true)
 })
 
+test('reconciledPaid: the roster reads PAID only for a Yoco-reconcilable channel', () => {
+  const paidVia = (method: string) => updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method } as never })
+  // Her channels settle to PAID.
+  assert.equal(reconciledPaid(paidVia('yoco'), '2026-07-19T00:00:00Z'), true)
+  assert.equal(reconciledPaid(paidVia('cash'), null), true)
+  assert.equal(reconciledPaid(paidVia('waived'), null), true)
+  // Master-lane settlements read UNPAID until Yoco reconciles them. 'manual' is
+  // finance/capture's EFT capture — the gap that let Table Art read as paid.
+  assert.equal(reconciledPaid(paidVia('eft'), '2026-07-05T00:00:00Z'), false)
+  assert.equal(reconciledPaid(paidVia('manual_card'), '2026-07-05T00:00:00Z'), false)
+  assert.equal(reconciledPaid(paidVia('manual'), '2026-07-05T00:00:00Z'), false)
+  // The 'collected' EFT interim and a plain unpaid vendor are UNPAID.
+  assert.equal(reconciledPaid(updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }), null), false)
+  assert.equal(reconciledPaid('just a note', null), false)
+  // Legacy paid_at with no method is still hers (denylist, not allowlist).
+  assert.equal(reconciledPaid('just a note', '2026-07-19T00:00:00Z'), true)
+})
+
 test('vendorInOwnerScope: every unpaid state is outside her world', () => {
   assert.equal(vendorInOwnerScope('just a note', null), false, 'plain unpaid')
   assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, 'on the EFT lane')
@@ -261,6 +279,30 @@ test('visiblePaymentStatus leaves every other state untouched for everyone', () 
     assert.equal(visiblePaymentStatus(s, 'capetownhalaal@gmail.com'), s, s)
     assert.equal(visiblePaymentStatus(s, EFT_ADMIN_EMAIL), s, s)
   }
+})
+
+test('rosterPaid + rosterPaymentStatus: SETTLED reads paid; only in-flight EFT masks', () => {
+  const SAM = 'capetownhalaal@gmail.com'
+  const notes = (payment: Record<string, unknown>) =>
+    updatePortalStateImpl('note', { v: 1, payment } as never)
+  const paidAt = '2026-07-05T00:00:00Z'
+  // SETTLED reads paid, method ignored — byte-for-byte the finance total's is_paid.
+  // Taona 2026-08-16: a settled EFT (Islamic Relief SA, Amc cookware, ...) is a
+  // done deal, whoever reconciled it. This reverses the earlier method-based mask.
+  for (const method of ['eft', 'manual', 'manual_card', 'yoco', 'cash']) {
+    assert.equal(rosterPaid(notes({ status: 'paid', method }), paidAt), true, method)
+    assert.equal(rosterPaymentStatus(notes({ status: 'paid', method }), paidAt, SAM), 'paid', method)
+  }
+  assert.equal(rosterPaid('just a note', '2026-07-19T00:00:00Z'), true) // paid_at alone
+  // IN-FLIGHT 'collected' (recorded, not settled) is NOT paid and masks to 'none'
+  // for her — the real EFT-in-progress leak this withholds.
+  assert.equal(rosterPaid(notes({ status: 'collected' }), null), false)
+  assert.equal(rosterPaymentStatus(notes({ status: 'collected' }), null, SAM), 'none')
+  // Plain unpaid states pass through untouched.
+  assert.equal(rosterPaymentStatus(notes({ status: 'pending' }), null, SAM), 'pending')
+  assert.equal(rosterPaymentStatus('just a note', null, SAM), 'none')
+  // The EFT admin always sees the raw truth.
+  assert.equal(rosterPaymentStatus(notes({ status: 'collected' }), null, EFT_ADMIN_EMAIL), 'collected')
 })
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,10 @@
     {
       "path": "/api/cron/outbound-sync",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/daily-ops-digest",
+      "schedule": "0 18 * * *"
     }
   ]
 }

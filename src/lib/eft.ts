@@ -17,7 +17,7 @@
 
 import { parseAllocation, SMALL_EFT_ROTATION_TIERS } from '@/lib/stalls'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState, type PortalState } from '@/lib/portal-state'
+import { parsePortalState, setArrangement, type PortalState } from '@/lib/portal-state'
 
 const EFT_MARKER = '⟦EFT⟧'
 // Bare token; cannot collide with ⟦PORTAL:<base64>⟧ or ⟦STALL:...⟧ (different
@@ -67,6 +67,28 @@ export function visiblePaymentStatus(status: string | null | undefined, viewerEm
   const s = status || 'none'
   if (s !== 'collected') return s
   return isEftAdmin(viewerEmail) ? s : 'none'
+}
+
+/** The payment status to DISPLAY on a roster that shows EVERY vendor (the
+ *  vendors page and the outside roster, the on-screen twins of the export).
+ *  visiblePaymentStatus only masks 'collected'; it cannot see the method, so an
+ *  EFT/manual settlement stamped status:'paid' still read 'paid' to the festival
+ *  owner (Amc cookware, Africa Muslims Agency, Elegant Muslimah, Table Art on
+ *  2026-08-11). Permanent rule (Taona): a vendor is 'paid' to her only once Yoco
+ *  reconciles it; every master-lane state ('paid' via eft/manual_card/manual, or
+ *  the 'collected' interim) masks to 'none', exactly as 'collected' already did.
+ *  The EFT admin still reads the true state. Method-aware, so it needs the notes
+ *  and paid_at, not just the status string. Reuses reconciledPaid so it cannot
+ *  drift from the export. */
+export function rosterPaymentStatus(
+  adminNotes: string | null | undefined,
+  paidAt: string | null | undefined,
+  viewerEmail?: string | null,
+): string {
+  const raw = parsePortalState(adminNotes).payment?.status || (paidAt ? 'paid' : 'none')
+  if (isEftAdmin(viewerEmail)) return raw
+  if (rosterPaid(adminNotes, paidAt)) return 'paid'
+  return raw === 'paid' || raw === 'collected' ? 'none' : raw
 }
 
 // Operator PREVIEW addresses: emails an operator uses to preview vendor-facing
@@ -149,6 +171,19 @@ export function withoutNoEftMarker(adminNotes?: string | null): string {
   return (adminNotes || '').replace(NOEFT_RE, '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
+/** Grant a vendor a payment extension AND exclude them from the EFT push in one
+ *  step. Operator rule 2026-08-10: "anyone who opts for payment end of month
+ *  (31 Aug) by default exclude them from the EFT list" — they settle by card
+ *  when ready, off the EFT rail. Writes the deferral first (portal marker), then
+ *  re-reads and appends ⟦NOEFT⟧ so neither write clobbers the other. */
+export async function grantExtension(applicationId: string, until: string, note?: string): Promise<void> {
+  await setArrangement(applicationId, until, note)
+  const admin = createAdminClient()
+  const { data } = await admin.from('vendor_applications').select('admin_notes').eq('id', applicationId).maybeSingle()
+  const next = withNoEftMarker((data?.admin_notes as string) || '')
+  await admin.from('vendor_applications').update({ admin_notes: next }).eq('id', applicationId)
+}
+
 export interface EftBankDetails {
   accountName: string
   bank: string
@@ -217,8 +252,57 @@ export async function getEftMode(): Promise<boolean> {
  *  an allowlist: 20 of 47 paid vendors carry no `method` at all (settled before
  *  the field existed, all pre-dating EFT mode), and an allowlist would blank them
  *  out of her world. Every new payment records its method, so a blank can only be
- *  historical. */
-const MASTER_ONLY_METHODS = new Set(['eft', 'manual_card'])
+ *  historical.
+ *
+ *  'manual' is the method finance/capture writes for an operator-entered EFT
+ *  capture (audience:'master'; it overwrites confirmPayment's 'eft' at
+ *  capture/route.ts). It belongs here for the same reason 'eft' does. Leaving it
+ *  out let a master-lane capture (Table Art, captured 2026-07-05) read as
+ *  hers/paid on every surface until 2026-08-10. */
+const MASTER_ONLY_METHODS = new Set(['eft', 'manual_card', 'manual'])
+
+/** The vendor-roster PAID/UNPAID label — permanent rule (Taona 2026-08-10:
+ *  "all vendors show, EFT shows as unpaid, they only show paid once Yoco
+ *  reconciled"). A vendor reads PAID only once money settled through a channel
+ *  the festival owner reconciles (Yoco, cash, waived): a real paid_at, or portal
+ *  status 'paid', via a NON-master method. Every master-lane settlement — EFT,
+ *  manual_card, finance/capture 'manual' — and the 'collected' interim reads
+ *  UNPAID until a Yoco reconciliation flips it.
+ *
+ *  This is vendorInOwnerScope's settledHerWay, extracted so the roster export and
+ *  the visibility scope share ONE rule and cannot drift. */
+export function reconciledPaid(
+  adminNotes: string | null | undefined,
+  paidAt?: string | null,
+): boolean {
+  const p = parsePortalState(adminNotes).payment
+  return (!!paidAt || p?.status === 'paid') && !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+}
+
+/** The roster PAID label. A vendor reads PAID once it has SETTLED — paid_at set, or
+ *  portal status 'paid' — regardless of method. This is byte-for-byte the same rule
+ *  the finance dashboard already uses for is_paid/totalRevenue, so the vendors page,
+ *  the export and the total can never disagree.
+ *
+ *  Taona 2026-08-16: a settled EFT payment is a DONE deal, whoever reconciled it —
+ *  Samreen from her portal (Amc cookware, Elegant Muslimah, Table Art), the EFT
+ *  admin handing a ⟦NOEFT⟧/⟦OWNERVIS⟧ vendor to her (Islamic Relief SA, Africa
+ *  Muslims Agency), or a Yoco settlement (Y&K, Vanilla Cream). "The 5 are correct,
+ *  make sure their payments reflect on the total." What stays masked is the
+ *  IN-FLIGHT master lane — 'collected' (money recorded, not reconciled) is NOT a
+ *  settlement, so it is not paid here and rosterPaymentStatus renders it 'none'.
+ *  That is where the earlier method-based masking went too far: it hid settled EFT
+ *  the owner had every right to see, while the leak it was guarding against
+ *  (EFT-in-progress) is the 'collected' state, which this correctly withholds.
+ *
+ *  reconciledPaid (Yoco/cash/waived only) stays the predicate for vendorInOwnerScope
+ *  — that wall decides VISIBILITY, a separate concern from the paid/unpaid label. */
+export function rosterPaid(
+  adminNotes: string | null | undefined,
+  paidAt?: string | null,
+): boolean {
+  return !!paidAt || parsePortalState(adminNotes).payment?.status === 'paid'
+}
 
 /** Is this vendor inside the festival owner's world at all?
  *
@@ -253,8 +337,8 @@ export function vendorInOwnerScope(
   // Settled through a channel she handles. Yoco reconciliation is what ENDS the
   // arrangement, so a vendor who touched EFT and then settled by card is hers
   // again. Y&K gifts and toys is exactly this case and must stay visible.
-  const settledHerWay =
-    (!!paidAt || p?.status === 'paid') && !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+  // Shared with the roster export via reconciledPaid so the two cannot drift.
+  const settledHerWay = reconciledPaid(adminNotes, paidAt)
 
   // DELIBERATE HAND-OVER. The only way an UNPAID vendor reaches the festival
   // owner. Taona 2026-07-27: vendors who write in asking for an extension or a
@@ -431,6 +515,18 @@ export async function tierReceivedCount(tierSlug: string, startAtIso: string): P
  *  activated. Order matters: overrides win, then committed-method stickiness (so
  *  a vendor mid-payment never flips when the tier count moves under them), then
  *  the rotation. Async because the rotation reads the DB. */
+// A vendor "opened EFT" when they revealed the bank details (eft_revealed_at).
+// This grace window holds them on EFT for `hours` after they last opened it, so a
+// vendor mid-transfer is never yanked to Yoco. Pure (nowMs passed in) so it is
+// unit-testable. Absent timestamp -> not in grace; present-but-unparseable ->
+// treated as in-grace (never flip a vendor off EFT on bad data).
+export function eftRevealWithinGrace(revealedAt: string | null | undefined, nowMs: number, hours = 48): boolean {
+  if (!revealedAt) return false
+  const t = new Date(revealedAt).getTime()
+  if (Number.isNaN(t)) return true
+  return nowMs - t <= hours * 3600 * 1000
+}
+
 export async function resolveInEftLane(
   app: { admin_notes?: string | null; paid_at?: string | null; preferred_booth_tier?: string | null },
   globalOn: boolean,
@@ -442,7 +538,16 @@ export async function resolveInEftLane(
   const p = parsePortalState(app.admin_notes).payment
   if (p?.status === 'paid') return false
   if (hasEftMarker(app.admin_notes)) return true                                  // ⟦EFT⟧ hand-picked
-  if (p?.eft_revealed_at || p?.eft_submitted_at) return true                      // committed to EFT, don't flip
+  // Money is already on the EFT rail (proof uploaded, or an operator marked it
+  // collected): NEVER flip these to Yoco, they have paid by EFT. Independent of
+  // the master switch and of the 48h grace below.
+  if (p?.eft_submitted_at || p?.status === 'collected' || p?.eft_collected_at) return true
+  // Opened the bank details but nothing in yet: hold on EFT for a 48h grace so a
+  // vendor mid-transfer is never yanked to Yoco. After 48h an unpaid opener falls
+  // through to the switch, so with EFT mode ON they stay EFT (rotation, unchanged)
+  // and with it OFF they return to card. Taona 2026-08-05: "turn off eft mode
+  // except those who opened eft in the past 48 hours".
+  if (p?.eft_revealed_at && (globalOn || eftRevealWithinGrace(p.eft_revealed_at, Date.now()))) return true
   if (p?.status === 'pending') return false                                       // Yoco checkout started, don't flip
   if (!globalOn) return false                                                     // EFT master switch off
   const startAt = await getRotationStartAt()
