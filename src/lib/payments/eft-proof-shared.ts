@@ -9,6 +9,7 @@ import { getEftMode, vendorInEftLane, eftReference } from '@/lib/eft'
 import { notifyOwners } from '@/lib/bot/notify'
 import { sendMedia, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS } from '@/lib/bot/admins'
+import { recordLedger } from '@/lib/zanii-ledger'
 
 const BUCKET = 'vendor-docs'
 const ALLOWED_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'webp']
@@ -188,5 +189,15 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
     console.error(`[eft-proof-shared:${source}] master WhatsApp copy failed:`, (e as Error).message)
   }
 
+  // Signed proof-of-action: an EFT payment proof was uploaded (portal or bot,
+  // this is the shared path). Best-effort: recordLedger never throws.
+  await recordLedger('uploads', 'cth.upload.eft-proof', {
+    application_id: applicationId,
+    path,
+    uploaded_at,
+    first: isFirst,
+    purpose: forAccessories ? 'accessories' : 'stall',
+    source,
+  })
   return { ok: true, path, uploaded_at, isFirst }
 }

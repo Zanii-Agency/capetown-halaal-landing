@@ -31,6 +31,7 @@ import { TIER_META, parseAllocation } from '@/lib/stalls'
 import { tierPricingFields } from '@/lib/payments/pricing'
 import { parsePortalState, updatePortalStateImpl } from '@/lib/portal-state'
 import { syncExhibitorAuth } from '@/lib/exhibitor-auth'
+import { recordLedger } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -249,6 +250,14 @@ export async function PATCH(
     } catch (e) {
       console.warn('[vendors PATCH] event log insert failed:', (e as Error).message)
     }
+
+    // Signed proof-of-action: Samreen amended a vendor on their behalf. Reached
+    // only after a successful update (changed.length > 0). Best-effort.
+    await recordLedger('samreen', 'cth.admin.vendor-edit', {
+      application_id: id,
+      changed,
+      actor_email: actorEmail,
+    })
 
     return NextResponse.json({ ok: true, updated: after, changed, authSync })
   } catch (err) {
