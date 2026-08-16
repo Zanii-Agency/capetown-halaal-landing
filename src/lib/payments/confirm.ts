@@ -14,6 +14,7 @@ import { VendorPaymentConfirmation } from '@/lib/email/templates/VendorPaymentCo
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { findWaTemplate, buildWaTemplateParams } from '@/lib/templates/wa-meta'
+import { recordLedger } from '@/lib/zanii-ledger'
 
 const SITE = 'https://cthalaal.co.za'
 
@@ -453,6 +454,21 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
     .from('vendor_applications')
     .update({ admin_notes: nextAdminNotes })
     .eq('id', input.applicationId)
+
+  // Signed proof-of-action for the money event. Reached only when THIS call won
+  // the unpaid->paid transition or is a genuine top-up (the duplicate/no-op path
+  // returned above), so each settlement is receipted exactly once under the
+  // payments DID. Best-effort: recordLedger never throws into the money path.
+  await recordLedger('payments', 'cth.pay.confirm', {
+    application_id: input.applicationId,
+    business: app.business_name,
+    amount,
+    cumulative: newCumulative,
+    method: input.method,
+    provider_ref: ref || null,
+    top_up: isTopUp,
+    first_settlement: wonFirst,
+  })
 
   // Send-gating: `silent` suppresses sends for backfill/corrections. Both a
   // first payment and a top-up send a confirmation for THIS payment's amount.
