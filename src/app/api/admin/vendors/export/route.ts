@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
   const MAX_ROWS = 1000
   let q = db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, product_categories, business_description, preferred_booth_tier, special_requirements, status, admin_notes, paid_at, contract_signed_at, contract_pdf_path')
+    .select('id, business_name, contact_name, email, phone, product_categories, business_description, preferred_booth_tier, special_requirements, status, admin_notes, paid_at, contract_signed_at, contract_pdf_path, is_duplicate')
     .order('business_name', { ascending: true })
     .limit(MAX_ROWS)
   if (ids && ids.length) q = q.in('id', ids)
@@ -77,7 +77,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Could not read vendors: ${error.message}` }, { status: 500 })
   }
 
-  const rows = (data || []) as Array<Record<string, unknown>>
+  // Skip merged duplicates (is_duplicate set by applications/merge). Otherwise
+  // the losing twin still ships, e.g. Chocotag's blank second application.
+  const rows = ((data || []) as Array<Record<string, unknown>>).filter((r) => !r.is_duplicate)
 
   // NO row-scoping. The lane hides payment POSTURE, not the pipeline: the festival
   // owner's ops roster must list every vendor (stall, gas, electrical, contract),

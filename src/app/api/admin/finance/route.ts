@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
     // read payment from portal_state below, and apply the payment filter in-code.
     const { data: vendors, error } = await admin
       .from('vendor_applications')
-      .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, created_at')
+      .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, created_at, is_duplicate')
       .in('status', ['approved', 'pending', 'info_requested'])
       .order('business_name', { ascending: true })
     if (error) {
@@ -56,7 +56,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch vendors' }, { status: 500 })
     }
 
-    const rows = (vendors ?? []) as PaymentRow[]
+    // Drop merged duplicates so they don't inflate the totals (applications/merge).
+    const rows = ((vendors ?? []) as PaymentRow[]).filter((r) => !(r as { is_duplicate?: boolean }).is_duplicate)
 
     // Payment state comes ONLY from portal_state (the phantom columns don't
     // exist — see the query note above).

@@ -35,13 +35,14 @@ export default async function VendorsListPage() {
   const { data: apps } = await admin
     .from('vendor_applications')
     .select(
-      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, paid_at, contract_signed_at, contract_pdf_path, docs_complete_at, created_at, status'
+      'id, business_name, contact_name, email, phone, product_categories, preferred_booth_tier, special_requirements, admin_notes, paid_at, contract_signed_at, contract_pdf_path, docs_complete_at, created_at, status, is_duplicate'
     )
     .in('status', ['approved', 'rejected'])
     .order('business_name', { ascending: true })
 
   const rows: VendorRow[] = (apps || [])
     .filter((a) => {
+      if (a.is_duplicate) return false // merged duplicate (applications/merge)
       if (a.status === 'approved') return true
       // status='rejected' doubles as withdrawn (CHECK constraint, Law 8). Keep
       // only the marker-carriers; genuine rejections never render here.

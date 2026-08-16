@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   const CSV_MAX_ROWS = 1000
   let q = db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, paid_at, contract_signed_at')
+    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, paid_at, contract_signed_at, is_duplicate')
     .order('business_name', { ascending: true })
     .limit(CSV_MAX_ROWS)
   if (ids && ids.length) q = q.in('id', ids)
@@ -73,6 +73,7 @@ export async function GET(req: NextRequest) {
     admin_notes: string | null
     paid_at: string | null
     contract_signed_at: string | null
+    is_duplicate: boolean | null
   }>)
 
   // NO row-scoping. The lane hides payment POSTURE, not the pipeline: every
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest) {
   // reconciles them (reconciledPaid). This route used to drop those rows via
   // buildLaneScope (Taona 2026-08-10: "all vendors show, EFT shows as unpaid,
   // they only show paid once yoco reconciled").
-  const rows = rawRows
+  const rows = rawRows.filter((r) => !r.is_duplicate) // drop merged duplicates
 
   // H5: audit log every export so we can trace PII flows. We anchor the
   // event on the first exported vendor's application_id (the audit table FK
