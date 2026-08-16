@@ -18,6 +18,7 @@
 import { parseAllocation, SMALL_EFT_ROTATION_TIERS } from '@/lib/stalls'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, setArrangement, type PortalState } from '@/lib/portal-state'
+import { recordLedger } from '@/lib/zanii-ledger'
 
 const EFT_MARKER = '⟦EFT⟧'
 // Bare token; cannot collide with ⟦PORTAL:<base64>⟧ or ⟦STALL:...⟧ (different
@@ -182,6 +183,9 @@ export async function grantExtension(applicationId: string, until: string, note?
   const { data } = await admin.from('vendor_applications').select('admin_notes').eq('id', applicationId).maybeSingle()
   const next = withNoEftMarker((data?.admin_notes as string) || '')
   await admin.from('vendor_applications').update({ admin_notes: next }).eq('id', applicationId)
+  // Signed proof-of-action: a payment-deferral is a money arrangement, receipted
+  // under the payments DID. Best-effort: recordLedger never throws.
+  await recordLedger('payments', 'cth.pay.extension', { application_id: applicationId, until, note: note || null })
 }
 
 export interface EftBankDetails {
