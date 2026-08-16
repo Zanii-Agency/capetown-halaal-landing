@@ -10,6 +10,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
+import { recordLedger } from '@/lib/zanii-ledger'
 
 const SUPPORT_FROM = 'support@youngatheart.co.za'
 
@@ -69,6 +70,15 @@ export async function logWhatsAppOutbound(opts: {
       return false
     }
     await broadcastInboxRefresh('outbound-log').catch(() => {})
+    // Signed proof-of-action: only genuine new outbound reaches here (dedupe
+    // skips return above), so each send is receipted exactly once under the
+    // vendor-bot DID. Best-effort: recordLedger never throws.
+    await recordLedger('vendor-bot', 'cth.bot.send', {
+      to: waPhone,
+      body: opts.body,
+      provider_message_id: row.provider_message_id,
+      ...(opts.templateName ? { template: opts.templateName } : {}),
+    })
     return true
   } catch (e) {
     console.warn('[outbound-log] wa threw:', (e as Error).message)
