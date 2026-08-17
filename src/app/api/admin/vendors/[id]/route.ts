@@ -251,12 +251,13 @@ export async function PATCH(
       console.warn('[vendors PATCH] event log insert failed:', (e as Error).message)
     }
 
-    // Signed proof-of-action: Samreen amended a vendor on their behalf. Reached
-    // only after a successful update (changed.length > 0). Best-effort.
+    // Signed proof-of-action: an admin amended a vendor. Reached only after a
+    // successful update (changed.length > 0). NO personal names/emails in the
+    // payload (privacy) — the cth.admin DID + the changed-fields list are the
+    // distinction. Best-effort: recordLedger never throws.
     await recordLedger('samreen', 'cth.admin.vendor-edit', {
       application_id: id,
       changed,
-      actor_email: actorEmail,
     })
 
     return NextResponse.json({ ok: true, updated: after, changed, authSync })
