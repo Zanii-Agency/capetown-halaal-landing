@@ -191,7 +191,7 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
 
   // Signed proof-of-action: an EFT payment proof was uploaded (portal or bot,
   // this is the shared path). Best-effort: recordLedger never throws.
-  await recordLedger('uploads', 'cth.upload.eft-proof', {
+  await recordLedger('uploads', 'cth.upload.payment_proof_submitted', {
     application_id: applicationId,
     path,
     uploaded_at,

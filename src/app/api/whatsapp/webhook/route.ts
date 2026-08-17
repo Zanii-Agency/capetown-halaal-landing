@@ -8,6 +8,7 @@ import {
   toE164,
   fetchMediaBytes,
 } from '@/lib/whatsapp'
+import { recordLedger } from '@/lib/zanii-ledger'
 import {
   recordOptOut,
   recordConsent,
@@ -266,6 +267,15 @@ async function handleInbound(msg: {
   }
 
   await logMessage({ direction: 'in', wa_phone: e164, body: msg.text, status: 'received', providerMessageId: msg.messageId, media: msg.media })
+
+  // Signed proof-of-action (messaging, REQUEST side): a vendor messaged the bot.
+  // Pairs with cth.bot.message_to_vendor (the reply) to show both directions.
+  // Content hashed; best-effort, never throws.
+  void recordLedger('vendor-bot', 'cth.bot.message_from_vendor', {
+    from: e164,
+    body: msg.text,
+    ...(msg.media ? { media: msg.media.kind } : {}),
+  })
 
   // 1) STOP — hard opt-out, confirm once, then go silent.
   if (isStopKeyword(msg.text)) {

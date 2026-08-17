@@ -185,7 +185,7 @@ export async function grantExtension(applicationId: string, until: string, note?
   await admin.from('vendor_applications').update({ admin_notes: next }).eq('id', applicationId)
   // Signed proof-of-action: a payment-deferral is a money arrangement, receipted
   // under the payments DID. Best-effort: recordLedger never throws.
-  await recordLedger('payments', 'cth.pay.extension', { application_id: applicationId, until, note: note || null })
+  await recordLedger('payments', 'cth.pay.extension_granted', { application_id: applicationId, until, note: note || null })
 }
 
 export interface EftBankDetails {
