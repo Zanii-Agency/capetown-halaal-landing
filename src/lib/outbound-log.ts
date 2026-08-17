@@ -73,7 +73,7 @@ export async function logWhatsAppOutbound(opts: {
     // Signed proof-of-action: only genuine new outbound reaches here (dedupe
     // skips return above), so each send is receipted exactly once under the
     // vendor-bot DID. Best-effort: recordLedger never throws.
-    await recordLedger('vendor-bot', 'cth.bot.send', {
+    await recordLedger('vendor-bot', 'cth.bot.message_to_vendor', {
       to: waPhone,
       body: opts.body,
       provider_message_id: row.provider_message_id,

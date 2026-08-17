@@ -255,7 +255,7 @@ export async function PATCH(
     // successful update (changed.length > 0). NO personal names/emails in the
     // payload (privacy) — the cth.admin DID + the changed-fields list are the
     // distinction. Best-effort: recordLedger never throws.
-    await recordLedger('samreen', 'cth.admin.vendor-edit', {
+    await recordLedger('samreen', 'cth.admin.vendor_amended', {
       application_id: id,
       changed,
     })

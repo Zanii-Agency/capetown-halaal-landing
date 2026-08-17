@@ -459,7 +459,7 @@ export async function confirmPayment(input: ConfirmPaymentInput): Promise<Confir
   // the unpaid->paid transition or is a genuine top-up (the duplicate/no-op path
   // returned above), so each settlement is receipted exactly once under the
   // payments DID. Best-effort: recordLedger never throws into the money path.
-  await recordLedger('payments', 'cth.pay.confirm', {
+  await recordLedger('payments', 'cth.pay.confirmed', {
     application_id: input.applicationId,
     business: app.business_name,
     amount,
