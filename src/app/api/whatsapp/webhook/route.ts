@@ -271,7 +271,14 @@ async function handleInbound(msg: {
   // Signed proof-of-action (messaging, REQUEST side): a vendor messaged the bot.
   // Pairs with cth.bot.message_to_vendor (the reply) to show both directions.
   // Content hashed; best-effort, never throws.
-  void recordLedger('vendor-bot', 'cth.bot.message_from_vendor', {
+  // Media-type distinction on the proof layer: a vendor's payment proof is
+  // usually an image or a pdf, and that must read distinctly on the ledger
+  // instead of collapsing into one message_from_vendor. A bare URL in a text
+  // body counts as a shared link.
+  const inKind = msg.media?.kind
+    ? (msg.media.kind === 'document' && /pdf/i.test(String(msg.media.mimeType || '')) ? 'pdf' : msg.media.kind)
+    : (/https?:\/\/\S+/i.test(String(msg.text || '')) ? 'link' : 'text')
+  void recordLedger('vendor-bot', `cth.bot.message_from_vendor.${inKind}`, {
     from: e164,
     body: msg.text,
     ...(msg.media ? { media: msg.media.kind } : {}),

@@ -190,8 +190,11 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   }
 
   // Signed proof-of-action: an EFT payment proof was uploaded (portal or bot,
-  // this is the shared path). Best-effort: recordLedger never throws.
-  await recordLedger('uploads', 'cth.upload.payment_proof_submitted', {
+  // this is the shared path). The media type (pdf vs image) rides on the target
+  // so the proof layer shows WHAT kind of proof was submitted, not just that one
+  // was. Best-effort: recordLedger never throws.
+  const proofKind = ext === 'pdf' ? 'pdf' : 'image'
+  await recordLedger('uploads', `cth.upload.payment_proof_submitted.${proofKind}`, {
     application_id: applicationId,
     path,
     uploaded_at,
