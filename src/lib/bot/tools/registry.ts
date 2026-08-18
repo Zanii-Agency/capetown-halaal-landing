@@ -68,13 +68,15 @@ export const TOOL_DEFS = [
   {
     name: 'get_badge_allocation',
     description: "Report how many staff badges THIS vendor has registered and how many they are allowed. Call when a verified vendor asks about staff badges or gate passes.",
-    strict: true,
+    // NOT strict: no-arg tool (nothing to validate), and claude-sonnet-5 caps
+    // strict tools at 20. Adding grant_payment_extension pushed us to 21 strict,
+    // which 400'd EVERY vendor-agent call. Dropping strict on no-arg tools is free.
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
   {
     name: 'get_electrical_setup',
     description: "Report the electrical power, appliances and gas THIS vendor booked for their stall, and how it affects their total. Call whenever a verified vendor asks about power, electricity, plug points, whether they have power for a freezer/fridge/appliance, a generator, load-in setup, or gas at their stall. If they booked no power, this says so plainly so they are not caught out on the day.",
-    strict: true,
+    // NOT strict: no-arg tool, keeps total strict tools <= 20 (see get_badge_allocation).
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
   {
