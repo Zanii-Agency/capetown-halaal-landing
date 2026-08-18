@@ -13,6 +13,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { TOOL_DEFS, executeTool } from '@/lib/bot/tools/registry'
+import { MEMORY_ON } from '@/lib/bot/vendor-memory'
 import { VENDOR_FACTS, VENDOR_FACTS_NO_PAYMENT } from '@/lib/festival-brain/system-prompt'
 import { FAQ } from '@/lib/festival-brain/faq'
 
@@ -217,7 +218,19 @@ export async function runVendorAgent(
   }
 
   const { getEftMode } = await import('@/lib/eft')
-  const system = systemPrompt(session, await getEftMode())
+  let system = systemPrompt(session, await getEftMode())
+  // VENDOR MEMORY (flag-gated, inert unless VENDOR_MEMORY=on): prepend this
+  // vendor's live state, durable arrangements, and the EMAIL side of the
+  // conversation the WhatsApp bot otherwise never sees. Fails open (no memory).
+  if (MEMORY_ON && session.vendorId) {
+    try {
+      const { recallVendorContext, renderMemory } = await import('./vendor-memory')
+      const recall = await recallVendorContext(session.vendorId)
+      if (recall) system = `${system}\n\n## MEMORY\n${renderMemory(recall)}`
+    } catch (e) {
+      console.warn('[vendor-agent] memory recall failed, continuing without:', (e as Error).message)
+    }
+  }
   const messages: Anthropic.MessageParam[] = [
     ...(ctx.history ?? []).slice(-8).map((m) => ({ role: m.role, content: m.content })),
     { role: 'user' as const, content: message },
