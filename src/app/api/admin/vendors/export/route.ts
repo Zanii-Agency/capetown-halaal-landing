@@ -111,14 +111,30 @@ export async function GET(req: NextRequest) {
 
   const wb = new ExcelJS.Workbook()
   wb.creator = 'Young at Heart Festival'
+  wb.created = new Date()
   const ws = wb.addWorksheet('Vendors', {
-    views: [{ state: 'frozen', ySplit: 1 }], // freeze the header row
+    // Freeze the title + header rows AND the first two columns (Category, Brand)
+    // so the vendor stays on screen while scrolling right. NO sheet protection:
+    // the file is fully editable.
+    views: [{ state: 'frozen', xSplit: 2, ySplit: 2 }],
   })
 
-  ws.columns = COLUMNS.map(([header, width]) => ({ header, width }))
+  const LAST_COL = COLUMNS.length
+  ws.columns = COLUMNS.map(([, width]) => ({ width })) // widths only; headers set on row 2
 
-  // Header styling: brand fill, bold white text, wrapped + centered.
-  const headerRow = ws.getRow(1)
+  // Row 1: title band across the sheet.
+  ws.mergeCells(1, 1, 1, LAST_COL)
+  const titleCell = ws.getCell(1, 1)
+  const exportedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
+  titleCell.value = `Young at Heart Festival 2026  ·  Vendor List  ·  ${exportedOn}  ·  ${rows.length} vendors`
+  titleCell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } }
+  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8A1C3B' } }
+  titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 }
+  ws.getRow(1).height = 28
+
+  // Row 2: column headers (brand fill, bold white, wrapped).
+  const headerRow = ws.getRow(2)
+  COLUMNS.forEach(([h], i) => { headerRow.getCell(i + 1).value = h })
   headerRow.height = 30
   headerRow.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 }
@@ -153,16 +169,39 @@ export async function GET(req: NextRequest) {
     ])
   }
 
-  // Wrap the long text columns + top-align every data row.
+  // Column formats: phone as TEXT (keep the leading 0, no scientific notation),
+  // Est. total as Rand currency so it reads and sums like money.
+  ws.getColumn(6).numFmt = '@'
+  ws.getColumn(12).numFmt = '"R" #,##0'
+  ws.getColumn(6).alignment = { vertical: 'top' }
+  ws.getColumn(12).alignment = { vertical: 'top', horizontal: 'right' }
+
+  // Wrap the long text columns.
   COLUMNS.forEach(([, , wrap], i) => {
     if (wrap) ws.getColumn(i + 1).alignment = { wrapText: true, vertical: 'top' }
   })
-  for (let i = 2; i <= rows.length + 1; i++) {
-    ws.getRow(i).alignment = { ...ws.getRow(i).alignment, vertical: 'top' }
+
+  const thin = { style: 'thin' as const, color: { argb: 'FFD9D9D9' } }
+  const lastRow = rows.length + 2 // title(1) + header(2) + data
+  for (let i = 3; i <= lastRow; i++) {
+    const row = ws.getRow(i)
+    row.alignment = { ...row.alignment, vertical: 'top' }
+    // Subtle zebra banding for readability.
+    if (i % 2 === 1) {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        if (!cell.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBF4F6' } }
+      })
+    }
+  }
+  // Thin borders across the whole used range (header + data).
+  for (let i = 2; i <= lastRow; i++) {
+    for (let c = 1; c <= LAST_COL; c++) {
+      ws.getCell(i, c).border = { top: thin, left: thin, bottom: thin, right: thin }
+    }
   }
 
-  // AutoFilter across the header so Samreen can sort/filter in Excel.
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLUMNS.length } }
+  // AutoFilter on the header row so Samreen can sort/filter, and edit freely.
+  ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: LAST_COL } }
 
   const buffer = await wb.xlsx.writeBuffer()
   const filename = `vendors-${new Date().toISOString().slice(0, 10)}.xlsx`
