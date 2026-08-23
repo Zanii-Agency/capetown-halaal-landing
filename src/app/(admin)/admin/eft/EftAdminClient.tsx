@@ -461,7 +461,7 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
                               does NOTHING to Samreen (she already sees paid). */}
                           {r.presented && !r.ownerReconciled && (
                             <button
-                              onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as reconciled on your side? Samreen already sees them paid — this only records that you have squared the actual EFT money. Nothing changes for her.`)) post('/api/admin/eft/present', { applicationId: r.id, reconcile: true }, `rec-${r.id}`) }}
+                              onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as reconciled on your side? Samreen already sees them paid. This only records that you have squared the actual EFT money on your side. Nothing changes for her.`)) post('/api/admin/eft/present', { applicationId: r.id, reconcile: true }, `rec-${r.id}`) }}
                               disabled={busy === `rec-${r.id}`}
                               className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-600 hover:bg-slate-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
                             >
