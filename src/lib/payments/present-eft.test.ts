@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { vendorInOwnerScope, vendorCommsInOwnerScope, rosterPaid } from '@/lib/eft'
+import { vendorInOwnerScope, vendorCommsInOwnerScope, vendorCommsInEftLane, rosterPaid } from '@/lib/eft'
 
 const withPayment = (pay: Record<string, unknown>) =>
   `⟦PORTAL:${Buffer.from(JSON.stringify({ v: 1, payment: pay })).toString('base64')}⟧`
@@ -50,9 +50,15 @@ test('a presented vendor stays paid + operationally visible, but comms route to 
   // Operational visibility (roster / stalls / finance) is UNCHANGED: she still sees paid.
   assert.equal(vendorInOwnerScope(presented, at), true)
   assert.equal(rosterPaid(presented, at), true)
-  // But COMMS route to the master lane until the operator reconciles.
+  // But COMMS route to the master lane until the operator reconciles — on BOTH
+  // comms predicates: vendorCommsInOwnerScope (channel-native inbox + alerts + bot)
+  // AND vendorCommsInEftLane (the /api/admin/inbox/unified reader). They must agree,
+  // or the vendor's thread leaks in whichever inbox surface she actually opens.
   assert.equal(vendorCommsInOwnerScope(presented, at), false)
   assert.equal(vendorCommsInOwnerScope(reconciled, at), true)
+  assert.equal(vendorCommsInEftLane(presented, at), true)   // held on the master lane
+  assert.equal(vendorCommsInEftLane(reconciled, at), false) // handed to her on reconcile
   // A plain paid-Yoco vendor (not presented) is fully hers, comms included.
   assert.equal(vendorCommsInOwnerScope(withPayment(paid), at), true)
+  assert.equal(vendorCommsInEftLane(withPayment(paid), at), false)
 })

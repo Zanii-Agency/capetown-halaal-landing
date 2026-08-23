@@ -445,6 +445,13 @@ export function vendorCommsInEftLane(
   identity?: LaneIdentity,
 ): boolean {
   if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator account, never EFT
+  // A PRESENTED-but-not-reconciled vendor keeps comms on the master lane even
+  // though present sets paid_at. This MUST precede the paidAt guard below, which
+  // would otherwise hand the conversation to the owner. Same hold as
+  // vendorCommsInOwnerScope, applied to this SECOND comms predicate so the
+  // /api/admin/inbox/unified reader (which gates on vendorCommsInEftLane, NOT on
+  // buildLaneScope) agrees with the channel-native inbox + owner alerts.
+  if (presentedCommsPending(adminNotes)) return true
   if (paidAt) return false
   if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins
   const p = parsePortalState(adminNotes).payment

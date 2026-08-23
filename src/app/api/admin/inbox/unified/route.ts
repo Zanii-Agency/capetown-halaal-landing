@@ -130,9 +130,11 @@ export async function GET(req: NextRequest) {
   const byEmail = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
   const byId = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
   const eftAppIds = new Set<string>()
-  // Which vendors leave the festival owner's inbox, via the SAME predicate the
-  // owner-alert gate uses (vendorCommsInEftLane in lib/bot/notify.ts) so the two
-  // surfaces can never disagree about who is on the lane.
+  // Which vendors leave the festival owner's inbox. Gated on vendorCommsInEftLane,
+  // which ALSO holds a PRESENTED-but-not-reconciled vendor (see eft.ts), so a
+  // presented thread stays on the master lane here exactly as it does on the
+  // channel-native inbox (buildLaneScope) and the owner alerts
+  // (vendorCommsInOwnerScope): all three comms surfaces agree on the presented hold.
   //
   // NOTE, corrected 2026-07-25: an earlier comment here claimed global mode "does
   // NOT sweep ordinary unpaid vendors". That was never what the code did —
