@@ -330,6 +330,16 @@ export function vendorInOwnerScope(
 ): boolean {
   const p = parsePortalState(adminNotes).payment
 
+  // A PRESENTED EFT payment (shown to the owner as paid-Yoco via /admin/eft/present)
+  // keeps ALL of its comms on the master lane until the operator marks it reconciled.
+  // The money reads PAID on her roster (rosterPaid, a SEPARATE predicate), but it is
+  // not yet settled on the operator's side, so the vendor's WhatsApp AND email must
+  // not reach her in that window (an EFT message from them would otherwise land in her
+  // inbox). markEftReconciled stamps reconciled_at, which clears this and hands the
+  // conversation over. Taona 2026-08-23: "after she sees paid, as long as it's not
+  // settled, all comms go to the eft admin, including email."
+  if (p?.presented_eft && !p?.reconciled_at) return false
+
   // Money is in motion outside the card lane: collected but not settled, bank
   // details revealed, a proof uploaded, or an operator-entered settlement.
   const touchedEft =
