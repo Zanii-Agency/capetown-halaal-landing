@@ -27,7 +27,8 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseTag } from '@/lib/inbox/tag-state'
 import { isMasterOnlySender } from '@/lib/master-only-senders'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { laneScopeFor, hidesEftContent } from '@/lib/inbox-lane'
+import { mentionsEft } from '@/lib/eft'
 import { withoutMerged } from '@/lib/merge'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 import { canPin } from '@/lib/inbox/automated'
@@ -206,6 +207,11 @@ async function buildVendorIndex(db: ReturnType<typeof createAdminClient>) {
 export async function loadWhatsAppThreads(viewerEmail: string | null | undefined): Promise<ChannelThread[]> {
   const db = createAdminClient()
   const scope = await laneScopeFor(viewerEmail)
+  // EFT-content wall on the LIST snippet (the read-side twin of the message
+  // readers' stripEftMessages): a viewer who cannot see EFT content must not get
+  // it in a preview either, or the newest EFT-mention message leaks in the list
+  // even though opening the thread hides it.
+  const hideEft = hidesEftContent(viewerEmail)
   const { byPhone, toPrimary } = await vendorIndex(db)
   const doneMarks = await loadDoneMarks()
   // REAL read state. `unread` was computed as "nobody has replied since they
@@ -230,6 +236,9 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
   const lastOutboundAt = new Map<string, string>()
   const botPaused = new Map<string, boolean>()
   const handoverSeen = new Set<string>()
+  // Phones whose newest message mentioned EFT and was blanked for this viewer,
+  // awaiting a backfill from the newest NON-EFT message so the snippet is clean.
+  const previewPending = new Set<string>()
 
   // PAGE, do not cap. `.limit(4000)` silently returned 1000 rows, because
   // PostgREST enforces db-max-rows=1000 on this project, so this list only ever
@@ -305,6 +314,7 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
       if (m.direction === 'out' && !lastOutboundAt.has(k)) lastOutboundAt.set(k, m.created_at)
 
       if (!threads.has(k)) {
+        const eftHide = hideEft && mentionsEft(raw)
         const stripped = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '')
         const media = (m.metadata as { media?: { kind?: string } } | null)?.media?.kind
         threads.set(k, {
@@ -317,7 +327,7 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
           application_id: vendor?.id ?? null,
           subject: null,
           last_message_at: m.created_at,
-          last_preview: (stripped || mediaPreviewLabel(media) || '[no text]').slice(0, 120),
+          last_preview: eftHide ? '' : (stripped || mediaPreviewLabel(media) || '[no text]').slice(0, 120),
           last_direction: m.direction,
           unread: false,
           needs_response: false,
@@ -327,6 +337,15 @@ export async function loadWhatsAppThreads(viewerEmail: string | null | undefined
           starred: false,
           is_vendor: !!vendor,
         })
+        if (eftHide) previewPending.add(k)
+      } else if (previewPending.has(k) && !mentionsEft(raw)) {
+        // The newest message(s) mentioned EFT and were blanked for this viewer;
+        // backfill the snippet from this older, non-EFT message (matches what the
+        // open thread shows, since its reader strips the EFT messages).
+        const stripped = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '')
+        const media = (m.metadata as { media?: { kind?: string } } | null)?.media?.kind
+        threads.get(k)!.last_preview = (stripped || mediaPreviewLabel(media) || '[no text]').slice(0, 120)
+        previewPending.delete(k)
       }
     }
 
@@ -412,6 +431,7 @@ export async function loadMailThreads(
 ): Promise<ChannelThread[]> {
   const db = createAdminClient()
   const scope = await laneScopeFor(viewerEmail)
+  const hideEft = hidesEftContent(viewerEmail)
   const { byEmail, toPrimary } = await vendorIndex(db)
   const doneMarks = await loadDoneMarks()
 
@@ -529,6 +549,11 @@ export async function loadMailThreads(
     if (scope.hidesMessage({ email: t.peer_email, applicationId: appId }, newest?.created_at || t.last_inbound_at)) continue
     const inAt = lastInbound.get(t.id) || t.last_inbound_at
     const outAt = lastAnyOut.get(t.id)
+    // EFT-content wall on the LIST fields too: for a viewer who cannot see EFT
+    // content, redact a subject or preview that mentions EFT (e.g. an emailed
+    // "EFT proof" subject), so the list never leaks what the open thread hides.
+    const safeSubject = hideEft && mentionsEft(t.subject) ? null : t.subject
+    const safeBody = hideEft && mentionsEft(newest?.body_text) ? '' : mailPreview(newest?.body_text)
     out.push({
       id: `mail:${t.id}`,
       channel: mailbox,
@@ -537,7 +562,7 @@ export async function loadMailThreads(
       phone: vendor?.phone ?? null,
       email: t.peer_email,
       application_id: appId,
-      subject: t.subject,
+      subject: safeSubject,
       last_message_at: newest?.created_at || t.last_inbound_at,
       // Outbound mail we send is HTML-only, so body_text is empty and the row
       // read as a bare "You:" with nothing after it. Fall back to the HTML with
@@ -545,7 +570,7 @@ export async function loadMailThreads(
       // Outbound mail we send is HTML-only, so body_text is empty and the row
       // read as a bare "You:" with nothing after it. The subject is the honest
       // fallback and costs nothing to fetch.
-      last_preview: (mailPreview(newest?.body_text) || t.subject || '').slice(0, 120),
+      last_preview: (safeBody || safeSubject || '').slice(0, 120),
       last_direction: newest?.direction ?? null,
       unread: (t.unread_count ?? 0) > 0,
       // A reply is owed when the newest inbound is newer than the newest
