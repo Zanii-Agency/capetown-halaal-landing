@@ -50,7 +50,7 @@ test('a presented vendor stays paid + operationally visible, but comms route to 
   // Operational visibility (roster / stalls / finance) is UNCHANGED: she still sees paid.
   assert.equal(vendorInOwnerScope(presented, at), true)
   assert.equal(rosterPaid(presented, at), true)
-  // But COMMS route to the master lane until the operator reconciles — on BOTH
+  // But COMMS route to the master lane until the operator reconciles, on BOTH
   // comms predicates: vendorCommsInOwnerScope (channel-native inbox + alerts + bot)
   // AND vendorCommsInEftLane (the /api/admin/inbox/unified reader). They must agree,
   // or the vendor's thread leaks in whichever inbox surface she actually opens.
