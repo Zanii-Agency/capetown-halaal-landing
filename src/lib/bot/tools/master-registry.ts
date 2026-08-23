@@ -18,7 +18,7 @@ import { parseAllocation, tierLabel, STALL_LIST, TYPE_META, type StallStatus } f
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { computePaymentDue, fmtDate } from '@/lib/exhibitor-paygate'
 import { segmentCount, SEGMENT_LABELS, type SegmentKey } from '@/lib/bot/segments'
-import { hasEftMarker, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
+import { hasEftMarker, vendorInOwnerScope, vendorCommsInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
 import { pendingStallChangeRequests } from '@/lib/stall-change-action'
 import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
 
@@ -315,7 +315,10 @@ async function vendorConversation(vendorId: string, ownerScoped = false): Promis
   // A vendor id is guessable and the brain sees ids in find_vendors output, so
   // re-check the scope here rather than trusting that she could only have got
   // this id from a list we already filtered.
-  if (ownerScoped && !vendorInOwnerScope(v.admin_notes as string | null, v.paid_at as string | null)) {
+  // COMMS scope: a presented-but-not-reconciled vendor's conversation routes to the
+  // master lane, so the owner-scoped brain must not surface it (she still sees the
+  // vendor as paid via the find_vendors summary above, which uses vendorInOwnerScope).
+  if (ownerScoped && !vendorCommsInOwnerScope(v.admin_notes as string | null, v.paid_at as string | null)) {
     return `No vendor with id ${vendorId}.` // same answer as absent, on purpose
   }
   let lines: Array<{ at: string; who: string; body: string }> = []

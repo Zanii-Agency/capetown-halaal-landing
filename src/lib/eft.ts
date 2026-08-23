@@ -330,16 +330,6 @@ export function vendorInOwnerScope(
 ): boolean {
   const p = parsePortalState(adminNotes).payment
 
-  // A PRESENTED EFT payment (shown to the owner as paid-Yoco via /admin/eft/present)
-  // keeps ALL of its comms on the master lane until the operator marks it reconciled.
-  // The money reads PAID on her roster (rosterPaid, a SEPARATE predicate), but it is
-  // not yet settled on the operator's side, so the vendor's WhatsApp AND email must
-  // not reach her in that window (an EFT message from them would otherwise land in her
-  // inbox). markEftReconciled stamps reconciled_at, which clears this and hands the
-  // conversation over. Taona 2026-08-23: "after she sees paid, as long as it's not
-  // settled, all comms go to the eft admin, including email."
-  if (p?.presented_eft && !p?.reconciled_at) return false
-
   // Money is in motion outside the card lane: collected but not settled, bank
   // details revealed, a proof uploaded, or an operator-entered settlement.
   const touchedEft =
@@ -395,6 +385,28 @@ export function vendorInOwnerScope(
   // fails this test and stays with the master until a real settlement lands.
   if (!paidAt && p?.status !== 'paid') return false
   return !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+}
+
+/** A PRESENTED EFT payment (shown to the owner as paid-Yoco via /admin/eft/present)
+ *  whose operator-side reconciliation is not yet marked. While true, the vendor's
+ *  COMMS route to the master lane, even though the money already reads paid on the
+ *  owner's roster. Cleared by markEftReconciled (stamps reconciled_at). */
+export function presentedCommsPending(adminNotes: string | null | undefined): boolean {
+  const p = parsePortalState(adminNotes).payment
+  return !!(p?.presented_eft && !p?.reconciled_at)
+}
+
+/** Owner scope for COMMS specifically (inbox threads + owner alerts + the bot):
+ *  the visibility wall vendorInOwnerScope MINUS the presented-not-reconciled hold.
+ *
+ *  Deliberately NARROWER than vendorInOwnerScope, and used ONLY by the comms readers.
+ *  Roster / finance / stalls / manifest / people / docs use vendorInOwnerScope (or
+ *  rosterPaid) directly and are NOT affected by the hold: a presented vendor stays
+ *  fully visible-as-paid there, only their MESSAGES move to the master lane until the
+ *  operator reconciles. Taona 2026-08-23: "after she sees paid, as long as it's not
+ *  settled, all comms go to the eft admin, including email." */
+export function vendorCommsInOwnerScope(adminNotes: string | null | undefined, paidAt?: string | null): boolean {
+  return vendorInOwnerScope(adminNotes, paidAt) && !presentedCommsPending(adminNotes)
 }
 
 /** Hand a vendor to the festival owner regardless of payment state. */

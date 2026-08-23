@@ -10,7 +10,7 @@ import { windowOpenFor } from '@/lib/wa-window'
 import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
-import { getEftMode, EFT_ADMIN_EMAIL, revealsPaymentArrangement, vendorInOwnerScope } from '@/lib/eft'
+import { getEftMode, EFT_ADMIN_EMAIL, revealsPaymentArrangement, vendorCommsInOwnerScope } from '@/lib/eft'
 
 // EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
 // alerts; production regressed to 86% of owner WhatsApp sends dropped with
@@ -112,7 +112,7 @@ export function isEftScopedAlert(
     // withhold otherwise, rather than asking "is this vendor on the EFT lane?".
     // The old shape handed an EFT-SETTLED vendor back to her the moment paid_at
     // was written, which is exactly what she must not get.
-    return !vendorInOwnerScope(asStr(vendor.admin_notes), asStr(vendor.paid_at))
+    return !vendorCommsInOwnerScope(asStr(vendor.admin_notes), asStr(vendor.paid_at))
   }
   return revealsPaymentArrangement(args.body) || args.eftScoped === true
 }
@@ -132,7 +132,7 @@ async function lookupVendorLane(id?: string, phone?: string): Promise<VendorLane
     // master-lane vendor can never hide behind another matching number.
     const { data } = await q.or(`phone.like.*${last9},admin_notes.like.*WAV${last9}*`)
     const rows = (data || []) as VendorLaneRow[]
-    return rows.find((r) => !vendorInOwnerScope(asStr(r.admin_notes), asStr(r.paid_at))) ?? rows[0] ?? null
+    return rows.find((r) => !vendorCommsInOwnerScope(asStr(r.admin_notes), asStr(r.paid_at))) ?? rows[0] ?? null
   } catch {
     return null
   }

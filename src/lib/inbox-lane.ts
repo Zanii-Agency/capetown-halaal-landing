@@ -15,7 +15,7 @@
 // than by remembering to re-derive it. Same shape as the notifyOwners gate: the
 // predicate lives in ONE place (vendorCommsInEftLane) and callers pass identity.
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode, isEftAdmin, vendorInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
+import { getEftMode, isEftAdmin, vendorCommsInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
 import { isMasterOnlySender } from '@/lib/master-only-senders'
 import { withoutMerged } from '@/lib/merge'
 import { ownerCutoff, hiddenByCutoff } from '@/lib/owner-view'
@@ -176,7 +176,10 @@ export function buildLaneScope(
     // generic sender is an inconvenience, exposing an EFT vendor's payment
     // conversation is the breach this whole module was built to prevent.
     if (r.status && r.status !== 'approved') continue
-    if (vendorInOwnerScope(r.admin_notes, r.paid_at)) continue
+    // COMMS scope: a presented-but-not-reconciled vendor is walled off her inbox
+    // (their conversation routes to the master lane), even though she still sees
+    // them as paid on the roster/stalls (those use vendorInOwnerScope directly).
+    if (vendorCommsInOwnerScope(r.admin_notes, r.paid_at)) continue
     ids.add(r.id)
     if (r.email) emails.add(r.email.toLowerCase())
     const k = phoneKey(r.phone)
