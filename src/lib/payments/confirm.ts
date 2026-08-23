@@ -15,6 +15,7 @@ import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { findWaTemplate, buildWaTemplateParams } from '@/lib/templates/wa-meta'
 import { recordLedger } from '@/lib/zanii-ledger'
+import { paymentReference } from '@/lib/payments'
 
 const SITE = 'https://cthalaal.co.za'
 
@@ -238,6 +239,91 @@ export async function markEftCollected(applicationId: string, amountOverride?: n
   await sendVendorPaymentWa({ admin, waPhone: (app.phone as string) || '', firstName, amount, stallLabel: pricing.stallLabel })
 
   return { ok: true, amount }
+}
+
+/**
+ * PRESENT an EFT-collected payment to the festival owner as a clean "paid via
+ * Yoco" entry (Samreen's request: she knows about the EFT lane but the interim
+ * collected state makes her accounting harder, so she wants one solid paid+Yoco
+ * view). Reaches the REAL paid-Yoco state through the single settlement authority
+ * confirmPayment(method:'yoco'), so the owner-visibility wall is UNCHANGED and the
+ * money counts EXACTLY ONCE (the paid_at IS NULL guard). confirmPayment auto-stamps
+ * ⟦OWNERCUT⟧, hiding the EFT-era conversation from her, exactly as every real
+ * EFT->Yoco settlement does. The vendor is NOT re-notified (acknowledged at
+ * collect); the owner IS (she learns it is paid) unless notifyOwner is false.
+ *
+ * Honest by construction: we set the human `reference` (YAH-…) she reconciles
+ * against, but NEVER a fabricated Yoco `provider_ref` — no fake gateway txn is
+ * claimed, and the EFT evidence stays intact on the EFT console for the operator.
+ * "Settle later" is a SEPARATE operator-only tracking flag (markEftReconciled)
+ * that does nothing to the owner, who already sees paid.
+ */
+export async function presentEftAsPaid(
+  applicationId: string,
+  opts?: { notifyOwner?: boolean },
+): Promise<{ ok: boolean; amount: number; reference: string; error?: string }> {
+  const admin = createAdminClient()
+  const { data: app } = await admin
+    .from('vendor_applications')
+    .select('id, admin_notes')
+    .eq('id', applicationId)
+    .maybeSingle()
+  if (!app) return { ok: false, amount: 0, reference: '', error: 'application not found' }
+
+  const p = parsePortalState(app.admin_notes as string).payment
+  // Only a COLLECTED (EFT money in, interim) vendor can be presented: a truly
+  // paid vendor is already visible to her, and an un-collected one has no money in.
+  if (p?.status !== 'collected') {
+    return { ok: false, amount: 0, reference: '', error: p?.status === 'paid' ? 'already paid' : 'not collected (mark collected first)' }
+  }
+  const amount = Number(p?.amount) || 0
+  const reference = paymentReference(applicationId)
+
+  const res = await confirmPayment({
+    applicationId,
+    method: 'yoco',
+    amount,
+    notifyVendor: false,            // vendor was already acknowledged at 'collected'
+    silent: opts?.notifyOwner === false,
+  })
+  if (!res.ok) return { ok: false, amount, reference, error: res.error || 'confirm failed' }
+
+  // Persist the owner-facing reference + the present marker. Deliberately NO
+  // provider_ref: the YAH- reference is an honest bank reference, not a claim of
+  // a Yoco API transaction that never happened.
+  await updatePortalState(applicationId, (s) => ({
+    ...s,
+    payment: {
+      ...(s.payment || {}),
+      reference,
+      presented_eft: { at: new Date().toISOString(), reference },
+    },
+  }))
+  return { ok: true, amount, reference }
+}
+
+/**
+ * Operator-only "settle later" tracking for a presented EFT payment: stamps that
+ * the operator has reconciled the actual EFT money on their side. PURE bookkeeping
+ * — the owner already sees paid, so this changes nothing for her and nothing in
+ * finance. Reuses the stored YAH- reference.
+ */
+export async function markEftReconciled(applicationId: string): Promise<{ ok: boolean; error?: string }> {
+  const admin = createAdminClient()
+  const { data: app } = await admin
+    .from('vendor_applications')
+    .select('id, admin_notes')
+    .eq('id', applicationId)
+    .maybeSingle()
+  if (!app) return { ok: false, error: 'application not found' }
+  if (!parsePortalState(app.admin_notes as string).payment?.presented_eft) {
+    return { ok: false, error: 'not a presented EFT payment' }
+  }
+  await updatePortalState(applicationId, (s) => ({
+    ...s,
+    payment: { ...(s.payment || {}), reconciled_at: new Date().toISOString() },
+  }))
+  return { ok: true }
 }
 
 /**

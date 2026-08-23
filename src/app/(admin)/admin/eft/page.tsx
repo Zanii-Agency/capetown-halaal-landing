@@ -166,6 +166,8 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     marked: boolean
     collected: boolean
     reconciled: boolean
+    presented: boolean        // shown to the owner as paid-Yoco (presented_eft set)
+    ownerReconciled: boolean  // operator marked their own EFT reconciliation done
     accOwing: number
     accSubmitted: boolean
     accCollected: boolean
@@ -217,6 +219,10 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     const submitted = !!state.payment?.eft_submitted_at
     const collected = state.payment?.status === 'collected'
     const reconciled = state.payment?.status === 'paid' || !!a.paid_at
+    // Presented to the owner as paid-Yoco (still tracked on the lane so the
+    // operator can mark their own reconciliation done later).
+    const presented = !!state.payment?.presented_eft
+    const ownerReconciled = !!state.payment?.reconciled_at
     const inLane = marked // individually selected (global-on vendors are handled in bulk, not listed until they submit)
     // ACCESSORY sub-ledger (split-bill, 2026-08-04): settled vendors paying
     // their accessory-electricity balance by EFT with a <ref>-ACC reference.
@@ -227,7 +233,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
 
     // Actionable set: individually marked, uploaded EFT proof (stall OR
     // accessory), OR EFT-collected (awaiting Yoco settlement).
-    if (marked || submitted || collected || accSubmitted) {
+    if (marked || submitted || collected || accSubmitted || presented) {
       const pricing = computeVendorPricing({
         preferred_booth_tier: a.preferred_booth_tier as string,
         special_requirements: a.special_requirements,
@@ -264,6 +270,8 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         marked,
         collected,
         reconciled,
+        presented,
+        ownerReconciled,
         // The figure the accessory-collect confirm dialog quotes. From the SAME
         // source markAccessoriesCollected writes from (vendorBill), so the
         // operator confirms the number that will actually be recorded, not the

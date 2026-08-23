@@ -147,6 +147,20 @@ export interface PortalState {
      *  'receipt'|'refund' = operator-uploaded (/api/admin/vendors/[id]/payment-proof);
      *  'eft_submission' = the vendor's own EFT proof (/api/exhibitor/eft-proof). */
     proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string }>
+    /** PRESENT-TO-OWNER (2026-08-23). The operator showed this EFT-collected
+     *  payment to the festival owner as a clean "paid via Yoco" entry (her
+     *  request: the interim EFT state makes her accounting harder, she knows
+     *  about EFT but wants one solid paid+Yoco view). Set by /api/admin/eft/present,
+     *  which reaches the REAL paid-Yoco state via confirmPayment(method:'yoco'),
+     *  so the owner-visibility wall is unchanged and the money counts exactly once.
+     *  `reference` is the YAH- reference she reconciles against. The EFT evidence
+     *  (eft_submitted_at, proofs, ⟦EFT⟧) stays on the record for the EFT admin. */
+    presented_eft?: { at: string; reference: string }
+    /** Operator-side "settle later" tracking for a presented_eft payment: the
+     *  operator marked that they have squared the actual EFT money on their side.
+     *  Pure bookkeeping — NO owner effect, NO finance effect (she already sees
+     *  paid). Writer: /api/admin/eft/present (reconcile:true). */
+    reconciled_at?: string
   }
   docs?: DocRecord[]
   staff?: StaffMember[]
