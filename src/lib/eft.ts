@@ -92,6 +92,35 @@ export function rosterPaymentStatus(
   return raw === 'paid' || raw === 'collected' ? 'none' : raw
 }
 
+/** The payment OBJECT safe to hand a non-EFT-admin viewer on the vendor profile
+ *  and /full. rosterPaymentStatus masks only the status string; the profile also
+ *  renders amount, reference, method and the eft_* internals, so those leak the
+ *  moment the page is reachable. This is the object-level twin: the EFT admin sees
+ *  the raw payment; everyone else sees the money ONLY when it settled through her
+ *  channel (rosterPaid) as a clean { status:'paid', amount, reference } — and for
+ *  anything else (in-flight EFT: collected, revealed, submitted, presented-not-
+ *  reconciled) EVERY money field is dropped and only the masked status remains.
+ *  Display only; same rule the vendor list uses, extended from status to object.
+ *
+ *  This is why the vendor profile does NOT need a whole-page scope block: hiding
+ *  payment POSTURE here (like the list, the export, the alerts) keeps her able to
+ *  reach every vendor's operational profile without leaking a lane arrangement. */
+export function viewerSafePayment(
+  payment: PortalState['payment'],
+  adminNotes: string | null | undefined,
+  paidAt: string | null | undefined,
+  viewerEmail: string | null | undefined,
+): PortalState['payment'] {
+  if (!payment) return payment
+  if (isEftAdmin(viewerEmail)) return payment
+  if (rosterPaid(adminNotes, paidAt)) {
+    return { status: 'paid', amount: payment.amount, reference: payment.reference }
+  }
+  const masked = rosterPaymentStatus(adminNotes, paidAt, viewerEmail)
+  const allowed = ['none', 'deferred', 'pending', 'collected', 'paid', 'waived'] as const
+  return { status: (allowed as readonly string[]).includes(masked) ? (masked as NonNullable<PortalState['payment']>['status']) : 'none' }
+}
+
 // Operator PREVIEW addresses: emails an operator uses to preview vendor-facing
 // output (e.g. a self-sent invoice preview). Their unified-inbox threads are
 // confined to the dev-only EFT feed so a preview never surfaces in the festival

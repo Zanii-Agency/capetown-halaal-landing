@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
+import { viewerSafePayment } from '@/lib/eft'
 import { hiddenFromOwner } from '@/lib/audit-scope'
 
 export const dynamic = 'force-dynamic'
@@ -44,8 +45,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // by a path param anyone can type. The richest single payload of the lot.
   // TWO layers (2026-07-26): vendor, then content. This returns the FULL vendor
   // row including payment state, so the vendor gate matters most here.
+  // NO whole-page vendor gate. Like the profile page, the owner reaches every
+  // vendor; payment POSTURE is masked field-by-field (viewerSafePayment on the
+  // returned portal, stripEftMessages on comms, hiddenFromOwner on events).
   const scope = await laneScopeFor(user.email)
-  if (scope.blocksApplicationId(id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const hide = hidesEftContent(user.email)
 
   const a = app as Record<string, unknown>
@@ -163,7 +166,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json({
     vendor: vendorSafe,
     stall,
-    portal,
+    portal: { ...portal, payment: viewerSafePayment(portal.payment, a.admin_notes as string | null, a.paid_at as string | null, user.email) },
     communications: visibleComms,
     events: auditRows,
     stats,

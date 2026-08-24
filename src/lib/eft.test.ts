@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -279,6 +279,40 @@ test('visiblePaymentStatus leaves every other state untouched for everyone', () 
     assert.equal(visiblePaymentStatus(s, 'capetownhalaal@gmail.com'), s, s)
     assert.equal(visiblePaymentStatus(s, EFT_ADMIN_EMAIL), s, s)
   }
+})
+
+test('viewerSafePayment: in-flight EFT money is stripped, her settled payment shows, admin sees raw', () => {
+  const SAM = 'capetownhalaal@gmail.com'
+  const notesFor = (payment: Record<string, unknown>) => updatePortalStateImpl('note', { v: 1, payment } as never)
+  const pay = (notes: string) => parsePortalState(notes).payment
+
+  // Collected EFT (the leak the profile page had): every money field dropped,
+  // status masked. amount/reference/method/eft_* must NOT survive.
+  const cNotes = notesFor({ status: 'collected', amount: 3700, reference: 'YAH-77', method: 'eft', eft_revealed_at: '2026-08-01T00:00:00Z' })
+  const c = viewerSafePayment(pay(cNotes), cNotes, null, SAM)
+  assert.equal(c?.status, 'none')
+  assert.equal(c?.amount, undefined)
+  assert.equal(c?.reference, undefined)
+  assert.equal((c as Record<string, unknown>)?.method, undefined)
+  assert.equal((c as Record<string, unknown>)?.eft_revealed_at, undefined)
+
+  // Her Yoco-settled payment: amount + reference show; method still never leaks.
+  const pNotes = notesFor({ status: 'paid', amount: 6500, reference: 'CH-9', method: 'yoco' })
+  const p = viewerSafePayment(pay(pNotes), pNotes, '2026-08-01T00:00:00Z', SAM)
+  assert.equal(p?.status, 'paid')
+  assert.equal(p?.amount, 6500)
+  assert.equal(p?.reference, 'CH-9')
+  assert.equal((p as Record<string, unknown>)?.method, undefined)
+
+  // A plain unpaid vendor: nothing to leak, status passes through.
+  const uNotes = notesFor({ status: 'none' })
+  assert.equal(viewerSafePayment(pay(uNotes), uNotes, null, SAM)?.status, 'none')
+
+  // The EFT admin sees the raw object untouched.
+  const admin = viewerSafePayment(pay(cNotes), cNotes, null, EFT_ADMIN_EMAIL)
+  assert.equal(admin?.status, 'collected')
+  assert.equal(admin?.amount, 3700)
+  assert.equal((admin as Record<string, unknown>)?.method, 'eft')
 })
 
 test('rosterPaid + rosterPaymentStatus: SETTLED reads paid; only in-flight EFT masks', () => {

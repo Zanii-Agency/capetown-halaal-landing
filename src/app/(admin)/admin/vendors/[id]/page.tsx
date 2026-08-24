@@ -2,7 +2,7 @@ import { redirect, notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
-import { visiblePaymentStatus } from '@/lib/eft'
+import { viewerSafePayment } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 import { hiddenFromOwner } from '@/lib/audit-scope'
@@ -46,28 +46,25 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
     .single()
   if (!app) notFound()
 
+  // NO whole-page scope block. The vendor profile is an OPERATIONAL surface (the
+  // owner manages contract, allocation, staff, docs), so she must reach EVERY
+  // vendor, exactly like the vendor LIST and the export. What the lane hides is
+  // payment POSTURE, not the vendor, and that is masked field-by-field below:
+  // viewerSafePayment on the money, stripEftMessages on the comms, hiddenFromOwner
+  // on the events. A `redirect` here was the bug: it bounced her off every unpaid
+  // vendor's profile (@positive_affirmations.za etc.). `scope` is still needed for
+  // the comms strip.
   const scope = await laneScopeFor(user.email)
-  if (scope.blocksApplicationId(id)) redirect('/admin/vendors')
   const hide = hidesEftContent(user.email)
 
   const a = app as Record<string, unknown>
   const portalRaw = parsePortalState((a.admin_notes as string) || '')
-  // MASK THE PAYMENT STATE FOR THE VIEWER. The vendor LIST already did this
-  // (admin/vendors/page.tsx) and this detail page did not, so opening a profile
-  // showed the raw state: an EFT-collected vendor read as 'collected' to the
-  // festival owner, which is precisely the arrangement the master lane hides.
-  // Taona 2026-07-28: "for dev@cthalaal.co.za this is correct, for samreen it
-  // shouldnt be". visiblePaymentStatus collapses 'collected' to 'none' for
-  // everyone except the EFT admin.
+  // MASK THE PAYMENT OBJECT FOR THE VIEWER: the EFT admin sees raw; for everyone
+  // else the money shows only when it settled through her channel, otherwise every
+  // amount/reference/method/eft_* field is dropped (in-flight EFT leaks nothing).
   const portal = {
     ...portalRaw,
-    payment: portalRaw.payment
-      ? {
-          ...portalRaw.payment,
-          status: visiblePaymentStatus(portalRaw.payment.status, user.email) as
-            NonNullable<typeof portalRaw.payment>['status'],
-        }
-      : portalRaw.payment,
+    payment: viewerSafePayment(portalRaw.payment, a.admin_notes as string | null, a.paid_at as string | null, user.email),
   }
   const { stall } = parseAllocation((a.admin_notes as string) || '')
 
