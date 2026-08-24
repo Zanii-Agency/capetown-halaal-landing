@@ -65,10 +65,15 @@ export async function GET(req: NextRequest) {
     const restrict = !isEftAdmin(viewerEmail)
     const scopedRows = restrict ? rows.filter((v) => vendorInOwnerScope(v.admin_notes, v.paid_at)) : rows
 
-    // Full operational aggregates: dashboard-level totals must match for every
-    // admin. The per-vendor list below stays scoped so master-lane records stay
-    // hidden from the festival owner's detail view.
-    const allPayments = rows.map((v) => {
+    // Aggregates are scoped to the VIEWER, exactly like the detail list below.
+    // The EFT admin gets scopedRows === rows (restrict=false) so their Total
+    // Money In / paid counts are unchanged. The festival owner's aggregate must
+    // reflect ONLY her vendors: summing the FULL set folded master-lane (EFT)
+    // money into her headline, and she can derive the hidden cohort from the gap
+    // (measured 2026-08-24: 377,150 unscoped - 336,050 hers = 41,100 of EFT money
+    // across 5 vendors). A total she cannot reconcile against her own list IS the
+    // leak, even though it names no vendor.
+    const statPayments = scopedRows.map((v) => {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
       const isPaid = !!v.paid_at || p.status === 'paid'
@@ -83,11 +88,11 @@ export async function GET(req: NextRequest) {
     })
 
     // Stats from the full operational view.
-    const totalPaid = allPayments.filter(p => p.is_paid).length
-    const totalPending = allPayments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
-    const totalNone = allPayments.filter(p => !p.is_paid && p.payment_status === 'none').length
-    const totalOverdue = allPayments.filter(p => p.overdue).length
-    const totalRevenue = allPayments
+    const totalPaid = statPayments.filter(p => p.is_paid).length
+    const totalPending = statPayments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
+    const totalNone = statPayments.filter(p => !p.is_paid && p.payment_status === 'none').length
+    const totalOverdue = statPayments.filter(p => p.overdue).length
+    const totalRevenue = statPayments
       .filter(p => p.is_paid)
       .reduce((sum, p) => sum + (p.payment_amount || 0), 0)
 
