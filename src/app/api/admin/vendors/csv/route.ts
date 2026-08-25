@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation } from '@/lib/stalls'
 import { rosterPaid } from '@/lib/eft'
+import { parsePortalState } from '@/lib/portal-state'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -82,7 +83,11 @@ export async function GET(req: NextRequest) {
   // reconciles them (reconciledPaid). This route used to drop those rows via
   // buildLaneScope (Taona 2026-08-10: "all vendors show, EFT shows as unpaid,
   // they only show paid once yoco reconciled").
-  const rows = rawRows.filter((r) => !r.is_duplicate) // drop merged duplicates
+  // Approved + participating only (Taona 2026-08-25): drop merged duplicates,
+  // rejected, and withdrawn (status 'rejected' + ⟦PORTAL⟧ withdrawn marker).
+  const rows = rawRows.filter(
+    (r) => !r.is_duplicate && r.status === 'approved' && !parsePortalState(r.admin_notes).withdrawn,
+  )
 
   // H5: audit log every export so we can trace PII flows. We anchor the
   // event on the first exported vendor's application_id (the audit table FK

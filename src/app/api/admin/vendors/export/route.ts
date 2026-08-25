@@ -19,6 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parseVendorExtras } from '@/lib/vendor-extras'
 import { rosterPaid } from '@/lib/eft'
+import { parsePortalState } from '@/lib/portal-state'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -77,9 +78,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Could not read vendors: ${error.message}` }, { status: 500 })
   }
 
-  // Skip merged duplicates (is_duplicate set by applications/merge). Otherwise
-  // the losing twin still ships, e.g. Chocotag's blank second application.
-  const rows = ((data || []) as Array<Record<string, unknown>>).filter((r) => !r.is_duplicate)
+  // APPROVED + PARTICIPATING ONLY (Taona 2026-08-25: "so she doesnt have to
+  // manually remove withdraw and rejected"). Withdrawn vendors are status
+  // 'rejected' + a ⟦PORTAL⟧ withdrawn marker; both are dropped here, and the
+  // status guard also covers a hand-picked `ids` selection that includes one.
+  // Skip merged duplicates too (Chocotag's blank twin).
+  const rows = ((data || []) as Array<Record<string, unknown>>).filter(
+    (r) => !r.is_duplicate && r.status === 'approved' && !parsePortalState(r.admin_notes as string).withdrawn,
+  )
 
   // NO row-scoping. The lane hides payment POSTURE, not the pipeline: the festival
   // owner's ops roster must list every vendor (stall, gas, electrical, contract),

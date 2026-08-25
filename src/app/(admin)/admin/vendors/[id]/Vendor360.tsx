@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, MessageCircle, Mail, CreditCard, MapPin, Phone,
   FileText, Users, History, Eye, ChevronDown, ChevronUp, Loader2,
-  StickyNote, Plus, Check, X, Trash2, AlertTriangle,
+  StickyNote, Plus, Check, X, Trash2, RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AdminPage } from '@/components/admin/AdminPage'
@@ -206,6 +206,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [withdrawReason, setWithdrawReason] = useState('')
   const [withdrawBusy, setWithdrawBusy] = useState(false)
+  const [reinstateBusy, setReinstateBusy] = useState(false)
   // Only a vendor carrying the withdrawn marker AND sitting at status='rejected'
   // is "withdrawn". A genuine application rejection (no marker) still reads as
   // 'rejected'; a re-approved vendor (status flips back) sheds the label.
@@ -428,6 +429,24 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
     }
   }
 
+  // Reinstate a withdrawn vendor (Taona 2026-08-25). Reverses the withdrawal:
+  // clears the withdrawn marker, status back to 'approved', so they rejoin the
+  // roster + Excel at once. Does NOT re-allocate their stall (may be reassigned).
+  async function handleReinstate() {
+    setReinstateBusy(true)
+    try {
+      const r = await fetch(`/api/admin/vendors/${v.id}/reinstate`, { method: 'POST' })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { toast.error(j.error || `Failed to reinstate (${r.status})`); return }
+      toast.success(`${businessName} reinstated. They are back in the approved list. Allocate a stall if they need one.`)
+      router.refresh()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setReinstateBusy(false)
+    }
+  }
+
   // In-app targets (never leave the admin site). WhatsApp/Email open the master
   // inbox on THIS vendor's thread via a deep-link param; the old wa.me / mailto
   // links flung the operator out to an external app.
@@ -462,10 +481,17 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
         )}
         <StatusPill tone={statusTone(status)} label={isWithdrawn ? 'withdrawn' : status} />
         {isWithdrawn ? (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-neutral-500">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-            Withdrawn{portal.withdrawn?.at ? ` · ${fmtShortDate(portal.withdrawn.at)}` : ''}
-          </span>
+          // Same slot as Withdraw. Once withdrawn, the button flips to Reinstate.
+          <button
+            type="button"
+            onClick={handleReinstate}
+            disabled={reinstateBusy}
+            className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 border border-emerald-200 hover:border-emerald-300 rounded-md px-2.5 py-1.5 transition-colors disabled:opacity-50"
+            title="Reinstate this vendor: reverse the withdrawal and put them back in the approved list"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            {reinstateBusy ? 'Reinstating…' : 'Reinstate vendor'}
+          </button>
         ) : (
           <button
             type="button"
