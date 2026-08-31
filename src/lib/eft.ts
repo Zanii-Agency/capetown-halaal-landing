@@ -231,15 +231,20 @@ export interface EftBankDetails {
 // EFT branch code. Overridable via env without a code change.
 //
 // ACCOUNT CHANGED 2026-07-27 on Taona's instruction: 63170873351 -> 63141269191.
-// Everything else (account name, bank, branch code) is unchanged. This constant
-// is the ONLY place the number appears in the repo and no EFT_BANK_ACCOUNT_NUMBER
-// override is set in production, so this line alone governs what every vendor
-// sees: portal EftPanel, the admin EFT tab, invoices, emails and the bot.
+// ACCOUNT CHANGED 2026-08-26 on Taona's instruction: 63141269191 -> 63168769629,
+//   name 'Halaal Hub' -> 'Halaal Hub (Pty) Ltd', + Gold Business Account type, as
+//   part of the full-EFT cutover. Vendors mid-transfer may still hit the old
+//   account 63141269191 for a while; watch both.
+// This constant is the ONLY place the number appears in the repo and no
+// EFT_BANK_ACCOUNT_NUMBER override is set in production, so this line alone
+// governs what every vendor sees: portal EftPanel, the admin EFT tab, invoices,
+// emails and the bot.
 const DEFAULT_BANK: EftBankDetails = {
-  accountName: 'Halaal Hub',
+  accountName: 'Halaal Hub (Pty) Ltd',
   bank: 'FNB',
-  accountNumber: '63141269191',
+  accountNumber: '63168769629',
   branchCode: '250655',
+  accountType: 'Gold Business Account',
 }
 
 /** CTH / Young at Heart EFT bank details. Env overrides the in-code defaults so
@@ -250,7 +255,7 @@ export function getEftBankDetails(): EftBankDetails {
     bank: process.env.EFT_BANK_NAME || DEFAULT_BANK.bank,
     accountNumber: process.env.EFT_BANK_ACCOUNT_NUMBER || DEFAULT_BANK.accountNumber,
     branchCode: process.env.EFT_BANK_BRANCH_CODE || DEFAULT_BANK.branchCode,
-    accountType: process.env.EFT_BANK_ACCOUNT_TYPE || undefined,
+    accountType: process.env.EFT_BANK_ACCOUNT_TYPE || DEFAULT_BANK.accountType,
   }
 }
 
@@ -293,6 +298,22 @@ export async function getEftMode(): Promise<boolean> {
  *  out let a master-lane capture (Table Art, captured 2026-07-05) read as
  *  hers/paid on every surface until 2026-08-10. */
 const MASTER_ONLY_METHODS = new Set(['eft', 'manual_card', 'manual'])
+
+/** ANY EFT footprint. The definition used to freeze the PROTECTED SET at the
+ *  full-EFT cutover (getFullEftMode / eftProofVisibleToOwner). Deliberately
+ *  BROADER than the wall's internal touchedEft (adds eft_collected_at +
+ *  presented_eft): freezing an extra vendor can never leak, missing one can. A
+ *  member here is NEVER shown on the festival owner's EFT-proofs fence, even
+ *  after a post-cutover electrical-top-up re-payment. Verified 2026-08-26: 66
+ *  members across the live vendor set. */
+export function hasEftFootprint(adminNotes: string | null | undefined): boolean {
+  const p = parsePortalState(adminNotes).payment
+  return !!(
+    p?.eft_revealed_at || p?.eft_submitted_at || p?.eft_collected_at
+    || p?.status === 'collected' || p?.presented_eft
+    || MASTER_ONLY_METHODS.has(String(p?.method || ''))
+  )
+}
 
 /** The vendor-roster PAID/UNPAID label — permanent rule (Taona 2026-08-10:
  *  "all vendors show, EFT shows as unpaid, they only show paid once Yoco
@@ -551,6 +572,54 @@ export async function getRotationStartAt(): Promise<string | null> {
   }
 }
 
+/** FULL-EFT CUTOVER (2026-08-26). The festival moved to EFT-only into a new
+ *  receiving account. Reads the `pm_full_eft` start line written once at cutover:
+ *  { started_at, protected_ids }. `protected_ids` is the FROZEN set of every
+ *  vendor already on the covert EFT lane at the moment of cutover; they must NEVER
+ *  surface to the festival owner, even if they upload a fresh electrical-top-up
+ *  proof after the switch. Returns null until full-EFT is activated. */
+export async function getFullEftMode(): Promise<{ startedAt: string; protectedIds: Set<string> } | null> {
+  try {
+    const admin = createAdminClient()
+    const { data } = await admin
+      .from('site_events')
+      .select('metadata')
+      .eq('event_type', 'pm_full_eft')
+      .order('created_at', { ascending: false })
+    const rows = (data || []) as Array<{ metadata: { started_at?: string; protected_ids?: string[] } | null }>
+    // The newest row's started_at governs the cutover instant, but protected_ids
+    // are UNIONED across EVERY pm_full_eft row so a later partial re-activation
+    // (bumping started_at, retuning) can NEVER shrink the frozen set and surface a
+    // member of the protected cohort (doctrine review 2026-08-26, Concern 2).
+    const startedAt = rows.find((r) => r.metadata?.started_at)?.metadata?.started_at
+    if (!startedAt) return null
+    const protectedIds = new Set<string>()
+    for (const r of rows) for (const id of r.metadata?.protected_ids || []) protectedIds.add(id)
+    return { startedAt, protectedIds }
+  } catch {
+    return null
+  }
+}
+
+/** THE FENCE. A vendor's EFT proof is visible to the festival owner ONLY when the
+ *  full-EFT cutover is active, the vendor is NOT in the frozen protected set, AND
+ *  their proof was uploaded AFTER the cutover. Two independent gates (frozen id set
+ *  + post-cutover timestamp) so no member of the previous covert cohort can ever
+ *  surface, including when they re-pay an electrical top-up after the switch. The
+ *  wall (vendorInOwnerScope) is untouched; this is an additive read used ONLY by
+ *  the owner's dedicated EFT-proofs surface, never by the inbox/roster/alert path. */
+export function eftProofVisibleToOwner(
+  vendorId: string,
+  adminNotes: string | null | undefined,
+  fullEft: { startedAt: string; protectedIds: Set<string> } | null,
+): boolean {
+  if (!fullEft) return false
+  if (fullEft.protectedIds.has(vendorId)) return false
+  const submitted = parsePortalState(adminNotes).payment?.eft_submitted_at
+  if (!submitted) return false
+  return new Date(submitted).getTime() >= new Date(fullEft.startedAt).getTime()
+}
+
 /** How many payments have been RECEIVED in a tier since the start line: a Yoco
  *  settlement (`paid_at`) or an EFT collection (`payment.eft_collected_at`) that
  *  landed after `startAtIso`. This is the 0-based slot for the next payer. */
@@ -604,6 +673,11 @@ export async function resolveInEftLane(
   // collected): NEVER flip these to Yoco, they have paid by EFT. Independent of
   // the master switch and of the 48h grace below.
   if (p?.eft_submitted_at || p?.status === 'collected' || p?.eft_collected_at) return true
+  // FULL-EFT CUTOVER (2026-08-26): once active, every remaining unpaid vendor pays
+  // EFT, overriding the 48h-grace / pending / rotation branches below. ⟦NOEFT⟧
+  // (checked above) still keeps its holders on card as the festival owner's, and
+  // paid / ⟦EFT⟧ / collected are already resolved above.
+  if (await getFullEftMode()) return true
   // Opened the bank details but nothing in yet: hold on EFT for a 48h grace so a
   // vendor mid-transfer is never yanked to Yoco. After 48h an unpaid opener falls
   // through to the switch, so with EFT mode ON they stay EFT (rotation, unchanged)

@@ -29,10 +29,10 @@ test('every way the bot might raise banking', () => {
 })
 
 test('the replacement never leaks the topic it replaced', () => {
-  const out = guardBankingTalk('Our account number is 63141269191 at FNB, branch 250655.')
+  const out = guardBankingTalk('Our account number is 63168769629 at FNB, branch 250655.')
   assert.equal(out.replaced, true)
   assert.match(out.reply, /cthalaal\.co\.za\/exhibitor\/login/)
-  assert.doesNotMatch(out.reply, /63141269191|FNB|250655|account number/i)
+  assert.doesNotMatch(out.reply, /63168769629|FNB|250655|account number/i)
 })
 
 test('normal replies are untouched, byte for byte', () => {
