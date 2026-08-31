@@ -97,8 +97,9 @@ test('alerts about an UNPAID vendor never reach the festival owner', () => {
   // belongs to samreen" — the wall hides an EFT ARRANGEMENT, and an excluded
   // vendor has none, so withholding them only hid an ordinary vendor from the
   // person meant to handle her. The 07-26 concern is still honoured by the
-  // touchedEft guard in vendorInOwnerScope: a vendor who actually engaged with
-  // EFT stays on the master lane whatever the marker says.
+  // hasRealEftPayment guard in vendorInOwnerScope: a vendor who actually PAID by
+  // EFT (collected / proof uploaded / master method) stays on the master lane
+  // whatever the marker says. A bare reveal alone no longer does (self-heal 2026-08-31).
   assert.equal(withheld(withNoEftMarker('note')), false, '⟦NOEFT⟧ and untouched by EFT is HERS')
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected', eft_collected_at: PAID_AT } })
   assert.equal(withheld(collected), true, "'collected' is interim, not paid")

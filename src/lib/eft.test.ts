@@ -234,14 +234,22 @@ test('exclusion does NOT expose a vendor already collected via EFT', () => {
   assert.equal(vendorInOwnerScope(collected), false)
 })
 
-test('exclusion does NOT expose a vendor who saw the bank details or sent proof', () => {
+test('a ⟦NOEFT⟧ vendor who only REVEALED bank details (never paid EFT) is HERS', () => {
+  // Self-heal 2026-08-31: a bare reveal is not a settlement. Opening the bank
+  // details hides nothing, so a card/cash vendor is no longer stranded on the
+  // master lane away from the owner meant to handle them (was "forbidden" on
+  // Mark-as-Paid for Island Way Sorbet and jimmalos trading).
   const revealed = withNoEftMarker(
     updatePortalStateImpl('note', { v: 1, payment: { eft_revealed_at: '2026-07-27T11:27:22Z' } }))
-  assert.equal(vendorInOwnerScope(revealed), false, 'revealed the details')
+  assert.equal(vendorInOwnerScope(revealed), true, 'reveal-only is hers')
+})
 
+test('exclusion DOES still hide a vendor who submitted EFT proof', () => {
+  // A reveal FOLLOWED by real EFT money (proof uploaded) trips hasRealEftPayment
+  // and stays hidden, so a real settlement is never exposed.
   const submitted = withNoEftMarker(
     updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-27T21:32:00Z' } }))
-  assert.equal(vendorInOwnerScope(submitted), false, 'uploaded proof')
+  assert.equal(vendorInOwnerScope(submitted), false, 'uploaded proof stays hidden')
 })
 
 test('exclusion does NOT expose a vendor settled by EFT or manual card', () => {

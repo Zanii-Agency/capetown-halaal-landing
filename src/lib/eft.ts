@@ -301,8 +301,9 @@ const MASTER_ONLY_METHODS = new Set(['eft', 'manual_card', 'manual'])
 
 /** ANY EFT footprint. The definition used to freeze the PROTECTED SET at the
  *  full-EFT cutover (getFullEftMode / eftProofVisibleToOwner). Deliberately
- *  BROADER than the wall's internal touchedEft (adds eft_collected_at +
- *  presented_eft): freezing an extra vendor can never leak, missing one can. A
+ *  BROADER than the wall's internal hasRealEftPayment (adds eft_revealed_at +
+ *  eft_collected_at + presented_eft): freezing an extra vendor can never leak,
+ *  missing one can. A
  *  member here is NEVER shown on the festival owner's EFT-proofs fence, even
  *  after a post-cutover electrical-top-up re-payment. Verified 2026-08-26: 66
  *  members across the live vendor set. */
@@ -380,11 +381,16 @@ export function vendorInOwnerScope(
 ): boolean {
   const p = parsePortalState(adminNotes).payment
 
-  // Money is in motion outside the card lane: collected but not settled, bank
-  // details revealed, a proof uploaded, or an operator-entered settlement.
-  const touchedEft =
+  // REAL EFT money moved outside the card lane: collected but not settled, a proof
+  // uploaded, or an operator-entered settlement. A bare REVEAL (eft_revealed_at,
+  // the vendor tapped "show bank details") is deliberately NOT here: opening the
+  // details settles nothing and hides nothing, so on its own it must not strand a
+  // card/cash vendor on the master lane away from the owner meant to handle them.
+  // Self-heal 2026-08-31: Island Way Sorbet and jimmalos trading were ⟦NOEFT⟧ but
+  // reveal-only, which gave Samreen "forbidden" on Mark-as-Paid. A reveal FOLLOWED
+  // by a real EFT payment still trips this and stays hidden.
+  const hasRealEftPayment =
     p?.status === 'collected'
-    || !!p?.eft_revealed_at
     || !!p?.eft_submitted_at
     || MASTER_ONLY_METHODS.has(String(p?.method || ''))
 
@@ -412,7 +418,7 @@ export function vendorInOwnerScope(
   //
   // The ⟦NOEFT⟧ branch below already carried this exact guard, with a comment
   // explaining the hazard. This branch did not, so the hazard simply moved.
-  if (OWNERVIS_RE.test(adminNotes || '')) return !touchedEft || settledHerWay
+  if (OWNERVIS_RE.test(adminNotes || '')) return !hasRealEftPayment || settledHerWay
 
   // EXCLUDED FROM EFT MEANS HERS. Taona 2026-07-28: "If excluded on master lane,
   // it belongs to samreen." The master lane exists to hide an EFT ARRANGEMENT.
@@ -425,11 +431,13 @@ export function vendorInOwnerScope(
   // already paid by EFT, or who is sitting at 'collected' awaiting settlement
   // (Y&K gifts and toys is in exactly that state today), and an unguarded
   // hand-over would expose the settlement this wall was built to hide. So the
-  // hand-over applies only to a vendor who never touched EFT at all: no interim
-  // collection, no revealed bank details, no uploaded proof, no EFT/manual
-  // settlement. (touchedEft is computed once at the top, shared with the
-  // OWNERVIS branch above, so the two hand-overs cannot drift apart.)
-  if (hasNoEftMarker(adminNotes) && !touchedEft) return true
+  // hand-over applies to a ⟦NOEFT⟧ vendor with no REAL EFT payment: no interim
+  // collection, no uploaded proof, no EFT/manual settlement. A bare reveal alone
+  // does NOT block it (see hasRealEftPayment above), so a card/cash vendor is never
+  // stranded here; if real EFT money later arrives it trips and the vendor drops
+  // back behind the wall. Shares hasRealEftPayment with the OWNERVIS branch above,
+  // so the two hand-overs cannot drift apart.
+  if (hasNoEftMarker(adminNotes) && !hasRealEftPayment) return true
 
   // 'collected' is the EFT interim state and never sets paid_at, so it correctly
   // fails this test and stays with the master until a real settlement lands.
