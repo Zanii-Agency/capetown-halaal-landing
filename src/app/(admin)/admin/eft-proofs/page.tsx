@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getFullEftMode, eftProofVisibleToOwner, eftReference } from '@/lib/eft'
+import { getFullEftMode, eftProofVisibleToOwner, eftReference, getEftBankDetails } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { AdminPage } from '@/components/admin/AdminPage'
@@ -20,6 +20,7 @@ export default async function EftProofsPage() {
 
   const db = createAdminClient()
   const fullEft = await getFullEftMode()
+  const bank = getEftBankDetails()
 
   const { data: vendors } = await db
     .from('vendor_applications')
@@ -58,6 +59,17 @@ export default async function EftProofsPage() {
 
   return (
     <AdminPage title="EFT Proofs" subtitle="Vendors who paid by EFT and uploaded their proof of payment">
+      <div className="rounded-xl border border-neutral-200 bg-white p-5 mb-5">
+        <p className="text-[11px] uppercase tracking-wider text-neutral-500 font-medium mb-3">EFT account vendors pay into</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-sm">
+          <div><div className="text-neutral-400 text-xs">Account name</div><div className="font-medium text-neutral-900">{bank.accountName}</div></div>
+          <div><div className="text-neutral-400 text-xs">Bank</div><div className="font-medium text-neutral-900">{bank.bank}</div></div>
+          <div><div className="text-neutral-400 text-xs">Account number</div><div className="font-medium text-neutral-900">{bank.accountNumber}</div></div>
+          <div><div className="text-neutral-400 text-xs">Branch code</div><div className="font-medium text-neutral-900">{bank.branchCode}</div></div>
+          {bank.accountType && <div><div className="text-neutral-400 text-xs">Account type</div><div className="font-medium text-neutral-900">{bank.accountType}</div></div>}
+        </div>
+        <p className="text-xs text-neutral-400 mt-3">These are the exact details shown to vendors on their payment page.</p>
+      </div>
       {!fullEft ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
           EFT mode is not active yet. Once it is, vendors who upload EFT proof will appear here.
