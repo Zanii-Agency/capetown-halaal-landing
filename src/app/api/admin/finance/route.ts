@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
-import { isEftAdmin, vendorInOwnerScope, visiblePaymentStatus } from '@/lib/eft'
+import { vendorInOwnerScope, visiblePaymentStatus } from '@/lib/eft'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getOrders, type WCOrder } from '@/lib/woocommerce'
 
@@ -62,17 +62,22 @@ export async function GET(req: NextRequest) {
     // Payment state comes ONLY from portal_state (the phantom columns don't
     // exist — see the query note above).
     const viewerEmail = user.email
-    const restrict = !isEftAdmin(viewerEmail)
-    const scopedRows = restrict ? rows.filter((v) => vendorInOwnerScope(v.admin_notes, v.paid_at)) : rows
 
-    // Aggregates are scoped to the VIEWER, exactly like the detail list below.
-    // The EFT admin gets scopedRows === rows (restrict=false) so their Total
-    // Money In / paid counts are unchanged. The festival owner's aggregate must
-    // reflect ONLY her vendors: summing the FULL set folded master-lane (EFT)
-    // money into her headline, and she can derive the hidden cohort from the gap
-    // (measured 2026-08-24: 377,150 unscoped - 336,050 hers = 41,100 of EFT money
-    // across 5 vendors). A total she cannot reconcile against her own list IS the
-    // leak, even though it names no vendor.
+    // YOCO-WORLD FOR EVERYONE, master included (Taona 2026-09-02: "keep master
+    // dashboard in yoco-world, matching samreen's"). This route feeds the home
+    // dashboard's Total Money In AND the /admin/finance page; both now reflect
+    // ONLY Yoco-reconciled vendors for every viewer. Master-lane / EFT money is
+    // deliberately kept off this surface and lives only on /admin/eft, which reads
+    // raw state and is unaffected. Previously the EFT admin bypassed this filter
+    // and saw the full total; that bypass is gone.
+    //
+    // Aggregates are scoped exactly like the detail list below. The scope must be
+    // the vendor set itself, not a display mask: summing the FULL set would fold
+    // master-lane (EFT) money back into the headline, and the gap against the
+    // detail list would leak the hidden cohort (measured 2026-08-24: 377,150
+    // unscoped - 336,050 scoped = 41,100 of EFT money across 5 vendors). A total
+    // that cannot be reconciled against the list IS the leak, even unnamed.
+    const scopedRows = rows.filter((v) => vendorInOwnerScope(v.admin_notes, v.paid_at))
     const statPayments = scopedRows.map((v) => {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
