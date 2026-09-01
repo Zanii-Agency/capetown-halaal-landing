@@ -20,7 +20,7 @@ import {
 import { askFestivalBrain } from '@/lib/festival-brain'
 import { isPartPaymentAsk, FAQ } from '@/lib/festival-brain/faq'
 import { detectHumanIntent, escalateToHuman, isInHandover, isPendingHandover, setPendingHandover } from '@/lib/bot/handover'
-import { notifyOwners } from '@/lib/bot/notify'
+import { notifyOwners, sendToAdmin } from '@/lib/bot/notify'
 import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { findAdmin, isDevNumber } from '@/lib/bot/admins'
@@ -846,7 +846,9 @@ async function mirrorToMaster(from: { role: string; name: string }, text: string
   const master = findAdmin('+971501168462')
   if (!master || master.role !== 'master') return
   try {
-    await sendText(master.phone, `🪞 ${from.name.split(' ')[0]}'s desk:\n${(text || '').slice(0, 900)}`)
+    // Window-aware: the master rarely replies to the bot, so plain sendText died
+    // on "Re-engagement message" for weeks. sendToAdmin templates it when shut.
+    await sendToAdmin(master, `🪞 ${from.name.split(' ')[0]}'s desk:\n${(text || '').slice(0, 900)}`)
   } catch (e) {
     console.error('mirrorToMaster error', e)
   }

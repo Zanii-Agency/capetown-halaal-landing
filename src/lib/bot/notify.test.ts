@@ -167,3 +167,20 @@ test('exclude filter drops a specific phone', () => {
   const got = selectNotifyTargets(BOT_ADMINS, { audience: 'all', excludeNorm: toE164(owner.phone), eftContent: false })
   assert.ok(!got.some((a) => a.role === 'festival_owner'))
 })
+
+// ── admin_alert fallback ─────────────────────────────────────────────────────
+// Meta template params reject newlines; the alert body is chat-shaped.
+test('flattenForTemplate makes a chat body template-safe', async () => {
+  const { flattenForTemplate } = await import('./notify')
+  const { findWaTemplate, renderWaTemplatePreview } = await import('@/lib/templates/wa-meta')
+  const flat = flattenForTemplate('*VENDOR SUPPORT MESSAGE*\n\nSumeez · Sataari\nPhone: +27718702167\n\n\nAsks: "help"')
+  assert.equal(flat, '*VENDOR SUPPORT MESSAGE* · Sumeez · Sataari · Phone: +27718702167 · Asks: "help"')
+  assert.equal(/\n/.test(flat), false)
+  assert.ok(flattenForTemplate('x'.repeat(2000)).length <= 1000)
+  // The swipe-reply router reads `Phone: +…` back from the logged body.
+  assert.match(flat, /Phone: \+27718702167/)
+  // The template is registered so the inbox renders the real text, not a label.
+  const spec = findWaTemplate('admin_alert')!
+  assert.equal(spec.category, 'utility')
+  assert.match(renderWaTemplatePreview(spec, { first_name: 'Taona', alert: flat }), /^Hi Taona, [\s\S]*Sumeez/)
+})

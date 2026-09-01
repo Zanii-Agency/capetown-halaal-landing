@@ -7,10 +7,12 @@
 
 import { sendTemplate, sendText, toE164 } from '@/lib/whatsapp'
 import { windowOpenFor } from '@/lib/wa-window'
-import { BOT_ADMINS, type BotAdmin } from '@/lib/bot/admins'
+import { BOT_ADMINS, findAdmin, type BotAdmin } from '@/lib/bot/admins'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
 import { getEftMode, EFT_ADMIN_EMAIL, revealsPaymentArrangement, vendorCommsInOwnerScope } from '@/lib/eft'
+
+type SendResult = Awaited<ReturnType<typeof sendText>>
 
 // EMAIL BACKSTOP for the silent-drop failure surface. Meta frequency-caps owner
 // alerts; production regressed to 86% of owner WhatsApp sends dropped with
@@ -138,12 +140,40 @@ async function lookupVendorLane(id?: string, phone?: string): Promise<VendorLane
   }
 }
 
+/** Template params reject newlines and (per Meta) runs of >4 spaces / tabs.
+ *  Flatten a chat-shaped body to one line for the admin_alert template. Pure. */
+export function flattenForTemplate(text: string, max = 1000): string {
+  return text.replace(/\s*\n+\s*/g, ' · ').replace(/\s{2,}/g, ' ').trim().slice(0, max)
+}
+
+/**
+ * Send free text to an ADMIN number, falling back to the `admin_alert` UTILITY
+ * template when their 24h service window is shut. One place for the rule that
+ * every direct admin push used to get wrong: email-concierge bubbles, the master
+ * mirror and the owner alerts all called sendText, Meta accepted the message with
+ * a 200 and failed it later by webhook ("Re-engagement message"), so the sender
+ * believed it had delivered. Returns sendText's shape so call sites keep their
+ * `skipped` handling. Both sendText and sendTemplate log their own outbound row.
+ */
+export async function sendToAdmin(
+  admin: Pick<BotAdmin, 'name' | 'phone'>,
+  text: string,
+): Promise<SendResult & { via: 'text' | 'template' }> {
+  const e164 = toE164(admin.phone)
+  // The body carries vendor name + phone and the frame says "admin desk": a
+  // vendor row satisfies the shape, so refuse anything not on the allowlist.
+  if (!findAdmin(e164)) throw new Error('sendToAdmin: recipient is not a bot admin')
+  if (await windowOpenFor(e164)) return { ...(await sendText(e164, text)), via: 'text' }
+  const firstName = admin.name.split(/\s+/)[0]
+  const res = await sendTemplate(e164, 'admin_alert', [firstName, flattenForTemplate(text)], { category: 'utility' })
+  return { ...res, via: 'template' }
+}
+
 // Logs every send to wa_messages so the Bot Inbox surfaces it next to admin
 // replies — one feed for owner attention.
 async function deliverOne(admin: BotAdmin, args: NotifyArgs, fallbackEmail?: string) {
   const db = createAdminClient()
   const e164 = toE164(admin.phone)
-  const firstName = admin.name.split(/\s+/)[0]
 
   // Template params reject newlines, so the template path flattens to ' · '.
   const logBody = `${args.event.replace(/_/g, ' ').toUpperCase()} - ${args.body.replace(/\s*\n\s*/g, ' · ')}`
@@ -192,33 +222,26 @@ async function deliverOne(admin: BotAdmin, args: NotifyArgs, fallbackEmail?: str
   // function marks it sent, and the template fallback never runs. That is not
   // theory: it is how the festival owner's alerts died on 2026-07-28 while the
   // logs said they had been delivered.
+  //
+  // The fallback is the `admin_alert` UTILITY template, not `festival_announcement`
+  // (MARKETING). Measured 2026-09-02: the master had ZERO delivered WhatsApp
+  // alerts in 14 days and ~1000 failed with "healthy ecosystem engagement" (Meta
+  // error 131049), the per-recipient MARKETING template cap, which bites hardest
+  // on an admin who never replies to the bot. Utility templates are exempt.
+  // Both branches live in sendToAdmin, which also flattens the param (newlines,
+  // tab / space runs and >1024 chars are all rejected by Meta).
   const textBody = `*${args.event.replace(/_/g, ' ').toUpperCase()}*\n\n${args.body}`
   let sent = false
   let sentBody = logBody
   let messageId: string | null = null
   let failure: string | null = null
-
-  if (await windowOpenFor(e164)) {
-    try {
-      const t = await sendText(e164, textBody)
-      if (!t.skipped) { sent = true; sentBody = textBody; messageId = t.messageId || null }
-      else failure = t.skipped
-    } catch (e) {
-      failure = (e as Error).message
-    }
-  } else {
-    failure = 'service window closed, using template'
-  }
-
-  if (!sent) {
-    try {
-      const res = await sendTemplate(e164, 'festival_announcement', [firstName, logBody], { category: 'marketing' })
-      if (!res.skipped) { sent = true; messageId = res.messageId || null; failure = null }
-      else failure = res.skipped
-    } catch (e) {
-      failure = (e as Error).message
-      console.error('[notify] deliver failed', admin.name, failure)
-    }
+  try {
+    const r = await sendToAdmin(admin, textBody)
+    if (!r.skipped) { sent = true; messageId = r.messageId || null; if (r.via === 'text') sentBody = textBody }
+    else failure = r.skipped
+  } catch (e) {
+    failure = (e as Error).message
+    console.error('[notify] deliver failed', admin.name, failure)
   }
 
   await db.from('wa_messages').insert({

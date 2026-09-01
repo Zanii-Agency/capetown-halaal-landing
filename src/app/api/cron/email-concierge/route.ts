@@ -11,10 +11,13 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
-import { sendText } from '@/lib/whatsapp'
+// Window-aware admin send (free text inside 24h, admin_alert UTILITY template
+// outside). Every bubble below went to sendText for 7 days straight and died on
+// "Re-engagement message": neither admin had messaged the bot within 24h.
+import { sendToAdmin } from '@/lib/bot/notify'
 import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, EMAIL_MIRROR, type InboundEmail } from '@/lib/email-concierge'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
-import { getEftMode } from '@/lib/eft'
+import { getEftMode, revealsPaymentArrangement } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -161,12 +164,24 @@ export async function GET(req: Request) {
     `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
     `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
     `"${snippet}${snippet.length >= 500 ? '…' : ''}"${attachNote}`
-  const r1 = await sendText(confirmer.phone, bubble1)
+  // OWNER SEAL. These bubbles now actually arrive (template fallback), so the
+  // same wall notifyOwners applies runs here: an email that reveals a payment
+  // arrangement (EFT proof, bank details, reference) never reaches the festival
+  // owner. Taona takes the confirm for that one email instead, and the claim is
+  // re-pointed so HIS SEND/SKIP is what pendingEmailForAdmin matches.
+  const sealed = confirmer.phone === EMAIL_CONFIRMER.phone
+    && revealsPaymentArrangement(`${email.subject || ''}\n${cleanBody}`)
+  const target = sealed ? EMAIL_MIRROR : confirmer
+  if (sealed) {
+    await db.from('support_inbox_messages').update({ concierge_admin: target.phone }).eq('id', email.id)
+    console.log(JSON.stringify({ at: 'email-concierge', event: 'owner_sealed', email_id: email.id }))
+  }
+  const r1 = await sendToAdmin(target, bubble1)
 
   const bubble2 = draft
     ? `✍️ Suggested reply (AI draft, please check):\n\n${draft}\n\nReply SEND to send this, SEND: your own message to change it, or SKIP to skip.`
     : `I couldn't auto-draft a reply for this one. Reply SEND: your message to send your wording, or SKIP to skip.`
-  const r2 = await sendText(confirmer.phone, bubble2)
+  const r2 = await sendToAdmin(target, bubble2)
 
   // If BOTH bubbles failed to deliver, REVERT the claim so the row isn't stuck
   // pending with no notification (skeptic HIGH #6b) — it retries next run.
@@ -181,7 +196,7 @@ export async function GET(req: Request) {
   // compact message so he sees every email come in without being the confirmer.
   // In EFT mode Taona IS the confirmer, so the mirror is redundant and would
   // mislabel ("Samreen is handling") — skip it.
-  if (!eftOn) {
+  if (!eftOn && !sealed) {
     try {
       const mirror =
         `👀 Mirror (Samreen is handling): email on ${box}\n` +
@@ -189,7 +204,7 @@ export async function GET(req: Request) {
         `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
         `"${snippet.slice(0, 350)}"` +
         (draft ? `\n\nDraft: ${draft.slice(0, 450)}` : '')
-      await sendText(EMAIL_MIRROR.phone, mirror)
+      await sendToAdmin(EMAIL_MIRROR, mirror)
     } catch (e) {
       console.warn('[email-concierge] mirror to Taona failed:', (e as Error).message)
     }
@@ -197,6 +212,6 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     ok: !r1.skipped && !r2.skipped,
-    notified: confirmer.phone, email_id: email.id, from: email.from_address, drafted: Boolean(draft),
+    notified: target.phone, sealed, email_id: email.id, from: email.from_address, drafted: Boolean(draft),
   })
 }

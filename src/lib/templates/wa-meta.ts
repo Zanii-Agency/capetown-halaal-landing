@@ -212,6 +212,21 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
     ],
   },
+  {
+    // Admin-only. Owner/master alerts outside the 24h window (notify.ts). NOT
+    // for vendors and NOT in the picker's intent: it carries no festival copy.
+    key: 'admin_alert',
+    label: 'Admin alert',
+    description: 'Internal: owner/master alert when their 24h window is shut.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, an item on the Young at Heart Festival admin desk needs your attention:\n\n{{2}}\n\nOpen the admin inbox to action it.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Samreen', required: true },
+      { key: 'alert', label: 'Alert', placeholder: 'VENDOR SUPPORT MESSAGE - ...', required: true },
+    ],
+  },
 ]
 
 export function findWaTemplate(key: string): WaTemplateSpec | undefined {
