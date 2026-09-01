@@ -337,6 +337,32 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       { key: 'alert', label: 'Alert', placeholder: 'VENDOR SUPPORT MESSAGE - ...', required: true },
     ],
   },
+  // ---------------------------------------------------------------------------
+  // MASTER-LANE (unpaid EFT cohort) message. The 2-way twin of paid_vendor_update
+  // for vendors on the EFT lane (collected / proof-uploaded / ⟦EFT⟧, not yet
+  // Yoco-reconciled), used by the /admin/eft Outreach composer. Copy says "your
+  // stall", NEVER "confirmed" (they are mid-settlement). UTILITY so it dodges the
+  // general_announcement marketing cap (0/1000). {{1}} = first name, {{2}} = the
+  // operator's free message. Keep {{2}} transactional (about their stall) so Meta
+  // does not re-categorise the send as marketing.
+  // ACTION REQUIRED (operator): create + approve this EXACT name (UTILITY, English)
+  // at Meta against the YAH WABA. Body in docs/whatsapp-templates.md; submit via
+  // scripts/submit-whatsapp-template.mjs. Until approved the WA send fails
+  // observably (wa_messages status 'failed'), never silently.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'master_lane_update',
+    label: 'Master-lane update (2-way)',
+    description: 'Send any update to an EFT-lane vendor about their stall. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, a message from Young at Heart Festival 2026 about your stall:\n\n{{2}}\n\nYou can reply here on WhatsApp if you have any questions. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'We have received your EFT, thank you.', required: true },
+    ],
+  },
 ]
 
 export function findWaTemplate(key: string): WaTemplateSpec | undefined {
@@ -394,7 +420,20 @@ export const PAID_VENDOR_MESSAGE_TEMPLATE_KEYS = [
   'paid_vendor_good_news',
 ] as const
 
-const PAID_VENDOR_MESSAGE_TEMPLATES = new Set<string>(PAID_VENDOR_MESSAGE_TEMPLATE_KEYS)
+/**
+ * The master-lane (unpaid EFT cohort) message suite. Same [first_name, message]
+ * two-var shape as the paid suite, but for the /admin/eft Outreach composer's
+ * audience (EFT-lane vendors, not yet reconciled). Kept as its own export so the
+ * chase allowlist and the var mapper pick it up without conflating it with the
+ * paid cohort.
+ */
+export const MASTER_LANE_MESSAGE_TEMPLATE_KEYS = ['master_lane_update'] as const
+
+// Every two-var [first_name, message] template: paid suite + master-lane suite.
+const TWO_VAR_MESSAGE_TEMPLATES = new Set<string>([
+  ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
+  ...MASTER_LANE_MESSAGE_TEMPLATE_KEYS,
+])
 
 /**
  * Build the ordered positional variables Meta expects for a broadcast/chase WA
@@ -409,7 +448,7 @@ export function waBroadcastVariables(
 ): string[] {
   const name = (v.firstName || '').trim() || 'there'
   const msg = (v.message || '').trim()
-  if (PAID_VENDOR_MESSAGE_TEMPLATES.has(templateKey)) {
+  if (TWO_VAR_MESSAGE_TEMPLATES.has(templateKey)) {
     // {{1}} = name, {{2}} = the operator's message. The message is required by
     // the approved body; an empty {{2}} fails observably at Meta (logged) rather
     // than shipping a blank slot, which is the correct loud failure.

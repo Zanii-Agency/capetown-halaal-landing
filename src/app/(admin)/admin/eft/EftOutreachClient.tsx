@@ -120,6 +120,11 @@ export default function EftOutreachClient({ vendors }: { vendors: OutreachVendor
             email_subject: subject,
             email_body: emailBody,
             wa_body: waBody,
+            // Deliver WhatsApp via the UNPAID EFT-cohort UTILITY template, not the
+            // marketing-capped general_announcement default. Until Meta approves
+            // master_lane_update the WA send fails observably (logged), never the
+            // silent 0/1000 cap.
+            wa_template: 'master_lane_update',
             dry_run: dry,
           }),
         })
