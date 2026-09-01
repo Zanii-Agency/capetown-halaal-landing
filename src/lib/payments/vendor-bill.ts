@@ -108,6 +108,6 @@ export function vendorBill(app: BillApp): VendorBill {
 /** The bank reference for an ACCESSORY EFT deposit: the vendor's normal EFT
  *  reference with -ACC appended, so an accessory deposit is distinguishable
  *  from a stall deposit straight off the bank statement. */
-export function accEftReference(app: { id?: string | null; admin_notes?: string | null }): string {
+export function accEftReference(app: { id?: string | null; admin_notes?: string | null; business_name?: string | null }): string {
   return `${eftReference(app)}-ACC`
 }

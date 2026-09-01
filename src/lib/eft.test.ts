@@ -133,9 +133,16 @@ test('mentionsEft fires on EFT replies, not on unrelated ones', () => {
   assert.ok(!mentionsEft(null))
 })
 
-test('eftReference prefers the allocated stall, else a stable short code', () => {
-  assert.equal(eftReference({ id: 'x', admin_notes: '⟦STALL:FT03⟧' }), 'FT03')
-  // id -> strip dashes -> last 6 -> upper: ...ef1234567890 => "567890"
+test('eftReference is the stall/business name, else allocated stall, else a stable short code', () => {
+  // The business (stall) name IS the reference, sanitized bank-safe, so a bank
+  // deposit reconciles to the vendor at a glance (Taona 2026-09-01).
+  assert.equal(eftReference({ id: 'x', admin_notes: '', business_name: 'Island Way Sorbet' }), 'ISLANDWAYSORBET')
+  assert.equal(eftReference({ id: 'x', admin_notes: '', business_name: 'Salt & Pepper' }), 'SALTPEPPER')
+  // A name wins even over an allocated stall code.
+  assert.equal(eftReference({ id: 'x', admin_notes: '⟦STALL:FT03⟧', business_name: 'Chip n Dip' }), 'CHIPNDIP')
+  // No usable name (empty after sanitising): fall back to the allocated stall code.
+  assert.equal(eftReference({ id: 'x', admin_notes: '⟦STALL:FT03⟧', business_name: '🌸' }), 'FT03')
+  // No name, no stall: id -> strip dashes -> last 6 -> upper.
   assert.equal(eftReference({ id: 'abcdef12-3456-7890-abcd-ef1234567890', admin_notes: '' }), 'CTH567890')
 })
 

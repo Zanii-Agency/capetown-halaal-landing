@@ -379,7 +379,7 @@ export async function markAccessoriesCollected(applicationId: string, amountOver
   // spot was confirmed when the stall fee settled). Purpose-written copy that
   // names the accessory electricity and their -ACC reference instead.
   const { accEftReference } = await import('@/lib/payments/vendor-bill')
-  const accRef = accEftReference({ id: applicationId, admin_notes: app.admin_notes as string | null })
+  const accRef = accEftReference({ id: applicationId, admin_notes: app.admin_notes as string | null, business_name: app.business_name as string | null })
   try {
     await sendEmail({
       to: app.email as string,

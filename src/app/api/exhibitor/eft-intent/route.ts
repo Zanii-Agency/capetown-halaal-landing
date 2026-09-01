@@ -88,8 +88,8 @@ export async function POST(req: Request) {
 
   const name = (app.business_name as string) || 'A vendor'
   const ref = forAccessories
-    ? accEftReference({ id: applicationId, admin_notes: app.admin_notes as string })
-    : eftReference({ id: applicationId, admin_notes: app.admin_notes as string })
+    ? accEftReference({ id: applicationId, admin_notes: app.admin_notes as string, business_name: app.business_name as string | null })
+    : eftReference({ id: applicationId, admin_notes: app.admin_notes as string, business_name: app.business_name as string | null })
   const pricing = computeVendorPricing({
     preferred_booth_tier: app.preferred_booth_tier as string,
     special_requirements: app.special_requirements,

@@ -143,7 +143,7 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   }))
 
   const name = String(business_name || 'A vendor')
-  const baseRef = eftReference({ id: applicationId, admin_notes: admin_notes || '' })
+  const baseRef = eftReference({ id: applicationId, admin_notes: admin_notes || '', business_name })
   const ref = forAccessories ? `${baseRef}-ACC` : baseRef
   const noteSnippet = note ? `, note: "${note.slice(0, 120)}"` : ''
 

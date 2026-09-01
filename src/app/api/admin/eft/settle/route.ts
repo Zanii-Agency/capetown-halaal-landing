@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   // Accessory settle carries the vendor's -ACC reference so the Yoco checkout,
   // the bank statement, and the admin lane all name the same deposit.
   const reference = isPaid
-    ? (await import('@/lib/payments/vendor-bill')).accEftReference({ id, admin_notes: app.admin_notes as string })
+    ? (await import('@/lib/payments/vendor-bill')).accEftReference({ id, admin_notes: app.admin_notes as string, business_name: app.business_name as string | null })
     : state.payment?.reference || paymentReference(id)
   try {
     const { url, providerRef } = await activeProvider().createPayment({

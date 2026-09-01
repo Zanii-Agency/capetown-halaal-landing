@@ -867,7 +867,13 @@ export async function markVendorToldEft(opts: { email?: string | null; phone?: s
  *  code when they have one (unique on the floor), else a short stable code from
  *  the application id. Show the business name alongside it in the UI; this is the
  *  token an operator matches a bank deposit against. */
-export function eftReference(app: { id?: string | null; admin_notes?: string | null }): string {
+export function eftReference(app: { id?: string | null; admin_notes?: string | null; business_name?: string | null }): string {
+  // The reference IS the stall/business name, so a bank deposit reconciles to the
+  // vendor at a glance (Taona 2026-09-01). Sanitized to a bank-safe token
+  // (uppercase A-Z 0-9, max 20 chars). Falls back to an allocated stall code, then
+  // a CTH-id tail, only when there is no usable name.
+  const name = String(app.business_name || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20)
+  if (name) return name
   const alloc = parseAllocation(app.admin_notes)
   if (alloc.stall) return alloc.stall
   const id = (app.id || '').replace(/-/g, '')

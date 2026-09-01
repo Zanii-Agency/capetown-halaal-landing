@@ -210,7 +210,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
       phone: a.phone as string | null,
       // Same EFT reference the vendor pays with (and the lane rows show), so the
       // add / exclude search matches a reference read off a bank deposit.
-      reference: eftReference({ id: a.id as string, admin_notes: notes }),
+      reference: eftReference({ id: a.id as string, admin_notes: notes, business_name: a.business_name as string | null }),
     }
     // Excluded from EFT (handled manually): never in the lane list or the add picker.
     if (hasNoEftMarker(notes)) { excluded.push(contact); continue }
@@ -260,7 +260,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         // The EFT reference the vendor was told to pay with (stall code if
         // allocated, else CTH+id tail), i.e. what lands on the bank statement,
         // so the operator can reconcile a deposit straight from the row.
-        reference: eftReference({ id: a.id as string, admin_notes: notes }),
+        reference: eftReference({ id: a.id as string, admin_notes: notes, business_name: a.business_name as string | null }),
         amount: pricing.total || null,
         outstanding,
         submitted,

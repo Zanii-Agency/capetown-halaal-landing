@@ -53,7 +53,7 @@ export default async function PaymentsPage() {
   )
   const eftSubmitted = !!state.payment?.eft_submitted_at
   const eftPending = eftSubmitted && status !== 'paid'
-  const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null }) : 'CTH'
+  const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : 'CTH'
   // Individual ⟦EFT⟧ marker: keeps the accessory EFT panel available to a
   // hand-picked vendor even after global EFT mode is switched off.
   const vendorHasMarker = app ? hasEftMarker(app.admin_notes as string) : false
@@ -341,7 +341,7 @@ export default async function PaymentsPage() {
               purpose="accessories"
               submitted={accPending}
               bank={getEftBankDetails()}
-              reference={app ? accEftReference(app as { id?: string | null; admin_notes?: string | null }) : 'CTH-ACC'}
+              reference={app ? accEftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : 'CTH-ACC'}
               amount={accOwing > 0 ? accOwing : null}
               dueDate={due}
               businessName={(app?.business_name as string) || 'your business'}
