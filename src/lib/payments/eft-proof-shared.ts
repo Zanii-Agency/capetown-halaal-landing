@@ -30,6 +30,16 @@ export interface EftProofInput {
   }
   note?: string
   source: 'portal' | 'whatsapp' | 'email'
+  /** Capture the proof even when the vendor is NOT on the EFT lane (paid, card-
+   *  only ⟦NOEFT⟧, or lane-off). A proof a vendor actually sent us is a fait
+   *  accompli: dropping it loses money and trust (Sumeez/Sataari, Two Scoops,
+   *  2026-09-01, five vendors got "I could not save it from here"). The lane gate
+   *  is the right guard for the PORTAL upload button (don't invite an EFT payment
+   *  from a card-only vendor), but a proof already in our hands must be stored and
+   *  the master alerted so a human can reconcile it. Set by the WhatsApp/email bot
+   *  paths, never by the portal. Capture only: it never adds the ⟦EFT⟧ lane marker
+   *  or moves the vendor's lane, so the Samreen seal is untouched. */
+  captureRegardless?: boolean
   /** 'accessories' = an ACCESSORY-balance EFT from a vendor whose stall fee is
    *  already settled (split-bill, 2026-08-04). Uses the `payment.acc` sub-ledger
    *  and the `<ref>-ACC` reference; gated on an actual accessory balance owing,
@@ -99,8 +109,11 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
     if (!bill.settled || bill.accessories.owing <= 0) {
       return { ok: false, error: 'No accessory balance is owing on your account', status: 403 }
     }
-  } else if (!vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })) {
+  } else if (!input.captureRegardless && !vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })) {
     // Same guard the portal route uses: only EFT-lane vendors may submit proof.
+    // captureRegardless (WhatsApp/email bot) bypasses it: a proof already sent to
+    // us is stored and the master alerted rather than dropped. Capture only; the
+    // lane marker is never added here, so Samreen's wall is unaffected.
     return { ok: false, error: 'EFT is not enabled for your account', status: 403 }
   }
 
@@ -147,14 +160,21 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   const ref = forAccessories ? `${baseRef}-ACC` : baseRef
   const noteSnippet = note ? `, note: "${note.slice(0, 120)}"` : ''
 
-  // Master-only heads-up.
+  // Master-only heads-up. An off-lane capture (paid vendor sending a proof, or a
+  // card-only ⟦NOEFT⟧ vendor who paid by EFT anyway) will NOT show on /admin/eft,
+  // so point the master at the vendor's profile to check and mark paid by hand
+  // rather than at a console that won't list them.
+  const offLane = !!input.captureRegardless
+    && !vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })
   try {
     await notifyOwners({
       event: 'system_alert',
       audience: 'master',
       body: forAccessories
         ? `${name} uploaded ${isFirst ? 'their ACCESSORY EFT proof' : 'ANOTHER accessory EFT proof'} via ${source} (accessory electricity balance). Ref ${ref}${noteSnippet}. Collect it on /admin/eft.`
-        : `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. Reconcile it on /admin/eft.`,
+        : offLane
+          ? `${name} sent a proof of payment via ${source}${paid_at ? ' (already marked paid, may be a duplicate or accessories)' : ' but is card-only, not on the EFT lane'}. Ref ${ref}${noteSnippet}. Check it against the account and mark them paid on their profile if it clears.`
+          : `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. Reconcile it on /admin/eft.`,
     })
   } catch (e) {
     console.error(`[eft-proof-shared:${source}] notifyOwners failed:`, (e as Error).message)

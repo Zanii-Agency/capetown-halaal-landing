@@ -8,7 +8,7 @@
 // and falling back to "thanks for your document" loses money.
 
 import type { InboundMedia } from '@/lib/whatsapp'
-import { fetchMediaBytes, sendText, toE164 } from '@/lib/whatsapp'
+import { fetchMediaBytes } from '@/lib/whatsapp'
 import { seeImage, type SeenImage } from '@/lib/bot/see-image'
 import { markVendorToldEft, vendorInEftLane, getEftMode, getFullEftMode, hasNoEftMarker, withEftMarker } from '@/lib/eft'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
@@ -121,17 +121,25 @@ export async function tryHandleEftProofMedia(
   // drop a bare screenshot the vision was unsure about with an empty caption. Treat
   // a full-EFT vendor as on the lane for the purpose of NOT dropping their proof.
   const fullEft = await getFullEftMode()
-  const eager = alreadyLane || (!!fullEft && !vendor.paid_at && !hasNoEftMarker(vendor.admin_notes))
+  // CAPTURE-FIRST. Any UNPAID vendor who sends an image/PDF is treated as sending
+  // a probable proof, so we capture it rather than dropping it or (worse) letting
+  // it fall to uploadDocument, which files a first image as the vendor's PUBLIC
+  // LOGO — a bank screenshot would become their storefront logo. A PAID vendor's
+  // image only counts as a proof when vision or the caption says so (else it is a
+  // logo/cert/doc and the document path is correct). Measured 2026-09-01: five
+  // unpaid vendors sent real proofs and got "I could not save it from here".
+  const eager = alreadyLane || !vendor.paid_at || (!!fullEft && !hasNoEftMarker(vendor.admin_notes))
 
   const { yes, note } = await isProofMedia(media, caption, seen)
   if (!yes && !eager) return { handled: false }
-  // If they are already in the EFT lane, any document/image is treated as a proof
-  // unless we have a strong reason to think it is not. This avoids losing a proof
-  // because the caption was empty or the PDF had no text layer.
 
   const bytes = await fetchMediaBytes(media.id)
   if (!bytes) {
-    return { handled: true, reply: "I got your file but couldn't open it. Please upload it directly in your portal, or try sending a clearer photo.", laneAdded: false }
+    // Do NOT send them back to a portal they often cannot reach, and do NOT drop
+    // it silently: tell the master a proof came in that we could not pull.
+    await alertMasterProofIssue(vendor.business_name, `sent a proof of payment on WhatsApp but the file could not be fetched from Meta (may be too large or expired). Ask them to resend, or check the vendor's WhatsApp thread.`, caption)
+    const who = identity.firstName || vendor.contact_name || ''
+    return { handled: true, laneAdded: false, reply: `Thanks${who ? ' ' + who : ''}, I can see you sent a file but it didn't come through clearly on my side. I've let the team know so they can follow up with you here. If you can, send it again as a photo or PDF.` }
   }
 
   // Make sure they are on the lane BEFORE recording proof, otherwise recordEftProof 403s.
@@ -166,19 +174,40 @@ export async function tryHandleEftProofMedia(
     file: { bytes: bytes.bytes, name: filename, type: bytes.contentType || media.mimeType },
     note: noteWithRef.slice(0, 240),
     source: 'whatsapp',
+    // A proof already in our hands is captured no matter the lane state (paid,
+    // card-only ⟦NOEFT⟧, lane-off). recordEftProof stores it and alerts the
+    // master; it never adds the ⟦EFT⟧ marker, so the Samreen wall is untouched.
+    captureRegardless: true,
   })
 
+  const name = identity.firstName || vendor.contact_name || vendor.business_name || 'there'
+
   if (!result.ok) {
-    // If recording failed because they were not on the lane and marking failed,
-    // still tell them to use the portal so the proof does not vanish.
+    // With captureRegardless the lane gate can no longer 403, so a failure here is
+    // a real storage problem (too large, unreadable format, upload error). Never
+    // dead-end to a portal they cannot reach: acknowledge honestly and put the
+    // proof in front of the master so a human takes it from here.
+    await alertMasterProofIssue(vendor.business_name, `sent a proof of payment on WhatsApp but it could not be saved (${result.error}). Check the vendor's WhatsApp thread and follow up.`, caption)
     return {
       handled: true,
-      reply: "I can see that looks like a payment proof, but I could not save it from here. Please upload it in your portal under Payments — that is the fastest way for finance to match it.",
       laneAdded,
+      reply: `Thanks ${name}, I've received your proof but couldn't file it automatically. I've passed it to the team to sort out, they'll be in touch here.`,
     }
   }
 
-  const name = identity.firstName || vendor.contact_name || vendor.business_name || 'there'
-  const reply = `Thanks ${name}, I've received your proof of payment and passed it to the finance team. You do not need to email it — uploading it here is enough. We'll let you know once it has been checked.`
+  const reply = `Thanks ${name}, I've received your proof of payment and passed it to the finance team. You do not need to email it, sending it here is enough. We'll let you know once it has been checked.`
   return { handled: true, reply, laneAdded }
+}
+
+/** Best-effort master-only heads-up for a proof we could NOT store cleanly, so a
+ *  captured-but-unfiled proof never vanishes without a human knowing. Master
+ *  audience keeps it off Samreen's wall regardless of the vendor's lane. */
+async function alertMasterProofIssue(business: string | null, what: string, caption: string): Promise<void> {
+  try {
+    const { notifyOwners } = await import('@/lib/bot/notify')
+    const snippet = caption ? ` Vendor wrote: "${caption.slice(0, 120)}".` : ''
+    await notifyOwners({ event: 'system_alert', audience: 'master', body: `${business || 'A vendor'} ${what}${snippet}` })
+  } catch (e) {
+    console.error('[handle-eft-proof-media] master alert failed:', (e as Error).message)
+  }
 }

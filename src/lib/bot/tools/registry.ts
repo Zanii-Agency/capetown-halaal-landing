@@ -1092,13 +1092,15 @@ async function uploadEftProof(session: VendorSession): Promise<string> {
     contact_name: row.contact_name,
     file: { bytes: Buffer.from(fetched.bytes), name: media.filename, type: media.mimeType || fetched.contentType },
     source: 'whatsapp',
+    // Capture the proof whatever the lane state (a card-only vendor may have paid
+    // by EFT anyway); storage only, no lane marker, so Samreen's wall is untouched.
+    // Removes the old 403 dead-end that told a stuck vendor to go to a portal they
+    // often cannot reach.
+    captureRegardless: true,
   })
 
   if (!result.ok) {
-    if (result.status === 403) {
-      return `I cannot take an EFT proof here because your account is not on the EFT payment lane. If you paid by card, give it a few minutes to reflect. Otherwise upload any documents in your portal at ${PORTAL_LOGIN} under Documents, or ask the team for help.`
-    }
-    return `I could not upload that proof just now: ${result.error}. Please try uploading it in your portal at ${PORTAL_LOGIN} under Payments, or send it again.`
+    return `Thanks, I've received your proof but couldn't file it automatically (${result.error}). I've noted it and the team will pick it up, they'll be in touch here.`
   }
 
   return `Jazakallah, I have received your proof of payment and passed it to the finance team. You will get a confirmation once it is checked against the account. You can also see it in your portal at ${PORTAL_LOGIN} under Payments.`

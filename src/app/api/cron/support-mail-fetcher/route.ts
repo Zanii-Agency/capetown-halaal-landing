@@ -252,6 +252,10 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
                 file: { bytes: att.content, name: att.filename || 'proof-of-payment', type: att.contentType },
                 note: `emailed proof of payment (subject: "${subject.slice(0, 120)}")`,
                 source: 'email',
+                // Capture even a card-only ⟦NOEFT⟧ vendor's emailed proof rather
+                // than 403 + drop it. Storage only; no lane marker, Samreen wall
+                // untouched. Matches the WhatsApp path.
+                captureRegardless: true,
               })
               if (!result.ok) errors.push(`eft-proof ${fromAddress}: ${result.error}`)
             }
