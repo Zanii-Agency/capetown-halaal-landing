@@ -10,7 +10,7 @@
 import type { InboundMedia } from '@/lib/whatsapp'
 import { fetchMediaBytes } from '@/lib/whatsapp'
 import { seeImage, type SeenImage } from '@/lib/bot/see-image'
-import { markVendorToldEft, vendorInEftLane, getEftMode, getFullEftMode, hasNoEftMarker, withEftMarker } from '@/lib/eft'
+import { markVendorToldEft, vendorInEftLane, getEftMode, withEftMarker } from '@/lib/eft'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -120,15 +120,18 @@ export async function tryHandleEftProofMedia(
   // vendorInEftLane only knows the OLD eft_mode toggle (currently OFF), which would
   // drop a bare screenshot the vision was unsure about with an empty caption. Treat
   // a full-EFT vendor as on the lane for the purpose of NOT dropping their proof.
-  const fullEft = await getFullEftMode()
   // CAPTURE-FIRST. Any UNPAID vendor who sends an image/PDF is treated as sending
   // a probable proof, so we capture it rather than dropping it or (worse) letting
   // it fall to uploadDocument, which files a first image as the vendor's PUBLIC
   // LOGO — a bank screenshot would become their storefront logo. A PAID vendor's
-  // image only counts as a proof when vision or the caption says so (else it is a
-  // logo/cert/doc and the document path is correct). Measured 2026-09-01: five
-  // unpaid vendors sent real proofs and got "I could not save it from here".
-  const eager = alreadyLane || !vendor.paid_at || (!!fullEft && !hasNoEftMarker(vendor.admin_notes))
+  // image only counts as a proof when vision or the caption says so (isProofMedia
+  // below), else it is a logo/cert/doc and the document path is correct.
+  // Measured 2026-09-01: five unpaid vendors sent real proofs and got "I could
+  // not save it from here". `!vendor.paid_at` already covers every full-EFT case
+  // (that mode only matters for unpaid vendors), so no separate fullEft term: an
+  // earlier draft's `|| (fullEft && !hasNoEft)` made a PAID vendor eager once the
+  // cutover activated, misfiling their logo as a proof (doctrine review, 2026-09-02).
+  const eager = alreadyLane || !vendor.paid_at
 
   const { yes, note } = await isProofMedia(media, caption, seen)
   if (!yes && !eager) return { handled: false }
