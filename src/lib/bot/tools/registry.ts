@@ -658,13 +658,13 @@ async function requestPasswordReset(session: VendorSession): Promise<string> {
     const { mintPortalLoginLink } = await import('@/lib/exhibitor-auth')
     const link = await mintPortalLoginLink(row.email)
     if (link.ok) {
-      // Fire the email backup too, best-effort, without blocking the reply.
-      void fetch('https://cthalaal.co.za/api/exhibitor/send-password-reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(process.env.CRON_SECRET ? { Authorization: `Bearer ${process.env.CRON_SECRET}` } : {}) },
-        body: JSON.stringify({ email: row.email }),
-      }).catch(() => {})
-      return `No problem${firstName ? ' ' + firstName : ''}, here is a one-tap link to take you straight into your portal, no password needed:\n\n${link.url}\n\nJust tap it on this phone. It opens your Payments page where you can pay or upload your proof. The link is just for you and works for the next hour. I have also emailed it as a backup.`
+      // NO email backup here. Supabase keeps ONE active recovery token per email
+      // (proven 2026-07-27: minting a second link invalidates the first), so
+      // firing the email reset would mint a fresh token and silently KILL the
+      // WhatsApp link we just handed the vendor, landing them on "link no longer
+      // valid" — the exact regression this fix removes. The WhatsApp link is the
+      // reliable channel; it needs no fallback that breaks it.
+      return `No problem${firstName ? ' ' + firstName : ''}, here is a one-tap link to take you straight into your portal, no password needed:\n\n${link.url}\n\nJust tap it on this phone. It opens your Payments page where you can pay or upload your proof. The link is just for you and works for the next hour.`
     }
     if (link.reason === 'no_account') {
       await escalateToHuman(session, `Vendor ${row.business_name || ''} (${row.email}) asked to log in but has NO portal account provisioned. Needs the team to set it up.`).catch(() => {})
