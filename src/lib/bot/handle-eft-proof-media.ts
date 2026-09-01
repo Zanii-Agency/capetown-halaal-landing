@@ -10,7 +10,7 @@
 import type { InboundMedia } from '@/lib/whatsapp'
 import { fetchMediaBytes, sendText, toE164 } from '@/lib/whatsapp'
 import { seeImage, type SeenImage } from '@/lib/bot/see-image'
-import { markVendorToldEft, vendorInEftLane, getEftMode } from '@/lib/eft'
+import { markVendorToldEft, vendorInEftLane, getEftMode, getFullEftMode, hasNoEftMarker } from '@/lib/eft'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -115,8 +115,16 @@ export async function tryHandleEftProofMedia(
   const globalOn = await getEftMode()
   const alreadyLane = vendorInEftLane(vendor.admin_notes || '', globalOn, vendor.paid_at, { email: vendor.email, phone: vendor.phone })
 
+  // FULL-EFT: once the cutover is active, every unpaid non-⟦NOEFT⟧ vendor is on the
+  // EFT rail, so the bot must be MAXIMALLY eager to capture any proof they send.
+  // vendorInEftLane only knows the OLD eft_mode toggle (currently OFF), which would
+  // drop a bare screenshot the vision was unsure about with an empty caption. Treat
+  // a full-EFT vendor as on the lane for the purpose of NOT dropping their proof.
+  const fullEft = await getFullEftMode()
+  const eager = alreadyLane || (!!fullEft && !vendor.paid_at && !hasNoEftMarker(vendor.admin_notes))
+
   const { yes, note } = await isProofMedia(media, caption, seen)
-  if (!yes && !alreadyLane) return { handled: false }
+  if (!yes && !eager) return { handled: false }
   // If they are already in the EFT lane, any document/image is treated as a proof
   // unless we have a strong reason to think it is not. This avoids losing a proof
   // because the caption was empty or the PDF had no text layer.

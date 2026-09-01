@@ -37,14 +37,15 @@ export const dynamic = 'force-dynamic'
 
 const SITE = 'https://cthalaal.co.za'
 
-// Final settlement date for the 2026 cycle: 31 Aug 2026, 23:59 SAST (UTC+2).
-// A vendor who cannot meet their own payment due date may settle in full up to
-// this date and keeps their reserved space until then. That concession is offered
-// ON REQUEST only and is never volunteered (see the PART PAYMENTS block in
-// lib/festival-brain/system-prompt.ts), but it is the real date vendors are held
-// to, so reminders must run to it rather than stopping shortly after each
-// vendor's own due date. Per-vendor due dates are unchanged.
-const FINAL_SETTLEMENT = new Date('2026-08-31T21:59:59.999Z')
+// Reminders run until this cutoff, then stop (nothing left to chase for the cycle).
+// EXTENDED 2026-09-01: was 2026-08-31, a payment-concession date that silently
+// killed ALL chasing the moment it passed, even though the festival is 11-13 Dec
+// 2026 and 100+ vendors are still unpaid. Set to the festival start so the bot keeps
+// hunting for payment + proof right up to the event (Taona: "make sure the bot is
+// actively hunting for proof of payment"). Per-vendor due dates and the on-request
+// settlement concession are unchanged; move this earlier for a hard "pay or lose
+// your spot" deadline before the festival.
+const FINAL_SETTLEMENT = new Date('2026-12-11T21:59:59.999Z')
 
 function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
