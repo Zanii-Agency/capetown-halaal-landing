@@ -45,6 +45,7 @@ const VAR_SAMPLES = {
   paid_vendor_schedule_update: ['Samreen', 'Trading now starts at 10:00 on the Saturday, not 09:00.'],
   paid_vendor_reminder: ['Samreen', 'Please confirm your final stall layout by 1 December.'],
   paid_vendor_good_news: ['Samreen', 'Your stall is now live in the public vendor listings.'],
+  master_lane_update: ['Samreen', 'We have received your EFT, thank you.'],
 }
 const examples = VAR_SAMPLES[NAME] || []
 

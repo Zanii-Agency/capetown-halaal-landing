@@ -231,6 +231,37 @@ We are glad to have you with us. Reply here on WhatsApp anytime. The YAH Team.
 
 ---
 
+## 10. `master_lane_update`
+
+The EFT-lane (unpaid, mid-settlement) twin of `paid_vendor_update`. Sent from the
+`/admin/eft` Outreach composer (EFT-admin surface) to the master/EFT cohort, whose
+WhatsApp channel was otherwise falling back to the marketing-capped
+`general_announcement`. UTILITY. Copy says "your stall" (not "confirmed") because
+these vendors are still settling. Two vars, invites a reply.
+
+**Body:**
+
+```
+Hi {{1}}, a message from Young at Heart Festival 2026 about your stall:
+
+{{2}}
+
+You can reply here on WhatsApp if you have any questions. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = your message (single flowing line; raw newlines are stripped before send)
+
+**Sample (Samreen example):**
+> Hi Samreen, a message from Young at Heart Festival 2026 about your stall:
+>
+> We have received your EFT, thank you.
+>
+> You can reply here on WhatsApp if you have any questions. The YAH Team.
+
+---
+
 ## How to submit to Meta
 
 ### Option A: Auto-submit via Graph API (fastest)
@@ -245,6 +276,7 @@ node scripts/submit-whatsapp-template.mjs paid_vendor_setup_details
 node scripts/submit-whatsapp-template.mjs paid_vendor_schedule_update
 node scripts/submit-whatsapp-template.mjs paid_vendor_reminder
 node scripts/submit-whatsapp-template.mjs paid_vendor_good_news
+node scripts/submit-whatsapp-template.mjs master_lane_update
 ```
 
 Reads template content from this file, posts to `https://graph.facebook.com/v20.0/{WHATSAPP_BUSINESS_ID}/message_templates`. Returns Meta's submission ID. Approval typically takes 5-60 minutes.
