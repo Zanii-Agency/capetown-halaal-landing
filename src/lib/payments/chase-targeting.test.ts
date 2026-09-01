@@ -70,3 +70,38 @@ test('send de-dup: distinct people each get claimed', () => {
   assert.equal(dd.claim({ phone: '0822222221' }), true)
   assert.equal(dd.claim({ phone: '0822222222' }), true)
 })
+
+// ── Master EFT lane exclusion (Taona 2026-09-02) ────────────────────────────
+// A lane vendor shows unpaid to Samreen but is chased by the EFT admin from the
+// Outreach tab, so the generic pay reminder must skip them. laneHas is the gate.
+
+test('lane: an ⟦EFT⟧-marked vendor is excluded from the pay reminder (but not hard-settled)', () => {
+  const eft: ChaseRow = { phone: '0830000001', email: 'eft@x.com', admin_notes: '⟦EFT⟧' }
+  const idx = buildSuppressedPeople([eft], NOW)
+  assert.equal(idx.laneHas(eft), true, 'on the master lane: no pay email')
+  assert.equal(idx.hardHas(eft), false, 'not settled, just handled off-cron')
+})
+
+test('lane: a plain unpaid vendor shows unpaid to Samreen and is on the lane', () => {
+  const unpaid: ChaseRow = { phone: '0830000002', email: 'unpaid@x.com', admin_notes: pay({ status: 'none' }) }
+  assert.equal(buildSuppressedPeople([unpaid], NOW).laneHas(unpaid), true)
+})
+
+test('lane: a ⟦NOEFT⟧ unpaid vendor is Samreen\'s and stays chaseable', () => {
+  const hers: ChaseRow = { phone: '0830000003', email: 'hers@x.com', admin_notes: '⟦NOEFT⟧' }
+  assert.equal(buildSuppressedPeople([hers], NOW).laneHas(hers), false)
+})
+
+test('lane: a Yoco-settled vendor is off the lane', () => {
+  const paid: ChaseRow = { phone: '0830000004', admin_notes: pay({ status: 'paid', method: 'yoco' }), paid_at: '2026-08-01T00:00:00Z' }
+  assert.equal(buildSuppressedPeople([paid], NOW).laneHas(paid), false)
+})
+
+test('lane person-level: an ⟦EFT⟧ row excludes a ⟦NOEFT⟧ twin that alone would be chased', () => {
+  const laneRow: ChaseRow = { phone: '0830000006', email: 'a2@x.com', admin_notes: '⟦EFT⟧' }
+  const noeftTwin: ChaseRow = { phone: '0830000006', email: 'b2@x.com', admin_notes: '⟦NOEFT⟧' }
+  const idx = buildSuppressedPeople([laneRow, noeftTwin], NOW)
+  // The NOEFT twin alone is hers (laneHas false), but sharing a phone with an
+  // EFT-lane row puts the PERSON on the lane: do not pay-email them.
+  assert.equal(idx.laneHas(noeftTwin), true)
+})

@@ -18,6 +18,7 @@
 // duplicate_of_id=null. Phone/email is the only reliable person key.
 
 import { parsePortalState, hasPaid, isWithdrawn, getArrangement } from '@/lib/portal-state'
+import { onMasterLane } from '@/lib/eft'
 import { toE164 } from '@/lib/whatsapp'
 import { normalizeEmail } from '@/lib/email-normalize'
 
@@ -57,6 +58,12 @@ export function buildSuppressedPeople(rows: ChaseRow[], now: Date = new Date()) 
   const hardEmails = new Set<string>()
   const arrPhones = new Map<string, { until: string | null }>()
   const arrEmails = new Map<string, { until: string | null }>()
+  // Master EFT lane: if ANY of a person's rows sits on the lane, the whole person
+  // is excluded from the generic pay reminder (Taona chases them himself from the
+  // EFT Outreach tab). Person-level like hard suppression, so a lane vendor's twin
+  // row on the shared phone/email cannot leak a "please pay" email either.
+  const lanePhones = new Set<string>()
+  const laneEmails = new Set<string>()
 
   for (const r of rows) {
     const pk = phoneKeyOf(r.phone)
@@ -65,6 +72,10 @@ export function buildSuppressedPeople(rows: ChaseRow[], now: Date = new Date()) 
       if (pk) hardPhones.add(pk)
       if (ek) hardEmails.add(ek)
       continue
+    }
+    if (onMasterLane(r.admin_notes, r.paid_at, { email: r.email, phone: r.phone })) {
+      if (pk) lanePhones.add(pk)
+      if (ek) laneEmails.add(ek)
     }
     const arr = getArrangement(parsePortalState(r.admin_notes || ''), now)
     if (arr) {
@@ -78,6 +89,13 @@ export function buildSuppressedPeople(rows: ChaseRow[], now: Date = new Date()) 
       const pk = phoneKeyOf(row.phone)
       const ek = emailKeyOf(row.email)
       return (!!pk && hardPhones.has(pk)) || (!!ek && hardEmails.has(ek))
+    },
+    /** True when this person is on the master EFT lane on any of their rows: skip
+     *  the generic pay reminder (the EFT admin handles their payment comms). */
+    laneHas(row: ChaseRow): boolean {
+      const pk = phoneKeyOf(row.phone)
+      const ek = emailKeyOf(row.email)
+      return (!!pk && lanePhones.has(pk)) || (!!ek && laneEmails.has(ek))
     },
     arrangementFor(row: ChaseRow): { until: string | null } | null {
       const pk = phoneKeyOf(row.phone)

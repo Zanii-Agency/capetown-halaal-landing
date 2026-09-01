@@ -2,13 +2,15 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference, onMasterLane } from '@/lib/eft'
+import { parseAllocation } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { buildOpsDigest, type OpsDigest } from '@/lib/payments/ops-digest'
 import { CustomerInboxClient } from '../customer-inbox/CustomerInboxClient'
 import EftAdminClient from './EftAdminClient'
+import EftOutreachClient, { type OutreachVendor } from './EftOutreachClient'
 
 export const dynamic = 'force-dynamic'
 
@@ -100,7 +102,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
   if (!isEftAdmin(email)) redirect('/admin')
 
   const { tab } = await searchParams
-  const activeTab = tab === 'messages' ? 'messages' : 'payments'
+  const activeTab = tab === 'messages' ? 'messages' : tab === 'outreach' ? 'outreach' : 'payments'
   const db = createAdminClient()
 
   const header = (
@@ -122,6 +124,12 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         >
           Master lane
         </Link>
+        <Link
+          href="/admin/eft?tab=outreach"
+          className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px ${activeTab === 'outreach' ? 'border-[#cd2653] text-[#cd2653]' : 'border-transparent text-[#1B1A17]/55 hover:text-[#1B1A17]'}`}
+        >
+          Outreach
+        </Link>
       </div>
     </div>
   )
@@ -138,6 +146,44 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         <div className="flex-1 min-h-0">
           <CustomerInboxClient currentUserId={user!.id} operators={operators} eftOnly embedded />
         </div>
+      </div>
+    )
+  }
+
+  if (activeTab === 'outreach') {
+    // Audience = everyone on the master EFT lane: approved vendors NOT settled
+    // through a channel the festival owner reconciles, minus internal rows. This
+    // is a strict subset of what the inbox wall already blocks from her, so no
+    // outreach here can surface to Samreen (onMasterLane doc). Vendors with no
+    // contact channel at all are dropped: nothing to send to.
+    const { data: apps } = await db
+      .from('vendor_applications')
+      .select('id, business_name, contact_name, email, phone, admin_notes, paid_at, status')
+      .eq('status', 'approved')
+      .limit(2000)
+
+    const vendors: OutreachVendor[] = []
+    for (const a of (apps || []) as Array<Record<string, unknown>>) {
+      const notes = (a.admin_notes as string) || ''
+      const email = a.email as string | null
+      const phone = a.phone as string | null
+      if (!onMasterLane(notes, a.paid_at as string | null, { email, phone })) continue
+      if (!email && !phone) continue
+      vendors.push({
+        id: a.id as string,
+        business_name: a.business_name as string | null,
+        contact_name: a.contact_name as string | null,
+        email,
+        phone,
+        stall: parseAllocation(notes).stall || null,
+      })
+    }
+    vendors.sort((x, y) => (x.business_name || '').localeCompare(y.business_name || ''))
+
+    return (
+      <div className="p-6">
+        {header}
+        <EftOutreachClient vendors={vendors} />
       </div>
     )
   }

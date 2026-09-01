@@ -96,6 +96,9 @@ export async function GET(req: NextRequest) {
   const deduper = newSendDeduper()
 
   const results: Array<Record<string, unknown>> = []
+  // Vendors skipped because they are on the master EFT lane. Reported so the
+  // exclusion is observable in the run output, not silent.
+  let laneExcluded = 0
 
   for (const app of apps || []) {
     // Seed rows are never billed: a reminder to a demo vendor is a real email
@@ -108,6 +111,11 @@ export async function GET(req: NextRequest) {
     // (Melonscape, Chocotag, 2026-08-10).
     if (hasPaid(state) || isWithdrawn(state)) continue
     if (suppressed.hardHas(app as never)) continue
+    // MASTER EFT LANE (Taona 2026-09-02): a lane vendor shows unpaid to Samreen
+    // but is being handled personally by the EFT admin, so the generic "please
+    // pay" reminder must never reach them. They are chased from the EFT Outreach
+    // tab instead. Person-level, so a lane vendor's twin row is excluded too.
+    if (suppressed.laneHas(app as never)) { laneExcluded++; continue }
 
     // An in-force extension does NOT silence the vendor: they still get a
     // GENTLE, extension-aware reminder that acknowledges the new date and asks
@@ -230,6 +238,7 @@ export async function GET(req: NextRequest) {
     dryRun,
     scanned: apps?.length ?? 0,
     remindersSent: results.length,
+    laneExcluded,
     results,
   })
 }

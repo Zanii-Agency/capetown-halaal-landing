@@ -485,6 +485,30 @@ export function vendorCommsInOwnerScope(adminNotes: string | null | undefined, p
   return vendorInOwnerScope(adminNotes, paidAt) && !presentedCommsPending(adminNotes)
 }
 
+/** ON THE MASTER EFT LANE: a vendor whose money has NOT settled through a channel
+ *  the festival owner reconciles (Yoco/cash/waived), and who is not an internal/
+ *  operator row. This is exactly the cohort that shows UNPAID to Samreen because
+ *  they are being handled on EFT, i.e. the inverse of vendorInOwnerScope minus
+ *  internal accounts.
+ *
+ *  ONE definition, TWO uses (Taona 2026-09-02): it is the audience the EFT admin's
+ *  Outreach composer targets, AND the set excluded from the generic pay-reminder
+ *  cron so none of them get the "please pay" email while Taona chases them himself.
+ *
+ *  LEAK-SAFE BY CONSTRUCTION. `!vendorInOwnerScope` is a strict subset of what the
+ *  inbox wall already blocks from her (`!vendorCommsInOwnerScope`
+ *  = `!vendorInOwnerScope || presentedCommsPending`), so every vendor this returns
+ *  true for is already walled off Samreen on every sealed reader. Reaching out to
+ *  them, or removing them from her-adjacent crons, cannot surface anything to her. */
+export function onMasterLane(
+  adminNotes: string | null | undefined,
+  paidAt?: string | null,
+  identity?: LaneIdentity,
+): boolean {
+  if (identity && isInternalAccount(identity.email, identity.phone)) return false
+  return !vendorInOwnerScope(adminNotes, paidAt)
+}
+
 /** Hand a vendor to the festival owner regardless of payment state. */
 export function withOwnerVisibleMarker(adminNotes: string | null | undefined): string {
   const notes = adminNotes || ''
