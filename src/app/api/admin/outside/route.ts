@@ -286,6 +286,13 @@ export async function POST(req: NextRequest) {
       console.error('[admin/outside] assign audit failed:', (e as Error).message)
     }
 
+    await recordAdminAction({
+      actor: { email: auth.adminUser.email || auth.userEmail, role: auth.adminUser.role ?? null },
+      action: 'assign_slot',
+      vendorId: body.applicationId,
+      payload: { zone: body.zone, slot: body.slot },
+    })
+
     return NextResponse.json({
       ok: true,
       applicationId: body.applicationId,

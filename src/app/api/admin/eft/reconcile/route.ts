@@ -35,6 +35,12 @@ export async function POST(req: NextRequest) {
     const { markAccessoriesCollected } = await import('@/lib/payments/confirm')
     const result = await markAccessoriesCollected(id, typeof body.amount === 'number' ? body.amount : undefined)
     if (!result.ok) return NextResponse.json({ error: result.error || 'accessory collect failed' }, { status: 500 })
+    await recordAdminAction({
+      actor: { email: gate.adminUser.email, role: gate.role },
+      action: 'eft_accessories_collected',
+      vendorId: id,
+      payload: { amount: result.amount ?? null },
+    })
     return NextResponse.json({ ok: true, status: 'acc_collected', amount: result.amount })
   }
 

@@ -189,6 +189,11 @@ export async function POST(req: NextRequest) {
         blocked.add(stallCode)
         await saveBlocked(admin, blocked)
       }
+      await recordAdminAction({
+        actor: { email: gate.adminUser.email, role: gate.role },
+        action: 'block_stall',
+        payload: { stall_code: stallCode },
+      })
       return NextResponse.json({ ok: true, message: `${stallCode} blocked` })
     }
 
@@ -211,6 +216,12 @@ export async function POST(req: NextRequest) {
         }
         cleared = true
       }
+      await recordAdminAction({
+        actor: { email: gate.adminUser.email, role: gate.role },
+        action: 'clear_stall',
+        vendorId: current?.id ?? null,
+        payload: { stall_code: stallCode, cleared },
+      })
       return NextResponse.json({ ok: true, message: cleared ? `${stallCode} cleared` : `${stallCode} already free` })
     }
 

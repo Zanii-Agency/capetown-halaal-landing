@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isEftAdmin } from '@/lib/eft'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 import { activeProvider, paymentsEnabled, paymentReference } from '@/lib/payments'
 import { computeVendorPricing } from '@/lib/payments/pricing'
@@ -101,6 +102,15 @@ export async function POST(req: NextRequest) {
             attempted_at: new Date().toISOString(),
           },
     }))
+    // Zanii Proof: the admin INITIATED a settle checkout. The real settlement
+    // (paid_at) is recorded later by the Yoco webhook as cth.pay.confirmed; this
+    // receipt attributes the initiation to the human who clicked settle.
+    await recordAdminAction({
+      actor: { email: gate.adminUser.email, role: gate.role },
+      action: 'eft_settle_initiated',
+      vendorId: id,
+      payload: { kind: isPaid ? 'accessory' : 'stall', amount },
+    })
     return NextResponse.json({ ok: true, url, amount })
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message || 'checkout failed' }, { status: 500 })

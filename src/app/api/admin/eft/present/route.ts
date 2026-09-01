@@ -30,6 +30,11 @@ export async function POST(req: NextRequest) {
   if (body.reconcile) {
     const r = await markEftReconciled(id)
     if (!r.ok) return NextResponse.json({ error: r.error || 'reconcile failed' }, { status: 500 })
+    await recordAdminAction({
+      actor: { email: gate.adminUser.email, role: gate.role },
+      action: 'eft_reconciled',
+      vendorId: id,
+    })
     return NextResponse.json({ ok: true, status: 'reconciled' })
   }
 

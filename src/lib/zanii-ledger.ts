@@ -99,6 +99,7 @@ export type AdminActor = { email?: string | null; role?: string | null }
 // ZANII_CTH_KEYS. Anyone else falls through to role, then the shared operator DID.
 const ADMIN_DID_BY_EMAIL: Record<string, CthAgent> = {
   'capetownhalaal@gmail.com': 'samreen', // Samreen Kumandan (festival owner)
+  'taona@cthalaal.co.za': 'master', // Taona (master) — his portal login
 }
 
 /** Which admin DID signs an action, resolved from the acting human. */
