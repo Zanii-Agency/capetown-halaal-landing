@@ -18,7 +18,7 @@
 // duplicate_of_id=null. Phone/email is the only reliable person key.
 
 import { parsePortalState, hasPaid, isWithdrawn, getArrangement } from '@/lib/portal-state'
-import { onMasterLane } from '@/lib/eft'
+import { onEftLane } from '@/lib/eft'
 import { toE164 } from '@/lib/whatsapp'
 import { normalizeEmail } from '@/lib/email-normalize'
 
@@ -58,10 +58,11 @@ export function buildSuppressedPeople(rows: ChaseRow[], now: Date = new Date()) 
   const hardEmails = new Set<string>()
   const arrPhones = new Map<string, { until: string | null }>()
   const arrEmails = new Map<string, { until: string | null }>()
-  // Master EFT lane: if ANY of a person's rows sits on the lane, the whole person
-  // is excluded from the generic pay reminder (Taona chases them himself from the
-  // EFT Outreach tab). Person-level like hard suppression, so a lane vendor's twin
-  // row on the shared phone/email cannot leak a "please pay" email either.
+  // EFT lane: if ANY of a person's rows is on the EFT lane (⟦EFT⟧ or a real EFT
+  // money footprint, NOT merely unpaid), the whole person is excluded from the
+  // generic pay reminder (Taona chases them from the EFT Outreach tab). The ~130
+  // genuinely-unpaid vendors who never touched EFT still get chased. Person-level
+  // like hard suppression, so a lane vendor's twin row cannot leak a pay email.
   const lanePhones = new Set<string>()
   const laneEmails = new Set<string>()
 
@@ -73,7 +74,7 @@ export function buildSuppressedPeople(rows: ChaseRow[], now: Date = new Date()) 
       if (ek) hardEmails.add(ek)
       continue
     }
-    if (onMasterLane(r.admin_notes, r.paid_at, { email: r.email, phone: r.phone })) {
+    if (onEftLane(r.admin_notes, { email: r.email, phone: r.phone })) {
       if (pk) lanePhones.add(pk)
       if (ek) laneEmails.add(ek)
     }

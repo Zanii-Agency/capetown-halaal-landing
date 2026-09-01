@@ -82,9 +82,29 @@ test('lane: an ⟦EFT⟧-marked vendor is excluded from the pay reminder (but no
   assert.equal(idx.hardHas(eft), false, 'not settled, just handled off-cron')
 })
 
-test('lane: a plain unpaid vendor shows unpaid to Samreen and is on the lane', () => {
+test('lane: a plain unpaid vendor never touched EFT, so is NOT on the lane (still chased)', () => {
+  // The 2026-09-02 correction: a merely-unpaid applicant is not the EFT lane. If
+  // this returns true again, the pay-reminder cron goes silent for ~130 vendors
+  // and the Outreach audience balloons to ~170.
   const unpaid: ChaseRow = { phone: '0830000002', email: 'unpaid@x.com', admin_notes: pay({ status: 'none' }) }
-  assert.equal(buildSuppressedPeople([unpaid], NOW).laneHas(unpaid), true)
+  assert.equal(buildSuppressedPeople([unpaid], NOW).laneHas(unpaid), false)
+})
+
+test('lane: a collected-EFT vendor is excluded via HARD suppression (hasPaid), not laneHas', () => {
+  // 'collected' counts as paid, so the cron drops it at hardHas before laneHas
+  // runs. Either way it never gets a pay reminder. laneHas is for lane vendors who
+  // are NOT yet hard-settled (below).
+  const collected: ChaseRow = { phone: '0830000007', email: 'collected@x.com', admin_notes: pay({ status: 'collected', amount: 6500 }) }
+  assert.equal(buildSuppressedPeople([collected], NOW).hardHas(collected), true)
+})
+
+test('lane: a proof-uploaded, not-yet-collected vendor IS caught by laneHas', () => {
+  // status still unpaid but a POP is in: hardHas is false, so laneHas is what keeps
+  // the pay reminder off them.
+  const submitted: ChaseRow = { phone: '0830000008', email: 'pop@x.com', admin_notes: pay({ status: 'pending', eft_submitted_at: '2026-08-20T10:00:00Z' }) }
+  const idx = buildSuppressedPeople([submitted], NOW)
+  assert.equal(idx.hardHas(submitted), false)
+  assert.equal(idx.laneHas(submitted), true)
 })
 
 test('lane: a ⟦NOEFT⟧ unpaid vendor is Samreen\'s and stays chaseable', () => {

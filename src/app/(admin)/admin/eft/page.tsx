@@ -2,8 +2,9 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference, onMasterLane, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference, onEftLane, vendorCommsInOwnerScope, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
+import { isTestVendor } from '@/lib/test-vendors'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
@@ -151,11 +152,12 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
   }
 
   if (activeTab === 'outreach') {
-    // Audience = everyone on the master EFT lane: approved vendors NOT settled
-    // through a channel the festival owner reconciles, minus internal rows. This
-    // is a strict subset of what the inbox wall already blocks from her, so no
-    // outreach here can surface to Samreen (onMasterLane doc). Vendors with no
-    // contact channel at all are dropped: nothing to send to.
+    // Audience = the REAL EFT lane: vendors who actually went through EFT
+    // (⟦EFT⟧-designated or a real EFT money footprint), NOT every unpaid applicant
+    // (Taona 2026-09-02: the ~40 on the proofs list, not ~170). Intersected with
+    // `!vendorCommsInOwnerScope` so the SEND stays walled from Samreen: a stall-
+    // paid vendor settling accessories by EFT is on the lane yet visible to her,
+    // and messaging them would leak. Vendors with no contact channel are dropped.
     const { data: apps } = await db
       .from('vendor_applications')
       .select('id, business_name, contact_name, email, phone, admin_notes, paid_at, status')
@@ -164,10 +166,13 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
 
     const vendors: OutreachVendor[] = []
     for (const a of (apps || []) as Array<Record<string, unknown>>) {
+      if (isTestVendor(a as Parameters<typeof isTestVendor>[0])) continue // never message demo/seed rows
       const notes = (a.admin_notes as string) || ''
       const email = a.email as string | null
       const phone = a.phone as string | null
-      if (!onMasterLane(notes, a.paid_at as string | null, { email, phone })) continue
+      const paidAt = a.paid_at as string | null
+      if (!onEftLane(notes, { email, phone })) continue
+      if (vendorCommsInOwnerScope(notes, paidAt)) continue // drop anyone Samreen can see: keep the send walled
       if (!email && !phone) continue
       vendors.push({
         id: a.id as string,

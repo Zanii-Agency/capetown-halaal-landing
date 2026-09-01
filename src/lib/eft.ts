@@ -485,28 +485,42 @@ export function vendorCommsInOwnerScope(adminNotes: string | null | undefined, p
   return vendorInOwnerScope(adminNotes, paidAt) && !presentedCommsPending(adminNotes)
 }
 
-/** ON THE MASTER EFT LANE: a vendor whose money has NOT settled through a channel
- *  the festival owner reconciles (Yoco/cash/waived), and who is not an internal/
- *  operator row. This is exactly the cohort that shows UNPAID to Samreen because
- *  they are being handled on EFT, i.e. the inverse of vendorInOwnerScope minus
- *  internal accounts.
+/** ON THE EFT LANE: a vendor who has actually gone through EFT, i.e. the cohort the
+ *  EFT admin sees on the Master-lane list, NOT every unpaid applicant.
  *
- *  ONE definition, TWO uses (Taona 2026-09-02): it is the audience the EFT admin's
- *  Outreach composer targets, AND the set excluded from the generic pay-reminder
- *  cron so none of them get the "please pay" email while Taona chases them himself.
+ *  Taona 2026-09-02 correction: an earlier version returned `!vendorInOwnerScope`,
+ *  which is EVERY approved-but-unpaid vendor (~170 under full-EFT). That is wrong:
+ *  a vendor who merely never paid has not touched EFT and is not on the lane. The
+ *  lane is the ~40 who are ⟦EFT⟧-designated OR have a real EFT money footprint
+ *  (collected, proof submitted, EFT/manual-reconciled, presented, accessory-EFT).
+ *  A BARE reveal (opened the bank details, nothing paid) is deliberately excluded,
+ *  same as a plain unpaid vendor: it is not on the operator's proofs list.
  *
- *  LEAK-SAFE BY CONSTRUCTION. `!vendorInOwnerScope` is a strict subset of what the
- *  inbox wall already blocks from her (`!vendorCommsInOwnerScope`
- *  = `!vendorInOwnerScope || presentedCommsPending`), so every vendor this returns
- *  true for is already walled off Samreen on every sealed reader. Reaching out to
- *  them, or removing them from her-adjacent crons, cannot surface anything to her. */
-export function onMasterLane(
+ *  ONE definition, TWO uses: the audience the Outreach composer targets, AND the
+ *  set excluded from the pay-reminder cron so an EFT-paid vendor is never told to
+ *  "please pay" while the ~130 genuinely-unpaid vendors keep being chased.
+ *
+ *  ⟦NOEFT⟧ and internal/operator rows are never on the lane. NOTE: this is NOT by
+ *  itself a Samreen-visibility guarantee (a stall-paid vendor settling accessories
+ *  by EFT is on the lane yet visible to her); the Outreach audience intersects this
+ *  with `!vendorCommsInOwnerScope` so the SEND stays walled. */
+export function onEftLane(
   adminNotes: string | null | undefined,
-  paidAt?: string | null,
   identity?: LaneIdentity,
 ): boolean {
   if (identity && isInternalAccount(identity.email, identity.phone)) return false
-  return !vendorInOwnerScope(adminNotes, paidAt)
+  const notes = adminNotes || ''
+  if (hasNoEftMarker(notes)) return false      // explicitly excluded, handled manually
+  if (hasEftMarker(notes)) return true         // ⟦EFT⟧ hand-picked onto the lane
+  const p = parsePortalState(notes).payment
+  return (
+    p?.status === 'collected'                  // money collected via EFT, awaiting Yoco settle
+    || !!p?.eft_submitted_at                    // proof of payment uploaded
+    || !!p?.eft_collected_at                    // operator marked collected
+    || !!p?.presented_eft                       // shown to Samreen as paid-Yoco (still master's)
+    || !!p?.acc?.submitted_at                   // accessory balance paid by EFT
+    || MASTER_ONLY_METHODS.has(String(p?.method || '')) // reconciled via eft/manual_card/manual
+  )
 }
 
 /** Hand a vendor to the festival owner regardless of payment state. */
