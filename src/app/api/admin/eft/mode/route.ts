@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isEftAdmin } from '@/lib/eft'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 
@@ -27,5 +28,12 @@ export async function POST(req: NextRequest) {
     console.error('[eft/mode] insert failed:', error.message)
     return NextResponse.json({ error: 'could not save' }, { status: 500 })
   }
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'eft_mode',
+    payload: { on },
+  })
+
   return NextResponse.json({ ok: true, on })
 }

@@ -16,6 +16,7 @@ import { updatePortalState, parsePortalState } from '@/lib/portal-state'
 import { cancelStaffBadgeOrder } from '@/lib/woocommerce'
 import { requireOperator } from '@/lib/admin-rbac'
 import { laneScopeFor } from '@/lib/inbox-lane'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -62,6 +63,13 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   } catch (e) {
     console.warn('[admin/staff revoke] event log failed:', (e as Error).message)
   }
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'remove_staff',
+    vendorId: id,
+    payload: { memberId, staff_name: target.name, wc_order_id: target.wc_order_id || null },
+  })
 
   return NextResponse.json({ ok: true, staff: next.staff || [] })
 }

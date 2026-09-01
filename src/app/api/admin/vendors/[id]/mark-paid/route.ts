@@ -18,6 +18,7 @@ import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { requireOperator } from '@/lib/admin-rbac'
 import { laneScopeFor } from '@/lib/inbox-lane'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 const ALLOWED: PaymentMethod[] = ['eft', 'cash', 'manual_card', 'waived']
 
@@ -84,6 +85,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   await syncPortalState(id, db).catch((e) =>
     console.error('[mark-paid] syncPortalState failed:', (e as Error).message)
   )
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'mark_paid',
+    vendorId: id,
+    payload: { method, amount: result.amount ?? amount ?? null, reference: providerRef, note },
+  })
 
   const after = parsePortalState((await db.from('vendor_applications').select('admin_notes').eq('id', id).maybeSingle()).data?.admin_notes as string || null)
   return NextResponse.json({ ok: true, payment: after.payment })

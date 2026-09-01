@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState } from '@/lib/portal-state'
 import { requireOperator } from '@/lib/admin-rbac'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -119,6 +120,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (e) {
     console.warn('[payment-proof] event log insert failed:', (e as Error).message)
   }
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'payment_proof_action',
+    vendorId: id,
+    payload: { kind, note: note || null, path },
+  })
 
   return NextResponse.json({ ok: true, proof: newProof })
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { capJsonbSize } from '@/lib/audit/cap'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -152,6 +153,13 @@ export async function POST(request: NextRequest) {
       },
     ])
     if (evErr) console.error('[merge] audit insert failed:', evErr.message)
+
+    await recordAdminAction({
+      actor: { email: actorEmail, role },
+      action: 'merge',
+      vendorId: keeper_id,
+      payload: { merged_from: duplicate_id, merged_into: keeper_id, fields: fieldLog },
+    })
 
     return NextResponse.json({
       success: true,

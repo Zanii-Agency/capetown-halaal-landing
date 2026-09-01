@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { capJsonbSize } from '@/lib/audit/cap'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -121,6 +122,14 @@ export async function POST(request: NextRequest) {
     }
 
     const okCount = results.filter((r) => r.ok).length
+
+    await recordAdminAction({
+      actor: { email: actorEmail, role: gate.role },
+      action: 'dedupe',
+      vendorId: keeper_id,
+      payload: { count: superseded_ids.length, ok: okCount },
+    })
+
     return NextResponse.json({
       success: true,
       keeper_id,

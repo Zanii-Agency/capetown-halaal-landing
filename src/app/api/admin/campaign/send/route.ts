@@ -7,6 +7,7 @@ import { Campaign, type CampaignProps } from '@/lib/email/templates/Campaign'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { requireOperator } from '@/lib/admin-rbac'
 import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const maxDuration = 300
 
@@ -217,6 +218,12 @@ export async function POST(request: NextRequest) {
     }
     if (PACE_MS) await new Promise((res) => setTimeout(res, PACE_MS))
   }
+
+  await recordAdminAction({
+    actor: { email: auth.viewerEmail ?? null, role: null },
+    action: 'campaign_send',
+    payload: { audience, subject, recipientCount: sent, failed },
+  })
 
   return NextResponse.json({
     audience,

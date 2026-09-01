@@ -22,6 +22,7 @@ import {
   OUTSIDE_ZONES, zoneForTier, parseZoneAssignment, withZoneAssignment,
   withZoneCheckIn, isOutsideZone, type OutsideZoneKey,
 } from '@/lib/zones'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -218,6 +219,13 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         console.error('[admin/outside] checkin audit failed:', (e as Error).message)
       }
+
+      await recordAdminAction({
+        actor: { email: auth.adminUser.email || auth.userEmail, role: auth.adminUser.role ?? null },
+        action: 'toggle_outside',
+        vendorId: body.applicationId,
+        payload: { on: body.checkedIn, zone: vendorZone },
+      })
 
       return NextResponse.json({
         ok: true,

@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { reinstateApplication } from '@/lib/vendors/withdraw'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -39,6 +40,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           : `${out.businessName || 'This vendor'} is not withdrawn, so there is nothing to reinstate.`
       return NextResponse.json({ error: message, reason: out.reason }, { status })
     }
+
+    await recordAdminAction({
+      actor: { email: gate.adminUser.email, role: gate.role },
+      action: 'reinstate',
+      vendorId: id,
+      payload: { business_name: out.businessName },
+    })
 
     return NextResponse.json({ ok: true, business_name: out.businessName, status: 'approved' })
   } catch (err) {

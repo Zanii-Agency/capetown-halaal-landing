@@ -14,6 +14,7 @@ import { confirmPayment } from '@/lib/payments/confirm'
 import { zoneByKey } from '@/lib/venue-zones'
 import { notifyOwners } from '@/lib/bot/notify'
 import { requireOperator } from '@/lib/admin-rbac'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -98,6 +99,13 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error('[capture] audit insert failed:', (e as Error).message)
   }
+
+  await recordAdminAction({
+    actor: { email: (adminUser.email as string | null) || user.email || null, role: gate.role },
+    action: 'finance_capture',
+    vendorId: parsed.applicationId,
+    payload: { amount: parsed.amount, zone: parsed.zone, reference: parsed.reference || null },
+  })
 
   const zoneLabel = zoneByKey(parsed.zone)?.label || 'Outside'
   notifyOwners({

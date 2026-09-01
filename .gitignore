@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# zanii admin DID provisioning output (private keys — never commit)
+.zanii-cth-keys.json
+
 # vercel
 .vercel
 

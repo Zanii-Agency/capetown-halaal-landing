@@ -23,6 +23,7 @@ import {
 } from '@/lib/applications/decision-notify'
 import { notifyOwners, type PortalEvent } from '@/lib/bot/notify'
 import { assertRole } from '@/lib/admin-rbac'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -176,6 +177,14 @@ export async function POST(
       actor_email: actorEmail,
       actor_role: 'operator',
       note,
+    })
+
+    // Zanii Proof: per-admin, tamper-evident receipt of this decision.
+    await recordAdminAction({
+      actor: { email: actorEmail, role: (adminUser.role as string | null) ?? null },
+      action: eventType, // approved | rejected | info_requested | tagged | snoozed
+      applicationId: id,
+      payload: { note: note || undefined },
     })
 
     // Fire the vendor-facing side-effects (account provisioning + approval

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { isEftAdmin } from '@/lib/eft'
 import { presentEftAsPaid, markEftReconciled } from '@/lib/payments/confirm'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 
@@ -34,5 +35,13 @@ export async function POST(req: NextRequest) {
 
   const r = await presentEftAsPaid(id, { notifyOwner: body.notifyOwner !== false })
   if (!r.ok) return NextResponse.json({ error: r.error || 'present failed' }, { status: 500 })
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'eft_present',
+    vendorId: id,
+    payload: { amount: r.amount ?? null, reference: r.reference ?? null, notify_owner: body.notifyOwner !== false },
+  })
+
   return NextResponse.json({ ok: true, status: 'presented', amount: r.amount, reference: r.reference })
 }

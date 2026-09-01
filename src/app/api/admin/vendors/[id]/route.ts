@@ -31,7 +31,7 @@ import { TIER_META, parseAllocation } from '@/lib/stalls'
 import { tierPricingFields } from '@/lib/payments/pricing'
 import { parsePortalState, updatePortalStateImpl } from '@/lib/portal-state'
 import { syncExhibitorAuth } from '@/lib/exhibitor-auth'
-import { recordLedger } from '@/lib/zanii-ledger'
+import { recordLedger, recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -353,6 +353,13 @@ export async function DELETE(
     } catch (e) {
       console.warn('[vendors DELETE] event log insert failed:', (e as Error).message)
     }
+
+    await recordAdminAction({
+      actor: { email: actorEmail, role: adminUser.role ?? null },
+      action: 'delete_vendor',
+      vendorId: id,
+      payload: { reason: reason || null, freed_stalls: freedStalls },
+    })
 
     return NextResponse.json({
       ok: true,

@@ -11,6 +11,7 @@ import {
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { notifyVendor } from '@/lib/notifications'
 import { computeVendorPricing } from '@/lib/payments/pricing'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 // Festival-wide "blocked booth" set. A blocked booth has NO vendor, so it can't
 // live as a ⟦STALL⟧ marker on a vendor_applications row. Following the
@@ -285,6 +286,13 @@ export async function POST(req: NextRequest) {
         console.error('[stalls] notifyVendor failed:', (e as Error).message)
       )
     }
+
+    await recordAdminAction({
+      actor: { email: gate.adminUser.email, role: gate.role },
+      action: 'allocate_stall',
+      vendorId: applicationId,
+      payload: { stall_code: stallCode, status: action },
+    })
 
     return NextResponse.json({ ok: true, message: `${stallCode} → ${app.business_name} (${action})` })
   } catch (e) {

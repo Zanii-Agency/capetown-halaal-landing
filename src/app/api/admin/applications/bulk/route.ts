@@ -17,6 +17,7 @@ import {
   APPROVED_NOTIFIED_RE,
 } from '@/lib/applications/decision-notify'
 import { notifyOwners } from '@/lib/bot/notify'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 // Cap synchronous vendor-facing sends per bulk call. Keeps us under the Resend
@@ -239,6 +240,12 @@ export async function POST(request: NextRequest) {
     }
 
     const okCount = results.filter((r) => r.ok).length
+
+    await recordAdminAction({
+      actor: { email: actorEmail, role: gate.role },
+      action: 'bulk_action',
+      payload: { action, count: ids.length, ok: okCount, failed: results.length - okCount },
+    })
 
     // One owner digest for the batch (Taona + Samreen) instead of per-vendor.
     const notifiedNow = results.filter((r) => r.notified).length

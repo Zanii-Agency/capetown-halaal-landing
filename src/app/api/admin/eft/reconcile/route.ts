@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { isEftAdmin } from '@/lib/eft'
 import { markEftCollected } from '@/lib/payments/confirm'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 
@@ -39,6 +40,13 @@ export async function POST(req: NextRequest) {
 
   const result = await markEftCollected(id, typeof body.amount === 'number' ? body.amount : undefined)
   if (!result.ok) return NextResponse.json({ error: result.error || 'collect failed' }, { status: 500 })
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'eft_reconcile',
+    vendorId: id,
+    payload: { amount: result.amount ?? null },
+  })
 
   return NextResponse.json({ ok: true, status: 'collected', amount: result.amount })
 }

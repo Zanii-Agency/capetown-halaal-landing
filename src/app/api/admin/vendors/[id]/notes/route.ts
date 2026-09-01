@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalStateImpl, type PortalState } from '@/lib/portal-state'
 import { requireOperator } from '@/lib/admin-rbac'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -114,6 +115,13 @@ export async function POST(
       console.error('[admin/notes POST] update error:', updErr.message)
       return NextResponse.json({ error: 'Failed to save note' }, { status: 500 })
     }
+
+    await recordAdminAction({
+      actor: { email: adminUser.email, role: adminUser.role ?? null },
+      action: 'edit_notes',
+      vendorId: id,
+      payload: { note_id: newNote.id },
+    })
 
     return NextResponse.json({ note: newNote })
   } catch (err) {

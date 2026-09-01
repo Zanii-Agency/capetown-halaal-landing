@@ -28,6 +28,7 @@ import { createClient } from '@/lib/supabase/server'
 import { executeStallChangeAction, pendingStallChangeRequests } from '@/lib/stall-change-action'
 import { parsePortalState, type PortalState } from '@/lib/portal-state'
 import { TYPE_META, tierLabel, type StallType } from '@/lib/stalls'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -142,6 +143,13 @@ export async function POST(req: NextRequest) {
     if (result.tiers) payload.tiers = result.tiers
     return NextResponse.json(payload, { status })
   }
+
+  await recordAdminAction({
+    actor: { email: user.email ?? null, role: null },
+    action: 'stall_change',
+    vendorId: id,
+    payload: { kind, action, status: result.status, tier: tierOverride || null, note: note || null },
+  })
 
   return NextResponse.json({ ok: true, id, status: result.status, kind })
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isEftAdmin, hasEftMarker, withEftMarker, withoutEftMarker, withNoEftMarker, withoutNoEftMarker } from '@/lib/eft'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 
@@ -56,6 +57,13 @@ export async function POST(req: NextRequest) {
     note: `EFT lane ${action}`,
   })
   if (evErr) console.error('[eft/lane] audit insert failed:', evErr.message)
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'eft_lane',
+    vendorId: id,
+    payload: { action, before: hasEftMarker(notes) ? 'in_lane' : 'out', after: action === 'add' ? 'in_lane' : action === 'remove' ? 'out' : action },
+  })
 
   return NextResponse.json({ ok: true })
 }
