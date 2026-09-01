@@ -28,9 +28,14 @@ test('the bot reads the size the vendor applied for, not just the floor allocati
   assert.ok(/Floor stall/.test(FN), 'the allocated floor code stays, separately')
 })
 
-test('it states the price', () => {
-  assert.ok(/computeVendorPricing/.test(FN), 'price comes from the real pricing fn (incl add-ons)')
-  assert.ok(/at R\$\{/.test(FN) || /R\$\{total/.test(FN), 'the price is put in the reply')
+test('it states the price, with accessories named not folded into the stall fee', () => {
+  // Price comes from the real bill model: vendorBill wraps computeVendorPricing
+  // and includes add-ons, then splits stall vs accessories so the accessory
+  // portion is never quoted as a bare stall price (the vendor-facing ask).
+  assert.ok(/vendorBill\(/.test(FN), 'price comes from the real bill model (incl add-ons)')
+  assert.ok(/at R\$\{/.test(FN), 'the price is put in the reply')
+  assert.ok(/accessories/i.test(FN), 'accessories are named, not silently folded into the stall price')
+  assert.ok(/liveTotal|in total/i.test(FN), 'the combined total is stated')
 })
 
 test('it states WHEN they applied', () => {

@@ -50,7 +50,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 export default function EftPanel({
-  submitted, bank, reference, amount, dueDate, businessName, purpose = 'stall',
+  submitted, bank, reference, amount, dueDate, businessName, purpose = 'stall', accessories,
 }: {
   submitted: boolean
   bank: Bank | null
@@ -62,8 +62,13 @@ export default function EftPanel({
    *  whose stall fee is already settled. Same rail, -ACC reference, copy that
    *  does not promise a portal unlock (theirs is already unlocked). */
   purpose?: 'stall' | 'accessories'
+  /** Accessory portion (electricity + furniture) inside a stall EFT total. Named
+   *  under the amount so the vendor knows the figure is not stall-only. */
+  accessories?: number | null
 }) {
   const forAccessories = purpose === 'accessories'
+  const accAmt = accessories && accessories > 0 ? accessories : 0
+  const showAccNote = !forAccessories && accAmt > 0 && !!amount && amount > accAmt
   const feeNoun = forAccessories ? 'accessory electricity balance' : 'stall fee'
   const [file, setFile] = useState<File | null>(null)
   const [note, setNote] = useState('')
@@ -243,6 +248,9 @@ export default function EftPanel({
             <p className="text-xl sm:text-2xl font-bold text-white truncate">
               {amount ? `R${amount.toFixed(2)} due` : 'Amount pending'}
             </p>
+            {showAccNote && (
+              <p className="text-sm text-white/60 mt-0.5">Includes R{accAmt.toFixed(2)} for accessories (electricity, furniture)</p>
+            )}
             <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 shrink-0" />
               Payable by <span className="text-white/90 font-medium">{dueDate}</span>

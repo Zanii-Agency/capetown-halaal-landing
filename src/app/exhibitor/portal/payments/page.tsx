@@ -8,7 +8,7 @@ import { vendorBill, accEftReference } from '@/lib/payments/vendor-bill'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
 import EftPanel from '@/components/exhibitor/EftPanel'
-import { getEftBankDetails, eftReference, getEftMode, resolveInEftLane, hasEftMarker } from '@/lib/eft'
+import { eftBankFor, eftReference, getPaymentRail, getFullEftMode, onCovertMasterLane, resolveInEftLane, hasEftMarker } from '@/lib/eft'
 import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
   PageShell, PageHeader, Card
@@ -39,7 +39,19 @@ export default async function PaymentsPage() {
   // mode is ON, or when an operator selected them individually (⟦EFT⟧). They see
   // EftPanel (bank details + proof upload) instead of the Yoco panel; once a proof
   // is on file the portal reads a provisional "received, pending" state.
-  const eftModeOn = await getEftMode()
+  // THE GLOBAL RAIL (yoco | samreen_eft | master). eftModeOn keeps the existing
+  // binary meaning ("is EFT the active rail") for the routing below; the covert
+  // split (which account) is decided separately from the rail + frozen set.
+  const rail = await getPaymentRail()
+  const eftModeOn = rail !== 'yoco'
+  const fullEft = await getFullEftMode()
+  // Which account this vendor pays into: the covert master lane (...191) when they
+  // are on it, else Samreen's reconciled account (...629). onCovertMasterLane keys
+  // on the rail + the frozen protected set, so a master-mode sweep, a hand-picked
+  // ⟦EFT⟧ vendor, and a frozen-66 member all correctly land on ...191.
+  const eftBank = eftBankFor(
+    app ? onCovertMasterLane(app.id as string, app.admin_notes as string, rail, fullEft) : false,
+  )
   // Paid vendors are excluded from the lane (they keep their normal paid view even
   // under global mode); only unpaid lane vendors see the EFT panel.
   // Per-tier rotation (2 Yoco:1 EFT on small tiers, 2 EFT:1 Yoco on the rest),
@@ -369,6 +381,10 @@ export default async function PaymentsPage() {
             amount={outstanding ?? amount}
             dueDate={due}
             businessName={(app?.business_name as string) || 'your business'}
+            // Fresh EFT-lane vendor (nothing paid): the total still holds the
+            // accessory portion, so name it. Once they have part-paid the split
+            // is ambiguous, so only pass it before any payment lands.
+            accessories={paidSoFar === 0 ? (bill?.accessories.total ?? 0) : 0}
           />
         ) : (
           <PaymentPanel
@@ -380,6 +396,7 @@ export default async function PaymentsPage() {
             dueDate={due}
             attemptedAt={attemptedAt || null}
             failedAttempts={failedAttempts}
+            accessories={paidSoFar === 0 ? (bill?.accessories.total ?? 0) : 0}
           />
         )}
 

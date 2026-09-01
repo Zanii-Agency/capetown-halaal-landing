@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { CreditCard, CheckCircle2, Clock, Loader2, Info, RefreshCw, MessageSquare } from 'lucide-react'
 
 export default function PaymentPanel({
-  enabled, status, amount, outstanding, reference, dueDate, attemptedAt, failedAttempts, topUpNote,
+  enabled, status, amount, outstanding, reference, dueDate, attemptedAt, failedAttempts, topUpNote, accessories,
 }: {
   enabled: boolean
   status: string
@@ -19,6 +19,10 @@ export default function PaymentPanel({
   /** Sub-line shown when a paid vendor has a balance due. Defaults to the
    *  operator-added-charges wording; the accessories split bill passes its own. */
   topUpNote?: string
+  /** Accessory portion (electricity + furniture) contained in this charge. When
+   *  > 0 the fee box names it so the vendor never reads their accessory-inclusive
+   *  total as a bare stall fee. Only the full stall-payment call passes it. */
+  accessories?: number | null
 }) {
   const params = useSearchParams()
   const justPaid = params.get('paid') === '1'
@@ -45,6 +49,12 @@ export default function PaymentPanel({
   const isStalePending = !isPaidStatus && status === 'pending' && attemptAgeMs >= PENDING_TTL_MIN * 60_000
   const tooManyFails = (failedAttempts || 0) >= 3
   const showPayBlock = !fullyPaid && (topUpDue || !isFreshPending || retrying || cancelled || failed || isStalePending)
+  // Accessory portion inside a full stall payment: name it so the headline
+  // amount is never read as a bare stall fee. Skipped for top-ups (the topUpNote
+  // already frames those) and when the split does not add up cleanly.
+  const accAmt = accessories && accessories > 0 ? accessories : 0
+  const stallAmt = (payAmount || 0) - accAmt
+  const showAccBreakdown = !fullyPaid && !topUpDue && accAmt > 0 && stallAmt >= 0
 
   async function payByCard() {
     setPaying(true); setError(null)
@@ -69,10 +79,13 @@ export default function PaymentPanel({
             {fullyPaid ? <CheckCircle2 className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
           </div>
           <div className="min-w-0">
-            <p className={`text-sm ${fullyPaid ? 'text-green-700' : 'text-white/60'}`}>{topUpDue ? 'Additional payment due' : 'Stall fee'}</p>
+            <p className={`text-sm ${fullyPaid ? 'text-green-700' : 'text-white/60'}`}>{topUpDue ? 'Additional payment due' : showAccBreakdown ? 'Stall fee + accessories' : 'Stall fee'}</p>
             <p className={`text-xl sm:text-2xl font-bold truncate ${fullyPaid ? 'text-green-900' : 'text-white'}`}>
               {fullyPaid ? 'Paid' : payAmount ? `R${payAmount.toFixed(2)} due` : 'Amount pending'}
             </p>
+            {showAccBreakdown && (
+              <p className="text-sm text-white/60 mt-0.5">Stall R{stallAmt.toFixed(2)} + accessories R{accAmt.toFixed(2)} (electricity, furniture)</p>
+            )}
             {!fullyPaid && <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 shrink-0" /> {topUpDue ? (topUpNote || 'Extra charges were added to your stall') : `Payable by ${dueDate}`}{reference ? ` · ref ${reference}` : ''}</p>}
           </div>
         </div>

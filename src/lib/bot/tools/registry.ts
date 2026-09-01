@@ -319,8 +319,16 @@ async function checkApplicationStatus(vendorId: string): Promise<string> {
   const size = row.preferred_booth_tier ? tierLabel(row.preferred_booth_tier) : ''
   let sizeLine = size
   try {
-    const total = computeVendorPricing({ preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements }).total
-    if (size && total) sizeLine = `${size} at R${total.toLocaleString('en-ZA')}`
+    // Quote the SAME split the Payments page and invoice show: stall fee plus
+    // accessories (electricity/furniture), never the accessory-inclusive total
+    // dressed up as a bare stall price. A vendor who reads "R6,500" as their
+    // stall fee is surprised later, so the add-on is named here every time.
+    const bill = vendorBill({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null })
+    if (size && bill.liveTotal) {
+      sizeLine = bill.accessories.total > 0
+        ? `${size} at R${bill.stall.price.toLocaleString('en-ZA')} for the stall plus R${bill.accessories.total.toLocaleString('en-ZA')} for accessories (electricity, furniture), R${bill.liveTotal.toLocaleString('en-ZA')} in total`
+        : `${size} at R${bill.liveTotal.toLocaleString('en-ZA')}`
+    }
   } catch { /* keep the size without a price */ }
   const applied = row.created_at
     ? new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
