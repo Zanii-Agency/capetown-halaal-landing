@@ -106,7 +106,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'request_password_reset',
-    description: "Trigger a password-reset email to THIS vendor's on-file email so they can regain portal access. Call when a verified vendor says they cannot log in, lost their password, or their temporary password expired.",
+    description: "Send THIS vendor a ONE-TAP link, right here on WhatsApp, that logs them straight into their portal with no password. Call whenever a verified vendor cannot log in, lost or forgot their password, their temporary password does not work, or they cannot get into the portal to pay or upload proof. Do NOT tell them to check their email or set a password: the link this sends opens their portal directly. It also emails a backup automatically.",
     strict: true,
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
@@ -645,6 +645,36 @@ async function requestPasswordReset(session: VendorSession): Promise<string> {
   const vendorId = session.vendorId!
   const row = await ownRow(vendorId)
   if (!row?.email) return `I do not have an email on file for you. Please contact support@youngatheart.co.za.`
+  const firstName = (row.contact_name || '').split(/\s+/)[0]
+
+  // ONE-TAP WHATSAPP LOGIN LINK (2026-09-02). Email reset was the only path and
+  // it failed the exact people who needed it: ~56 approved vendors are stuck on a
+  // temporary password, and even when the email lands they cannot finish the
+  // set-password form on a phone (Sumeez, 2026-09-01). So we lead with a link
+  // sent right here on WhatsApp that logs them straight into their Payments page,
+  // no password, no email. Single-use, expires in 1 hour, only their number gets
+  // it. The email below still fires as a backup. Operator-approved: land them in.
+  try {
+    const { mintPortalLoginLink } = await import('@/lib/exhibitor-auth')
+    const link = await mintPortalLoginLink(row.email)
+    if (link.ok) {
+      // Fire the email backup too, best-effort, without blocking the reply.
+      void fetch('https://cthalaal.co.za/api/exhibitor/send-password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(process.env.CRON_SECRET ? { Authorization: `Bearer ${process.env.CRON_SECRET}` } : {}) },
+        body: JSON.stringify({ email: row.email }),
+      }).catch(() => {})
+      return `No problem${firstName ? ' ' + firstName : ''}, here is a one-tap link to take you straight into your portal, no password needed:\n\n${link.url}\n\nJust tap it on this phone. It opens your Payments page where you can pay or upload your proof. The link is just for you and works for the next hour. I have also emailed it as a backup.`
+    }
+    if (link.reason === 'no_account') {
+      await escalateToHuman(session, `Vendor ${row.business_name || ''} (${row.email}) asked to log in but has NO portal account provisioned. Needs the team to set it up.`).catch(() => {})
+      return `It looks like your portal login is not fully set up yet${firstName ? ', ' + firstName : ''}. I have flagged it to the team and someone will sort your access out with you here shortly.`
+    }
+    // mint_failed: fall through to the email-only path below.
+  } catch (e) {
+    console.error('[tool request_password_reset] one-tap link failed, falling back to email:', (e as Error).message)
+  }
+
   // NEVER CLAIM A SEND THIS FUNCTION DID NOT VERIFY.
   //
   // This used to `await fetch(...)` and throw the response away, then return

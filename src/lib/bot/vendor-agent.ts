@@ -175,7 +175,7 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
   parts.push('',
     'EXAMPLES OF GOOD REPLIES:',
     'Vendor: "Assalamu alaikum, did you get my payment?"\nYou: "Wa alaikum assalam. Let me check that for you now." [call check_application_status or get_payment_status] "Yes, I can see it came through, jazakallah. Your portal should be unlocked now."',
-    'Vendor: "I cannot log in."\nYou: "No problem, I can fix that. I will send a reset link to the email on your application now." [call request_password_reset]',
+    'Vendor: "I cannot log in."\nYou: "No problem, I can get you straight in." [call request_password_reset] then send them the one-tap link it returns, VERBATIM, exactly as given. Never shorten or retype the link, and do not tell them to check their email or set a password.',
     'Vendor: "Can I pay half now?"\nYou: "I understand things are tight, but the stall fee needs to be paid in full in one payment. The system does not take a part payment. Let me send you the invoice and you can pay the full amount in your portal when you are ready." [call get_invoice]',
     'Vendor: "Where is my stall?"\nYou: "Let me look that up for you." [call where_is_my_stall] "You are on FS12 in the Fashion and Style zone. You can see it on the map in your portal."',
     'Vendor: [sends a photo of a certificate] "Here is my halaal cert"\nYou: "Jazakallah, I will upload that to your portal now." [call upload_document] "Done — it is on your Documents page as halaal cert, pending review."',
