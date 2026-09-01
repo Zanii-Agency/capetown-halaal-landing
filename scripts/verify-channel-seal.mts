@@ -18,7 +18,7 @@ import { loadWhatsAppThreads, loadMailThreads } from '../src/lib/inbox/channel-t
 import { vendorInOwnerScope } from '../src/lib/eft'
 
 const SAMREEN = 'capetownhalaal@gmail.com'
-const MASTER = 'dev@cthalaal.co.za'  // EFT_ADMIN_EMAIL. NOT taona@, who is lane-restricted himself.
+const MASTER = 'dev@cthalaal.co.za'  // the confined EFT mailbox. taona@ (the master) is now also an EFT admin (2026-09-02); this script only checks the owner (Samreen) seal, which is unaffected.
 
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 

@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -120,6 +120,19 @@ test('isOperatorPreviewAddress matches the operator preview inbox (case-insensit
   assert.ok(isOperatorPreviewAddress('TaonaC96@Gmail.com'))
   assert.ok(!isOperatorPreviewAddress('nazleyparker3@gmail.com'))
   assert.ok(!isOperatorPreviewAddress(null))
+})
+
+test('isEftAdmin: the master and the EFT mailbox are allowed; the festival owner and Altaf are not', () => {
+  // Regression 2026-09-02: Confirm Paid on an EFT-lane vendor returned `forbidden`
+  // for the master because only dev@cthalaal.co.za was exempt, not the login he
+  // actually uses (taona@cthalaal.co.za). The seal must still wall the owner side.
+  assert.equal(isEftAdmin('dev@cthalaal.co.za'), true)      // confined EFT mailbox
+  assert.equal(isEftAdmin('taona@cthalaal.co.za'), true)    // the master
+  assert.equal(isEftAdmin('TAONA@Cthalaal.co.za'), true)    // case + trim insensitive
+  assert.equal(isEftAdmin('capetownhalaal@gmail.com'), false) // festival owner (Samreen) stays walled
+  assert.equal(isEftAdmin('altaafkumandan@gmail.com'), false) // her internal account stays walled
+  assert.equal(isEftAdmin(null), false)
+  assert.equal(isEftAdmin(''), false)
 })
 
 test('mentionsEft fires on EFT replies, not on unrelated ones', () => {

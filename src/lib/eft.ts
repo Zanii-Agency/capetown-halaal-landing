@@ -37,13 +37,31 @@ const NOEFT_MARKER = '⟦NOEFT⟧'
 // ⟦EFT⟧. Distinct token, no collision with /⟦EFT⟧/ (the char after ⟦ is 'N').
 const NOEFT_RE = /⟦NOEFT⟧/
 
-/** Admin email allowed to see and operate the /admin/eft surface. Env-overridable
- *  so the gate can move without a code change. Compared lower-cased. */
+/** The confined mailbox that RECEIVES EFT backstops (a real, monitored inbox).
+ *  Distinct from the set of identities allowed to OPERATE the EFT surface below;
+ *  notify.ts and master-only-senders.ts want this single address. Env-overridable. */
 export const EFT_ADMIN_EMAIL = (process.env.EFT_ADMIN_EMAIL || 'dev@cthalaal.co.za').toLowerCase()
 
-/** True when the caller's email may use the EFT surface. */
+/** Identities allowed to SEE and OPERATE the EFT surface: the confined EFT
+ *  mailbox AND the master (Taona), who runs the lane and already mirrors
+ *  everything the festival owner sees. This is deliberately NOT the festival
+ *  owner (capetownhalaal@gmail.com) or her internal accounts (Altaf) — the whole
+ *  seal exists to wall THEM, and they stay walled.
+ *
+ *  Bug fixed 2026-09-02: this gate was a single equality against EFT_ADMIN_EMAIL
+ *  (dev@cthalaal.co.za). The master logs in as taona@cthalaal.co.za, so every EFT
+ *  surface refused him: Confirm Paid on an EFT-lane vendor (Gaya Collection)
+ *  returned `forbidden` via laneScopeFor -> blocksApplicationId, and the /admin/eft
+ *  console, finance, vendor-list, manifest and inbox all hid the lane from him.
+ *  An earlier fix exempted dev@ but not the login he actually uses. */
+const EFT_ADMIN_EMAILS: ReadonlySet<string> = new Set<string>(
+  [EFT_ADMIN_EMAIL, ...(process.env.EFT_ADMIN_EMAILS || 'taona@cthalaal.co.za')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)],
+)
+
+/** True when the caller's email may use the EFT surface (master or EFT mailbox). */
 export function isEftAdmin(email?: string | null): boolean {
-  return !!email && email.toLowerCase() === EFT_ADMIN_EMAIL
+  return !!email && EFT_ADMIN_EMAILS.has(email.toLowerCase().trim())
 }
 
 /**
