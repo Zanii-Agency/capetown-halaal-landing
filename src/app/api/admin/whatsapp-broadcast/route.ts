@@ -48,6 +48,7 @@ import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/inter
 import { parseAllocation } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
 import { assertRole } from '@/lib/admin-rbac'
+import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -126,6 +127,8 @@ const ALLOWED_WA_TEMPLATES = new Set<string>([
   'vendor_stall_allocation',
   'vendor_setup_reminder',
   'contract_sign_reminder',
+  // Paid-cohort message suite (flexible, two-way UTILITY templates).
+  ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
 ])
 
 // ---------------------------------------------------------------------------
@@ -476,16 +479,18 @@ export async function POST(req: NextRequest) {
             : (body.custom_message || '')
           const send = await sendTemplate({
             to: phoneRaw,
+            // Positional vars are mapped per template. The paid-cohort suite is
+            // a strict [first_name, message] pair; legacy templates keep the
+            // [name, business, stall, message] order. Meta WABA rejects empty
+            // positional vars, so the helper drops empty legacy slots and falls
+            // back to 'there' for a missing name.
             template: waTemplate,
-            variables: [
-              // Meta WABA rejects empty positional vars, so we fall back to
-              // 'there' here. Email uses the interpolate helper which drops
-              // the placeholder gracefully instead.
-              vars.first_name || 'there',
-              vars.business_name || '',
-              vars.stall_code || '',
-              waCustom,
-            ].filter((v) => v.length > 0),
+            variables: waBroadcastVariables(waTemplate, {
+              firstName: vars.first_name,
+              businessName: vars.business_name,
+              stallCode: vars.stall_code,
+              message: waCustom,
+            }),
           })
           if (send.ok) {
             results.wa.sent++

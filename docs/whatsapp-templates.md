@@ -63,6 +63,174 @@ Your invoice and stall details are in your portal at https://cthalaal.co.za/exhi
 
 ---
 
+## 3. `paid_vendor_update`
+
+Flexible two-way message to a paid vendor about their confirmed stall. Sent to
+the `paid=true` audience (Yoco / master-EFT / cash / waived / Samreen). UTILITY,
+so it is NOT marketing-capped like `general_announcement`. Invites a reply.
+
+**Body:**
+
+```
+Hi {{1}}, a message from Young at Heart Festival 2026 about your confirmed stall:
+
+{{2}}
+
+You can reply here on WhatsApp if you have any questions. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = your message (single flowing line; raw newlines are stripped before send)
+
+**Sample (Samreen example):**
+> Hi Samreen, a message from Young at Heart Festival 2026 about your confirmed stall:
+>
+> Setup opens Thursday 10 December from 09:00. Please bring your vehicle pass and stall confirmation.
+>
+> You can reply here on WhatsApp if you have any questions. The YAH Team.
+
+---
+
+## 4. `paid_vendor_action_required`
+
+Ask a paid vendor to do one thing for their confirmed stall. UTILITY. Invites a
+reply and points to the portal as a secondary path.
+
+**Body:**
+
+```
+Hi {{1}}, one thing needs your attention for your confirmed stall at Young at Heart Festival 2026:
+
+{{2}}
+
+Reply here on WhatsApp and we will help, or complete it in your portal: https://cthalaal.co.za/exhibitor/portal. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = the action needed (single flowing line; raw newlines are stripped before send)
+
+**Sample (Samreen example):**
+> Hi Samreen, one thing needs your attention for your confirmed stall at Young at Heart Festival 2026:
+>
+> Upload your logo so you appear in the public listings.
+>
+> Reply here on WhatsApp and we will help, or complete it in your portal: https://cthalaal.co.za/exhibitor/portal. The YAH Team.
+
+---
+
+## 5. `paid_vendor_question`
+
+Ask a paid vendor a question and collect their answer by reply. UTILITY.
+
+**Body:**
+
+```
+Hi {{1}}, a quick question about your confirmed stall at Young at Heart Festival 2026:
+
+{{2}}
+
+Just reply here on WhatsApp with your answer. Thank you. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = your question (single flowing line; raw newlines are stripped before send)
+
+**Sample (Samreen example):**
+> Hi Samreen, a quick question about your confirmed stall at Young at Heart Festival 2026:
+>
+> What time will your team arrive on setup day?
+>
+> Just reply here on WhatsApp with your answer. Thank you. The YAH Team.
+
+---
+
+## 6. `paid_vendor_setup_details`
+
+Setup-day logistics for a paid vendor's confirmed stall. UTILITY. Invites a reply.
+
+**Body:**
+
+```
+Hi {{1}}, setup details for your confirmed stall at Young at Heart Festival 2026:
+
+{{2}}
+
+Bring your vehicle pass and stall confirmation on the day. Reply here on WhatsApp if anything is unclear. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = the setup details (single flowing line; raw newlines are stripped before send)
+
+---
+
+## 7. `paid_vendor_schedule_update`
+
+A timing or schedule change for a paid vendor's confirmed stall. UTILITY.
+
+**Body:**
+
+```
+Hi {{1}}, an update to the schedule for your confirmed stall at Young at Heart Festival 2026:
+
+{{2}}
+
+Please note the change. Reply here on WhatsApp if this affects your plans. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = the schedule change (single flowing line; raw newlines are stripped before send)
+
+---
+
+## 8. `paid_vendor_reminder`
+
+A friendly reminder to a paid vendor about their confirmed stall. UTILITY.
+
+**Body:**
+
+```
+Hi {{1}}, a friendly reminder for your confirmed stall at Young at Heart Festival 2026:
+
+{{2}}
+
+Reply here on WhatsApp if you need a hand. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = the reminder (single flowing line; raw newlines are stripped before send)
+
+---
+
+## 9. `paid_vendor_good_news`
+
+A positive update or welcome note to a paid vendor about their confirmed stall.
+Submitted as UTILITY but **Meta approved it as MARKETING** (2026-09-02): the
+positive/welcome register reads promotional. It is therefore subject to the
+131049 marketing cap and can under-deliver, like `festival_announcement` did.
+Kept by operator decision. For guaranteed delivery, use `paid_vendor_update`.
+
+**Body:**
+
+```
+Hi {{1}}, good news about your confirmed stall at Young at Heart Festival 2026:
+
+{{2}}
+
+We are glad to have you with us. Reply here on WhatsApp anytime. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = the good news (single flowing line; raw newlines are stripped before send)
+
+---
+
 ## How to submit to Meta
 
 ### Option A: Auto-submit via Graph API (fastest)
@@ -70,6 +238,13 @@ Your invoice and stall details are in your portal at https://cthalaal.co.za/exhi
 ```
 node scripts/submit-whatsapp-template.mjs vendor_application_approved
 node scripts/submit-whatsapp-template.mjs vendor_payment_confirmation
+node scripts/submit-whatsapp-template.mjs paid_vendor_update
+node scripts/submit-whatsapp-template.mjs paid_vendor_action_required
+node scripts/submit-whatsapp-template.mjs paid_vendor_question
+node scripts/submit-whatsapp-template.mjs paid_vendor_setup_details
+node scripts/submit-whatsapp-template.mjs paid_vendor_schedule_update
+node scripts/submit-whatsapp-template.mjs paid_vendor_reminder
+node scripts/submit-whatsapp-template.mjs paid_vendor_good_news
 ```
 
 Reads template content from this file, posts to `https://graph.facebook.com/v20.0/{WHATSAPP_BUSINESS_ID}/message_templates`. Returns Meta's submission ID. Approval typically takes 5-60 minutes.

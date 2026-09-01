@@ -314,6 +314,15 @@ export default function BroadcastPage() {
     setSpinVariants(null)
   }
 
+  // When messaging the PAID cohort over WhatsApp in write-your-own mode, route
+  // the send through the `paid_vendor_update` UTILITY template instead of the
+  // marketing-capped `general_announcement`. UTILITY delivers past the 131049
+  // marketing cap (which silently dropped festival_announcement 0/1000) and its
+  // approved body invites a reply, so the vendor can reply on WhatsApp. The
+  // operator's text fills {{2}}; the greeting + reply invite are the fixed frame.
+  const paidWaDelivery =
+    (channel === 'wa' || channel === 'both') && mode === 'free_text' && filters.paid === 'true'
+
   const send = async () => {
     setSending(true)
     setSendError(null)
@@ -327,6 +336,7 @@ export default function BroadcastPage() {
           channel,
           filters: filtersToBody(filters),
           template_key: mode === 'template' ? templateKey : 'general_announcement',
+          wa_template: paidWaDelivery ? 'paid_vendor_update' : undefined,
           custom_message: customMessage,
           free_text: mode === 'free_text' ? freeText : undefined,
           free_text_subject: mode === 'free_text' ? freeTextSubject : undefined,
@@ -442,6 +452,14 @@ export default function BroadcastPage() {
               </button>
             </div>
           </label>
+          {paidWaDelivery && (
+            <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
+              Paid vendors get this on WhatsApp via the <span className="font-semibold">paid_vendor_update</span> template.
+              It delivers reliably (a utility template, not the marketing-capped announcement) and invites a reply, so
+              vendors can reply straight back on WhatsApp. Keep it to a single flowing message: line breaks are collapsed
+              before send, and the greeting plus reply invite are added automatically around your text.
+            </p>
+          )}
         </section>
       )}
 
