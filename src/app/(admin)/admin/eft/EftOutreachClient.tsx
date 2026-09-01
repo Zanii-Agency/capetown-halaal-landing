@@ -6,7 +6,8 @@
 // so em-dash scrubbing, mail/wa logging into the EFT Messages inbox, per-vendor
 // event trail, rate limiting and the template allowlist are all inherited.
 //
-// The audience is computed server-side as onMasterLane vendors (a subset of what
+// The audience is computed server-side as onEftLane vendors, intersected with the
+// Samreen wall (a subset of what
 // the inbox wall already hides from Samreen), so nothing composed here can reach
 // her. Sends are chunked to the route's 200-recipient cap.
 

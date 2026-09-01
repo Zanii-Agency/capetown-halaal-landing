@@ -523,6 +523,21 @@ export function onEftLane(
   )
 }
 
+/** @deprecated Use {@link onEftLane}. This is the OLD, too-broad cohort
+ *  (`!vendorInOwnerScope` = EVERY approved-but-unpaid vendor, ~170). It targeted
+ *  merely-unpaid applicants who never touched EFT, which was wrong for both the
+ *  Outreach audience and the pay-reminder exclusion (Taona 2026-09-02). Kept only
+ *  so a couple of one-off maintenance scripts keep compiling; do not use it in new
+ *  code, and never for the Outreach audience or the cron. */
+export function onMasterLane(
+  adminNotes: string | null | undefined,
+  paidAt?: string | null,
+  identity?: LaneIdentity,
+): boolean {
+  if (identity && isInternalAccount(identity.email, identity.phone)) return false
+  return !vendorInOwnerScope(adminNotes, paidAt)
+}
+
 /** Hand a vendor to the festival owner regardless of payment state. */
 export function withOwnerVisibleMarker(adminNotes: string | null | undefined): string {
   const notes = adminNotes || ''
