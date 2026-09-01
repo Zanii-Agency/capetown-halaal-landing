@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference, onMasterLane } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference, onMasterLane, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
@@ -190,6 +190,12 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
 
   // ---- Payments tab: gather the actionable lane set ----
   const globalOn = await getEftMode()
+  // Post-cutover EFT proofs from non-frozen vendors belong to Samreen's new
+  // EFT-proofs lane (/admin/eft-proofs), NOT this covert master lane (Taona
+  // 2026-09-02). The frozen protected 66 stay here regardless. eftProofVisibleToOwner
+  // is the single source of "linked to Samreen's new lane", so reusing it keeps the
+  // two surfaces from ever disagreeing about who owns a vendor.
+  const fullEft = await getFullEftMode()
 
   const { data: apps } = await db
     .from('vendor_applications')
@@ -248,6 +254,11 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
 
   for (const a of (apps || []) as Array<Record<string, unknown>>) {
     const notes = (a.admin_notes as string) || ''
+    // On Samreen's new lane? Then it is hers, not the master's: drop it entirely
+    // (neither a lane row nor an add-candidate). The fence only fires for a
+    // post-cutover proof from a vendor NOT in the frozen 66, so the covert cohort
+    // is untouched.
+    if (eftProofVisibleToOwner(a.id as string, notes, fullEft)) continue
     const contact: Contact = {
       id: a.id as string,
       business_name: a.business_name as string | null,
