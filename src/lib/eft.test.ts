@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -457,4 +457,72 @@ test('getEftMode env override forces the lane on or off without touching the DB'
     if (original === undefined) delete process.env.EFT_MODE
     else process.env.EFT_MODE = original
   }
+})
+
+test('getPaymentRail env override maps to the three rails; getEftMode derives from it', async () => {
+  const original = process.env.EFT_MODE
+  try {
+    process.env.EFT_MODE = 'master'
+    assert.equal(await getPaymentRail(), 'master')
+    assert.equal(await getEftMode(), true, 'master is an EFT rail')
+    for (const v of ['on', '1', 'true', 'yes', 'eft', 'samreen_eft']) {
+      process.env.EFT_MODE = v
+      assert.equal(await getPaymentRail(), 'samreen_eft', `${v} -> samreen_eft`)
+      assert.equal(await getEftMode(), true, `${v} is an EFT rail`)
+    }
+    for (const v of ['off', '0', 'false', 'no', 'yoco']) {
+      process.env.EFT_MODE = v
+      assert.equal(await getPaymentRail(), 'yoco', `${v} -> yoco`)
+      assert.equal(await getEftMode(), false, `${v} is card-only`)
+    }
+  } finally {
+    if (original === undefined) delete process.env.EFT_MODE
+    else process.env.EFT_MODE = original
+  }
+})
+
+test('onCovertMasterLane: master sweeps everyone; else only ⟦EFT⟧ + the frozen set', () => {
+  const frozen = { protectedIds: new Set(['frozen1']) }
+  const plain = 'ordinary vendor'
+  const marked = withEftMarker('')
+
+  // 'master' rail: the WHOLE population is covert (pays into ...191, hidden).
+  assert.equal(onCovertMasterLane('anyone', plain, 'master', null), true)
+  assert.equal(onCovertMasterLane('frozen1', plain, 'master', frozen), true)
+
+  // 'samreen_eft' rail: only the pinned cohort is covert.
+  assert.equal(onCovertMasterLane('x', plain, 'samreen_eft', frozen), false, 'plain vendor is Samreen’s')
+  assert.equal(onCovertMasterLane('x', marked, 'samreen_eft', frozen), true, '⟦EFT⟧ hand-pick stays covert')
+  assert.equal(onCovertMasterLane('frozen1', plain, 'samreen_eft', frozen), true, 'frozen 66 stay covert')
+
+  // 'yoco' rail: a ⟦EFT⟧ carve-out vendor still pays into the covert ...191 account.
+  assert.equal(onCovertMasterLane('x', marked, 'yoco', null), true)
+  assert.equal(onCovertMasterLane('x', plain, 'yoco', null), false)
+})
+
+test('eftBankFor picks the covert ...191 account only when covert', () => {
+  assert.equal(eftBankFor(true).accountNumber, getMasterBankDetails().accountNumber)
+  assert.equal(eftBankFor(false).accountNumber, getEftBankDetails().accountNumber)
+  assert.notEqual(getMasterBankDetails().accountNumber, getEftBankDetails().accountNumber, 'the two rails must never share an account')
+})
+
+test('revealsPaymentArrangement strips the covert ...191 account, not just Samreen\'s ...629', () => {
+  const master = getMasterBankDetails().accountNumber
+  const samreen = getEftBankDetails().accountNumber
+  // The covert account quoted back to Samreen must be hidden (this was the leak).
+  assert.equal(revealsPaymentArrangement(`Payment done to ${master}, thanks`), true, 'covert ...191 must be stripped')
+  // Samreen's own account still hidden (unchanged).
+  assert.equal(revealsPaymentArrangement(`Payment done to ${samreen}, thanks`), true)
+  // A refusal is still shown even if it names EFT (unchanged carve-out).
+  assert.equal(revealsPaymentArrangement('Stall fees are card only through Yoco, there are no banking details.'), false)
+})
+
+test('eftProofVisibleToOwner never surfaces a ⟦EFT⟧ vendor, even with a post-cutover proof', () => {
+  const fullEft = { startedAt: '2026-08-26T00:00:00.000Z', protectedIds: new Set<string>() }
+  const postCutoverProof = { v: 1, payment: { eft_submitted_at: '2026-08-27T10:00:00.000Z' } }
+  const visibleNotes = updatePortalStateImpl('note', postCutoverProof as never)
+  // A plain non-frozen vendor with a post-cutover proof IS visible to the owner...
+  assert.equal(eftProofVisibleToOwner('v1', visibleNotes, fullEft), true)
+  // ...but the SAME vendor once hand-picked onto the covert lane (⟦EFT⟧) is not.
+  assert.equal(eftProofVisibleToOwner('v1', withEftMarker(visibleNotes), fullEft), false)
 })

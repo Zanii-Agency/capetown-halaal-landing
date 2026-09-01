@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, hasNoEftMarker, getEftMode, getEftBankDetails, eftReference, onEftLane, vendorCommsInOwnerScope, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, hasNoEftMarker, getPaymentRail, getEftBankDetails, getMasterBankDetails, eftReference, onEftLane, vendorCommsInOwnerScope, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
 import { isTestVendor } from '@/lib/test-vendors'
 import { parsePortalState } from '@/lib/portal-state'
@@ -194,7 +194,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
   }
 
   // ---- Payments tab: gather the actionable lane set ----
-  const globalOn = await getEftMode()
+  const rail = await getPaymentRail()
   // Post-cutover EFT proofs from non-frozen vendors belong to Samreen's new
   // EFT-proofs lane (/admin/eft-proofs), NOT this covert master lane (Taona
   // 2026-09-02). The frozen protected 66 stay here regardless. eftProofVisibleToOwner
@@ -363,7 +363,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     <div className="p-6">
       {header}
       <OpsPanel digest={digest} />
-      <EftAdminClient globalOn={globalOn} bank={getEftBankDetails()} rows={rows} candidates={candidates} excluded={excluded} />
+      <EftAdminClient rail={rail} masterBank={getMasterBankDetails()} samreenBank={getEftBankDetails()} rows={rows} candidates={candidates} excluded={excluded} />
     </div>
   )
 }

