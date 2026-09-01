@@ -48,7 +48,7 @@ import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/inter
 import { parseAllocation } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
 import { assertRole } from '@/lib/admin-rbac'
-import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
+import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -129,6 +129,8 @@ const ALLOWED_WA_TEMPLATES = new Set<string>([
   'contract_sign_reminder',
   // Paid-cohort message suite (flexible, two-way UTILITY templates).
   ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
+  // Payment-follow-up suite (unpaid cohort; audience gated at the filter/lane layer).
+  ...PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
 ])
 
 // ---------------------------------------------------------------------------

@@ -262,6 +262,69 @@ You can reply here on WhatsApp if you have any questions. The YAH Team.
 
 ---
 
+## 11. `payment_check`
+
+Follow up with a vendor on their stall payment. Flexible two-way UTILITY, same
+`[first_name, message]` shape as the other suites. Copy says "your stall" (not
+"confirmed") because these go to unpaid vendors. Audience is gated at the send
+layer, never in the body (which carries no amount or PII).
+
+**Body:**
+
+```
+Hi {{1}}, we are checking in on the payment for your stall at Young at Heart Festival 2026:
+
+{{2}}
+
+Reply here on WhatsApp if you have any questions or need the payment link again. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = your message (single flowing line; raw newlines are stripped before send)
+
+---
+
+## 12. `payment_proof_request`
+
+Ask a vendor to reply with proof of a payment they say they made. UTILITY, two-way.
+
+**Body:**
+
+```
+Hi {{1}}, we are confirming the payment for your stall at Young at Heart Festival 2026:
+
+{{2}}
+
+If you have already paid, please reply here on WhatsApp with your proof of payment (a screenshot or PDF). The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = your message (single flowing line; raw newlines are stripped before send)
+
+---
+
+## 13. `payment_arrangement_check`
+
+Check in on an agreed payment plan or extension for a vendor stall. UTILITY, two-way.
+
+**Body:**
+
+```
+Hi {{1}}, we are checking in on the payment arrangement for your stall at Young at Heart Festival 2026:
+
+{{2}}
+
+Reply here on WhatsApp to confirm or if anything has changed. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = your message (single flowing line; raw newlines are stripped before send)
+
+---
+
 ## How to submit to Meta
 
 ### Option A: Auto-submit via Graph API (fastest)
@@ -277,6 +340,9 @@ node scripts/submit-whatsapp-template.mjs paid_vendor_schedule_update
 node scripts/submit-whatsapp-template.mjs paid_vendor_reminder
 node scripts/submit-whatsapp-template.mjs paid_vendor_good_news
 node scripts/submit-whatsapp-template.mjs master_lane_update
+node scripts/submit-whatsapp-template.mjs payment_check
+node scripts/submit-whatsapp-template.mjs payment_proof_request
+node scripts/submit-whatsapp-template.mjs payment_arrangement_check
 ```
 
 Reads template content from this file, posts to `https://graph.facebook.com/v20.0/{WHATSAPP_BUSINESS_ID}/message_templates`. Returns Meta's submission ID. Approval typically takes 5-60 minutes.

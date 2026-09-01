@@ -363,6 +363,54 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       { key: 'message', label: 'Your message', placeholder: 'We have received your EFT, thank you.', required: true },
     ],
   },
+  // ---------------------------------------------------------------------------
+  // PAYMENT-CHECK SUITE — added 2026-09-02. Flexible two-way UTILITY templates
+  // for following up on / confirming a vendor's payment. Same [first_name,
+  // message] shape as the paid + master-lane suites. Copy says "your stall"
+  // (not "confirmed") because these go to vendors who have NOT paid yet. Audience
+  // + lane rules are enforced at the send layer (chase 403 gate / broadcast
+  // paid=false filter), never in the template body, which carries no amount/PII.
+  // Submit the exact names below (UTILITY, en) at Meta before they deliver.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'payment_check',
+    label: 'Payment check (2-way)',
+    description: 'Follow up with a vendor on their stall payment. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, we are checking in on the payment for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp if you have any questions or need the payment link again. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'Your stall fee of R3,500 is still outstanding.', required: true },
+    ],
+  },
+  {
+    key: 'payment_proof_request',
+    label: 'Payment proof request (2-way)',
+    description: 'Ask a vendor to reply with proof of a payment they say they made.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, we are confirming the payment for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nIf you have already paid, please reply here on WhatsApp with your proof of payment (a screenshot or PDF). The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'We do not yet see your payment on our side.', required: true },
+    ],
+  },
+  {
+    key: 'payment_arrangement_check',
+    label: 'Payment arrangement check (2-way)',
+    description: 'Check in on an agreed payment plan or extension for a vendor stall.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, we are checking in on the payment arrangement for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp to confirm or if anything has changed. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'Your agreed instalment was due on 15 November.', required: true },
+    ],
+  },
 ]
 
 export function findWaTemplate(key: string): WaTemplateSpec | undefined {
@@ -429,10 +477,23 @@ export const PAID_VENDOR_MESSAGE_TEMPLATE_KEYS = [
  */
 export const MASTER_LANE_MESSAGE_TEMPLATE_KEYS = ['master_lane_update'] as const
 
-// Every two-var [first_name, message] template: paid suite + master-lane suite.
+/**
+ * Payment-follow-up suite. Same [first_name, message] two-var shape, for
+ * checking on / confirming a vendor's payment (unpaid cohort). Own export so the
+ * send-route allowlists and the var mapper pick it up without conflating it with
+ * the paid or master-lane cohorts.
+ */
+export const PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS = [
+  'payment_check',
+  'payment_proof_request',
+  'payment_arrangement_check',
+] as const
+
+// Every two-var [first_name, message] template: paid + master-lane + payment-check.
 const TWO_VAR_MESSAGE_TEMPLATES = new Set<string>([
   ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
   ...MASTER_LANE_MESSAGE_TEMPLATE_KEYS,
+  ...PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
 ])
 
 /**

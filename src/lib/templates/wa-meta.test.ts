@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   waBroadcastVariables,
   PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
+  PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
   findWaTemplate,
 } from './wa-meta'
 
@@ -42,6 +43,20 @@ test('legacy templates keep [name, business, stall, message] and drop empty slot
     }),
     ['Aisha', 'Aisha Eats', 'Hello'], // empty stall dropped, not shifted
   )
+})
+
+test('every payment-check key is a registered UTILITY 2-var template that maps to [name, message]', () => {
+  for (const key of PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS) {
+    const spec = findWaTemplate(key)
+    assert.ok(spec, `${key} missing from WA_META_TEMPLATES`)
+    assert.equal(spec!.category, 'utility', `${key} must be UTILITY to dodge the marketing cap`)
+    assert.equal(spec!.params.length, 2, `${key} must take exactly [first_name, message]`)
+    // The var mapper must treat it as a two-var template, not the legacy 4-slot order.
+    assert.deepEqual(
+      waBroadcastVariables(key, { firstName: 'Aisha', businessName: 'X', stallCode: 'F-1', message: 'Pay please' }),
+      ['Aisha', 'Pay please'],
+    )
+  }
 })
 
 test('every paid-cohort key is registered with 2 params and UTILITY, except the one Meta stamped MARKETING', () => {

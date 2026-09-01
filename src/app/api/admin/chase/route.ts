@@ -35,7 +35,7 @@ import { sendTemplate } from '@/lib/whatsapp/sender'
 import { renderTemplate, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
-import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, MASTER_LANE_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
+import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, MASTER_LANE_MESSAGE_TEMPLATE_KEYS, PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -114,6 +114,8 @@ const ALLOWED_WA_TEMPLATES = new Set<string>([
   ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
   // Master-lane (unpaid EFT cohort) message suite, for the /admin/eft Outreach composer.
   ...MASTER_LANE_MESSAGE_TEMPLATE_KEYS,
+  // Payment-follow-up suite (checking on / confirming a vendor's payment).
+  ...PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
 ])
 
 const CHASE_MAX_RECIPIENTS = 200

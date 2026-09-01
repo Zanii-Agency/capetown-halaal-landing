@@ -46,6 +46,9 @@ const VAR_SAMPLES = {
   paid_vendor_reminder: ['Samreen', 'Please confirm your final stall layout by 1 December.'],
   paid_vendor_good_news: ['Samreen', 'Your stall is now live in the public vendor listings.'],
   master_lane_update: ['Samreen', 'We have received your EFT, thank you.'],
+  payment_check: ['Samreen', 'Your stall fee of R3,500 is still outstanding.'],
+  payment_proof_request: ['Samreen', 'We do not yet see your payment on our side.'],
+  payment_arrangement_check: ['Samreen', 'Your agreed instalment was due on 15 November.'],
 }
 const examples = VAR_SAMPLES[NAME] || []
 
