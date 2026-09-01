@@ -10,7 +10,7 @@
 import type { InboundMedia } from '@/lib/whatsapp'
 import { fetchMediaBytes, sendText, toE164 } from '@/lib/whatsapp'
 import { seeImage, type SeenImage } from '@/lib/bot/see-image'
-import { markVendorToldEft, vendorInEftLane, getEftMode, getFullEftMode, hasNoEftMarker } from '@/lib/eft'
+import { markVendorToldEft, vendorInEftLane, getEftMode, getFullEftMode, hasNoEftMarker, withEftMarker } from '@/lib/eft'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -135,10 +135,20 @@ export async function tryHandleEftProofMedia(
   }
 
   // Make sure they are on the lane BEFORE recording proof, otherwise recordEftProof 403s.
+  //
+  // STALE-READ FIX (2026-09-02): markVendorToldEft writes ⟦EFT⟧ to the DB row, but
+  // recordEftProof re-runs its OWN lane gate against the admin_notes we PASS it. We
+  // were passing vendor.admin_notes, the value read BEFORE the marker was written, so
+  // with global EFT mode OFF (the current state) vendorInEftLane() saw no marker and
+  // recordEftProof 403'd — dropping the proof of a vendor we had just laned. It fired
+  // 6 times in 30 days (incl. Gaya Collection + Sataari) with "could not save it from
+  // here". Reflect the write locally so the gate we already passed once passes again.
   let laneAdded = false
+  let effectiveNotes = vendor.admin_notes || ''
   if (!alreadyLane && !vendor.paid_at) {
     const marked = await markVendorToldEft({ email: vendor.email, phone: vendor.phone })
     laneAdded = !!marked
+    if (laneAdded) effectiveNotes = withEftMarker(effectiveNotes)
   }
 
   const ref = extractReference(caption) || extractReference(note) || undefined
@@ -147,7 +157,7 @@ export async function tryHandleEftProofMedia(
   const filename = media.filename || `proof-${Date.now()}.${media.kind === 'image' ? 'jpg' : 'pdf'}`
   const result = await recordEftProof({
     applicationId: vendor.id,
-    admin_notes: vendor.admin_notes || '',
+    admin_notes: effectiveNotes,
     paid_at: vendor.paid_at || null,
     email: vendor.email,
     phone: vendor.phone,
