@@ -8,7 +8,7 @@
  * against a deployment sharing that secret), then:
  *   1. tools/list exposes no eft/master/settle/reconcile tool
  *   2. every vendor laneScopeFor(owner) blocks is a 404 via vendor_full as owner
- *      and a 200 as master
+ *      and a 200 as master, and her copy carries no audit rows
  *   3. inbox_list as owner contains none of those vendors' application ids
  *   4. stats works for the owner (the channel is not merely broken)
  * Exit 1 on any disagreement.
@@ -64,6 +64,11 @@ for (const a of hidden.slice(0, 25)) {
     for (const sec of masterSecrets) if (text.includes(sec)) failures.push(`owner payload carries master bank detail: ${a.id} (${a.business_name})`)
     if (text.includes('\u27e6') || text.includes('⟦')) failures.push(`owner payload carries a lane marker: ${a.id} (${a.business_name})`)
     if (/"collected"/.test(text)) failures.push(`owner payload shows 'collected': ${a.id} (${a.business_name})`)
+    // Audit rows: hiddenFromOwner withholds every row about a vendor outside her
+    // lane, so a lane vendor's events array is EMPTY for her (the 2026-09-02 leak
+    // was `eft_details_revealed` reaching her through a hardcoded in-scope flag).
+    const events = (o.data?.events ?? []) as { event_type?: string }[]
+    if (events.length) failures.push(`owner payload carries ${events.length} audit row(s) for lane vendor ${a.id} (${a.business_name}): ${[...new Set(events.map(e => e.event_type))].join(', ')}`)
   }
   const m = await callTool(master, 'vendor_full', { id: a.id })
   if (m.isError) failures.push(`master could NOT read ${a.id}: ${JSON.stringify(m.data).slice(0, 120)}`)

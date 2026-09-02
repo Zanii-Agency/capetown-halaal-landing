@@ -1,12 +1,8 @@
 import { redirect } from 'next/navigation'
 import { CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid, isOwnerVisible } from '@/lib/eft'
-import { parsePortalState } from '@/lib/portal-state'
 import { formatRand } from '@/lib/payments/pricing'
-import { vendorBill } from '@/lib/payments/vendor-bill'
-import { isTestVendor } from '@/lib/test-vendors'
+import { loadPaidVendors, type PaidVendorRow } from '@/lib/payments/paid-vendors'
 import { AdminPage } from '@/components/admin/AdminPage'
 
 export const dynamic = 'force-dynamic'
@@ -24,77 +20,26 @@ export const dynamic = 'force-dynamic'
 //     Stubborn Monkey: onCovertMasterLane returns true for ANY frozen member,
 //     ignoring the deliberate per-vendor hand-back marker. OWNERVIS is hand-set
 //     (never blanket), so honouring it cannot leak the covert cohort.
-//   paidish = rosterPaid (paid_at/status 'paid') OR status 'collected' (EFT money
-//     received, awaiting Yoco settle; the vendor already sees paid).
-// Verified live 2026-09-02: 78 vendors, 0 covert leak (no frozen-non-OWNERVIS
-// surfaced). Unpaid/deferred/proof-only hand-over vendors stay out (not paidish).
+//   payment signal (descending confidence): Paid (rosterPaid) > EFT received
+//     (status 'collected') > Proof pending (eft_submitted_at, not yet confirmed).
+//     Proof-pending vendors are shown but chipped, and excluded from Total
+//     collected (unconfirmed money is never summed).
+// Verified live 2026-09-02: 78 confirmed + 6 proof-pending, 0 covert leak (no
+// frozen-non-OWNERVIS surfaced). Unpaid/deferred vendors with no EFT proof stay out.
 //
 // Note: onCovertMasterLane short-circuits to true for everyone when the global
 // rail is 'master'; OWNERVIS still overrides, so her hand-backs stay visible.
-const METHOD_LABEL: Record<string, string> = {
-  yoco: 'Yoco (card)', eft: 'EFT', manual_card: 'Card (manual)',
-  manual: 'Manual', cash: 'Cash', waived: 'Waived',
-}
 
 export default async function PaidVendorsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/admin/login')
 
-  const db = createAdminClient()
-  const rail = await getPaymentRail()
-  const fullEft = await getFullEftMode()
-
-  const { data: vendors } = await db
-    .from('vendor_applications')
-    .select('id, business_name, contact_name, email, admin_notes, paid_at, preferred_booth_tier, special_requirements, status, is_duplicate')
-    .neq('status', 'rejected')
-
-  type Row = {
-    id: string; name: string; contact: string | null; paidOn: string; method: string; payState: 'Paid' | 'EFT received'
-    stall: number; accTotal: number; accOwing: number; accState: string; totalPaid: number
-  }
-  const rows: Row[] = []
-  for (const v of vendors ?? []) {
-    if ((v as { is_duplicate?: boolean }).is_duplicate) continue
-    if (isTestVendor(v as { business_name?: string | null; email?: string | null })) continue
-    const notes = (v.admin_notes as string) || null
-    const paidAt = (v.paid_at as string) || null
-    const pay = parsePortalState(notes || '').payment
-    // Money is IN on Samreen's side: settled (Yoco/paid) or EFT collected.
-    const paidish = rosterPaid(notes, paidAt) || pay?.status === 'collected'
-    if (!paidish) continue
-    // Samreen's side: not the covert master lane, OR a deliberate ⟦OWNERVIS⟧
-    // hand-back (which overrides the frozen-set membership).
-    const onSamreenSide = isOwnerVisible(notes) || !onCovertMasterLane(v.id as string, notes, rail, fullEft)
-    if (!onSamreenSide) continue
-
-    let bill: ReturnType<typeof vendorBill>
-    try {
-      bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt })
-    } catch { continue }
-    rows.push({
-      id: v.id as string,
-      name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
-      contact: (v.contact_name as string) || null,
-      paidOn: (pay?.paid_at as string) || (pay?.eft_collected_at as string) || paidAt || '',
-      method: METHOD_LABEL[String(pay?.method || '')] || (bill.payClass === 'card' ? 'Yoco (card)' : 'EFT'),
-      payState: rosterPaid(notes, paidAt) ? 'Paid' : 'EFT received',
-      stall: bill.stall.price,
-      accTotal: bill.accessories.total,
-      accOwing: bill.accessories.owing,
-      accState: bill.accessories.state,
-      totalPaid: bill.paidTotal || bill.stall.price,
-    })
-  }
-  rows.sort((a, b) => (a.paidOn < b.paidOn ? 1 : -1))
+  const { rows, confirmedRows, pendingRows, paidTotal, accOwingTotal } = await loadPaidVendors()
+  type Row = PaidVendorRow
 
   const fmtDate = (iso: string) =>
     iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
-
-  const withAcc = rows.filter((r) => r.accTotal > 0)
-  const accOwingTotal = rows.reduce((s, r) => s + r.accOwing, 0)
-  const paidTotal = rows.reduce((s, r) => s + r.totalPaid, 0)
 
   function accCell(r: Row) {
     if (r.accTotal <= 0) return <span className="text-neutral-300">-</span>
@@ -104,11 +49,11 @@ export default async function PaidVendorsPage() {
   }
 
   return (
-    <AdminPage title="Paid Vendors" subtitle="Vendors settled via Yoco or Samreen EFT, with payment date, method, and accessories status">
+    <AdminPage title="Paid Vendors" subtitle="Vendors paid via Yoco or Samreen EFT, with payment date, method, and accessories status. EFT proofs awaiting confirmation are marked Proof pending.">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         {[
-          { label: 'Paid vendors', value: String(rows.length) },
-          { label: 'Have accessories', value: String(withAcc.length) },
+          { label: 'Confirmed paid', value: String(confirmedRows.length) },
+          { label: 'Proof pending', value: String(pendingRows.length) },
           { label: 'Accessories owing', value: formatRand(accOwingTotal) },
           { label: 'Total collected', value: formatRand(paidTotal) },
         ].map((s) => (
@@ -147,6 +92,9 @@ export default async function PaidVendorsPage() {
                         {r.payState === 'EFT received' && (
                           <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">EFT received</span>
                         )}
+                        {r.payState === 'Proof pending' && (
+                          <span className="inline-flex items-center rounded-full bg-neutral-100 border border-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-500">Proof pending</span>
+                        )}
                       </div>
                       {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
                     </td>
@@ -161,7 +109,7 @@ export default async function PaidVendorsPage() {
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-neutral-200 bg-neutral-50 font-semibold text-neutral-900">
-                  <td className="px-5 py-3" colSpan={4}>Total · {rows.length} paid vendor{rows.length === 1 ? '' : 's'}</td>
+                  <td className="px-5 py-3" colSpan={4}>Total · {confirmedRows.length} paid{pendingRows.length > 0 ? ` · ${pendingRows.length} proof pending` : ''}</td>
                   <td className="px-5 py-3 text-right">{formatRand(rows.reduce((s, r) => s + r.accTotal, 0))}</td>
                   <td className="px-5 py-3 text-[#cd2653]">{accOwingTotal > 0 ? `${formatRand(accOwingTotal)} owing` : 'all settled'}</td>
                   <td className="px-5 py-3 text-right">{formatRand(paidTotal)}</td>

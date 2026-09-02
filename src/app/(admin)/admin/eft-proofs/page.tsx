@@ -1,10 +1,9 @@
 import { redirect } from 'next/navigation'
 import { CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner, eftReference, getEftBankDetails, rosterPaid } from '@/lib/eft'
-import { parsePortalState } from '@/lib/portal-state'
-import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
+import { getEftBankDetails } from '@/lib/eft'
+import { formatRand } from '@/lib/payments/pricing'
+import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { EftProofConfirmButton } from '@/components/admin/EftProofConfirmButton'
 
@@ -20,56 +19,12 @@ export default async function EftProofsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/admin/login')
 
-  const db = createAdminClient()
-  const fullEft = await getFullEftMode()
   const bank = getEftBankDetails()
-  // This surface is Samreen's, so it ONLY has anything to show on the Samreen-EFT
-  // rail. On the covert master lane the whole population pays into the ...191
-  // account, and NONE of it may surface to her: gate the list (and the account
-  // card) so master mode shows her an empty page, never the covert account or a
-  // covert vendor. On Yoco there is no EFT to reconcile either.
-  const ownerEftActive = (await getPaymentRail()) === 'samreen_eft'
-
-  const { data: vendors } = ownerEftActive ? await db
-    .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, admin_notes, paid_at, preferred_booth_tier, special_requirements, status, is_duplicate')
-    .neq('status', 'rejected') : { data: [] as Array<Record<string, unknown>> }
-
-  type Row = { id: string; name: string; contact: string | null; reference: string; amount: number; proofUrl: string | null; note: string | null; uploadedAt: string; paid: boolean }
-  const rows: Row[] = []
-  for (const v of (vendors ?? [])) {
-    if ((v as { is_duplicate?: boolean }).is_duplicate) continue
-    if (!eftProofVisibleToOwner(v.id as string, v.admin_notes as string | null, fullEft)) continue
-    const p = parsePortalState((v.admin_notes as string) || '').payment ?? {}
-    const bill = computeVendorPricing({ preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements }).total
-    const proofFiles = (p.proofs ?? []).filter((f) => f.kind === 'eft_submission' || f.kind === 'eft_accessories')
-    const newest = [...proofFiles].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
-    let proofUrl: string | null = null
-    if (newest) {
-      const { data } = await db.storage.from('vendor-docs').createSignedUrl(newest.path, 60 * 60)
-      proofUrl = data?.signedUrl ?? null
-    }
-    rows.push({
-      id: v.id as string,
-      name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
-      contact: (v.contact_name as string) || null,
-      reference: eftReference(v),
-      amount: bill,
-      proofUrl,
-      note: newest?.note ?? null,
-      uploadedAt: (p.eft_submitted_at as string) || newest?.uploaded_at || '',
-      paid: rosterPaid(v.admin_notes as string | null, v.paid_at as string | null),
-    })
-  }
-  rows.sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1))
+  const { ownerEftActive, fullEft, rows, totalAmount, paidAmount } = await loadEftProofs()
 
   const fmtDate = (iso: string) =>
     iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
 
-  // Totals across the proofs on this page: the full amount owed, and how much of
-  // it is already confirmed paid, so Samreen sees the running total at a glance.
-  const totalAmount = rows.reduce((s, r) => s + r.amount, 0)
-  const paidAmount = rows.filter((r) => r.paid).reduce((s, r) => s + r.amount, 0)
 
   return (
     <AdminPage title="EFT Proofs" subtitle="Vendors who paid by EFT and uploaded their proof of payment">

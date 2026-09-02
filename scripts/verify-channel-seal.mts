@@ -16,6 +16,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { loadWhatsAppThreads, loadMailThreads } from '../src/lib/inbox/channel-threads'
 import { vendorInOwnerScope } from '../src/lib/eft'
+import { isMasterOnlySender } from '../src/lib/master-only-senders'
 
 const SAMREEN = 'capetownhalaal@gmail.com'
 const MASTER = 'dev@cthalaal.co.za'  // the confined EFT mailbox. taona@ (the master) is now also an EFT admin (2026-09-02); this script only checks the owner (Samreen) seal, which is unaffected.
@@ -93,6 +94,10 @@ function ownerMayReach(
   } else {
     for (const id of vendorsByEmail.get((t.email || '').toLowerCase()) || []) candidates.add(id)
   }
+  // A bank's payment notice or the EFT admin's own alert is master-lane whoever
+  // it is about (6e3a114, 2026-09-02): it has no vendor row, so without this the
+  // oracle reported 14 false over-blocks.
+  if (channel === 'mail' && isMasterOnlySender(t.email)) return false
   if (!candidates.size) return true            // resolves to no vendor: never lane-gated
   return [...candidates].every((id) => ownerMaySee(id))
 }

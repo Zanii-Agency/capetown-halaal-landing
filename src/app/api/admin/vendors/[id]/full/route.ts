@@ -135,6 +135,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // The client already receives portal + stall; strip the internal string.
   const { admin_notes: _adminNotes, ...vendorSafe } = a as Record<string, unknown>
 
+  // Same two-layer rule as /api/admin/activity: the master reads every row; the
+  // owner reads rows about vendors in her lane, minus any row whose own text
+  // reveals the arrangement. This was hardcoded `true` (every vendor in scope),
+  // so a lane vendor's `eft_details_revealed` row reached her (found 2026-09-02
+  // via the /api/mcp channel, ADR-005).
+  const vendorInScope = !scope.blocks({ email: emailRaw, phone: phoneRaw, applicationId: id })
   const auditRows = ((eventsRes.data || []) as Array<{
     id: string
     event_type: string
@@ -144,12 +150,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     actor_email?: string | null
     actor_role?: string | null
     created_at: string
-  }>).filter((e) => !hiddenFromOwner({
+  }>).filter((e) => !hide || !hiddenFromOwner({
     event_type: e.event_type,
     note: e.note,
     before_value: e.before_value,
     after_value: e.after_value,
-  }, true))
+  }, vendorInScope))
 
   const approvedAt = a.approved_at as string | null | undefined
   const daysSinceApproval = approvedAt
