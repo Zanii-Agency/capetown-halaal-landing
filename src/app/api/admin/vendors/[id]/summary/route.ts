@@ -20,6 +20,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
 import { wrapUntrusted, UNTRUSTED_CONTENT_RULE } from '@/lib/ai/prompt-safety'
+import { viewerSafePayment, isEftAdmin } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -77,6 +78,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     admin_notes: string | null
     contract_signed_at: string | null
     contract_pdf_path: string | null
+    paid_at: string | null
     preferred_booth_tier: string | null
     items_description: string | null
     updated_at: string | null
@@ -84,7 +86,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
   const a = app as App
 
-  const cacheKey = `${a.id}:${a.updated_at || a.created_at || ''}`
+  // The rollup differs by lane (the owner sees a masked payment posture), so
+  // a master's summary must never be served to the owner from cache.
+  const lane = isEftAdmin(user.email) ? 'master' : 'owner'
+  const cacheKey = `${a.id}:${lane}:${a.updated_at || a.created_at || ''}`
   const hit = cache.get(cacheKey)
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
     return NextResponse.json({ ok: true, cached: true, ...hit.payload })
@@ -92,7 +97,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const portal = parsePortalState(a.admin_notes || '')
   const { stall } = parseAllocation(a.admin_notes || '')
-  const paymentStatus = portal.payment?.status || 'none'
+  // Same field-level wall as /vendors/[id]/full: the owner never sees the
+  // 'collected' interim or the covert-lane posture, only what her roster shows.
+  const paymentStatus = viewerSafePayment(portal.payment, a.admin_notes, a.paid_at, user.email)?.status || 'none'
   const docs = portal.docs || []
   const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)
 
