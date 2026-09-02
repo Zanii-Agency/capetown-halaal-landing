@@ -260,9 +260,10 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
   for (const a of (apps || []) as Array<Record<string, unknown>>) {
     const notes = (a.admin_notes as string) || ''
     // On Samreen's new lane? Then it is hers, not the master's: drop it entirely
-    // (neither a lane row nor an add-candidate). The fence only fires for a
-    // post-cutover proof from a vendor NOT in the frozen 66, so the covert cohort
-    // is untouched.
+    // (neither a lane row nor an add-candidate). The fence fires for a post-cutover
+    // proof from a vendor NOT in the frozen 66, OR from a vendor deliberately handed
+    // to the owner with ⟦OWNERVIS⟧ (which may include one of the 66, e.g. En Vogue).
+    // Every other covert-cohort vendor stays here, untouched.
     if (eftProofVisibleToOwner(a.id as string, notes, fullEft)) continue
     const contact: Contact = {
       id: a.id as string,
