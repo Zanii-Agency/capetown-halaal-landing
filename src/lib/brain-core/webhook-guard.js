@@ -75,15 +75,26 @@ export async function shouldProcess(adapterName, sender, wamid, text, adapters, 
         return { action: "skip", reason: "merged_with_media" };
     }
     // Per-sender lock: prevents two webhooks for the same sender within 2s
-    // from both being processed (Meta batch behaviour). The lock lives AFTER
-    // the media buffer so image webhooks are not blocked by the text lock.
-    const lastSeen = PROCESSING_LOCKS.get(lockKey);
-    if (lastSeen !== undefined && now - lastSeen < 2000) {
-        if (text)
-            await adapters.logToChat(sender, text).catch(() => { });
-        return { action: "skip", reason: "concurrent_duplicate" };
+    // from both being processed (Meta batch behaviour re-delivering a message).
+    //
+    // MEDIA IS EXEMPT. A vendor sends two DISTINCT images within 2s (Meta batches
+    // an album, or they send a screenshot and then the real proof), and this
+    // sender-keyed lock would SKIP the second as a "duplicate" and DROP a real
+    // proof of payment. That is a live money-losing miss: Stalia (2026-09-01) sent
+    // a portal screenshot then the actual bank proof; the second was lost and had
+    // to be backfilled by hand. Distinct images carry distinct wamids, so the
+    // wamid dedup at the top of this function already rejects a genuine
+    // re-delivery of the SAME image; the 2s sender-lock adds nothing for media
+    // except the drop. So it only guards non-media (rapid duplicate text webhooks).
+    if (!carriesMedia) {
+        const lastSeen = PROCESSING_LOCKS.get(lockKey);
+        if (lastSeen !== undefined && now - lastSeen < 2000) {
+            if (text)
+                await adapters.logToChat(sender, text).catch(() => { });
+            return { action: "skip", reason: "concurrent_duplicate" };
+        }
+        PROCESSING_LOCKS.set(lockKey, now);
     }
-    PROCESSING_LOCKS.set(lockKey, now);
     return { action: "process" };
 }
 export function mediaArrived(sender) {
