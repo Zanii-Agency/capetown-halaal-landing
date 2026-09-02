@@ -765,16 +765,26 @@ export function eftProofVisibleToOwner(
   fullEft: { startedAt: string; protectedIds: Set<string> } | null,
 ): boolean {
   if (!fullEft) return false
-  if (fullEft.protectedIds.has(vendorId)) return false
-  // A hand-picked covert vendor (⟦EFT⟧) is on the master lane by definition and
-  // must NEVER surface to the owner, even a POST-cutover proof. protectedIds only
-  // froze the cohort that existed at cutover; a vendor put on the covert lane
-  // afterwards is not in it, so without this a fresh ⟦EFT⟧ proof would leak. Safe
-  // to over-freeze (module doctrine): hiding one extra can never leak, missing one can.
-  if (hasEftMarker(adminNotes)) return false
+  // Must have an actual proof, uploaded AFTER the cutover. This floor applies to
+  // EVERYONE, including an owner-visible vendor: it is what stops an old covert
+  // proof surfacing.
   const submitted = parsePortalState(adminNotes).payment?.eft_submitted_at
   if (!submitted) return false
-  return new Date(submitted).getTime() >= new Date(fullEft.startedAt).getTime()
+  if (new Date(submitted).getTime() < new Date(fullEft.startedAt).getTime()) return false
+  // ⟦OWNERVIS⟧ is a DELIBERATE, per-vendor "this vendor is Samreen's" decision (18
+  // vendors, hand-set, never blanket). It hands the vendor to the owner: their proof
+  // belongs on HER page and the master lane skips them. It overrides the covert
+  // hiding below, which is the whole point of the marker (Taona 2026-09-02: "En
+  // Vogue Cpt should show on eft-proofs... route by who they are"). Verified against
+  // live data: this exposes ONLY OWNERVIS-marked vendors; the other 65 of the frozen
+  // 66, and every un-marked ⟦EFT⟧ vendor, stay hidden.
+  if (isOwnerVisible(adminNotes)) return true
+  // A hand-picked covert vendor (⟦EFT⟧) or a member of the frozen cutover cohort is
+  // on the master lane by definition and must NEVER surface to the owner. Safe to
+  // over-freeze (module doctrine): hiding one extra can never leak, missing one can.
+  if (fullEft.protectedIds.has(vendorId)) return false
+  if (hasEftMarker(adminNotes)) return false
+  return true
 }
 
 /** Is THIS vendor on the COVERT master lane, i.e. their EFT money goes to the

@@ -526,3 +526,21 @@ test('eftProofVisibleToOwner never surfaces a ⟦EFT⟧ vendor, even with a post
   // ...but the SAME vendor once hand-picked onto the covert lane (⟦EFT⟧) is not.
   assert.equal(eftProofVisibleToOwner('v1', withEftMarker(visibleNotes), fullEft), false)
 })
+
+test('eftProofVisibleToOwner: ⟦OWNERVIS⟧ hands a covert/frozen vendor to the owner (deliberate override)', () => {
+  // Regression for the En Vogue Cpt fix (2026-09-02): a protected+⟦EFT⟧ vendor that
+  // an admin deliberately marked ⟦OWNERVIS⟧ must move OFF the master lane and onto
+  // Samreen's EFT Proofs page. The override is bounded to the marker; the frozen
+  // cohort and un-marked ⟦EFT⟧ vendors stay hidden.
+  const fullEft = { startedAt: '2026-08-26T00:00:00.000Z', protectedIds: new Set<string>(['frozen1']) }
+  const notes = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-08-27T10:00:00.000Z' } } as never)
+  // frozen + ⟦EFT⟧, no OWNERVIS -> hidden (the seal holds for the other 65).
+  assert.equal(eftProofVisibleToOwner('frozen1', withEftMarker(notes), fullEft), false)
+  // same vendor marked ⟦OWNERVIS⟧ -> handed to the owner, proof is HERS.
+  assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker(withEftMarker(notes)), fullEft), true)
+  // the post-cutover FLOOR still applies to an owner-visible vendor: a PRE-cutover proof stays hidden.
+  const pre = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-08-01T00:00:00.000Z' } } as never)
+  assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker(pre), fullEft), false)
+  // OWNERVIS with NO proof at all -> nothing to surface.
+  assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker('note'), fullEft), false)
+})
