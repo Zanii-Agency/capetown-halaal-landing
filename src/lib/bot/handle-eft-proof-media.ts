@@ -10,7 +10,7 @@
 import type { InboundMedia } from '@/lib/whatsapp'
 import { fetchMediaBytes } from '@/lib/whatsapp'
 import { seeImage, type SeenImage } from '@/lib/bot/see-image'
-import { markVendorToldEft, vendorInEftLane, getEftMode, withEftMarker } from '@/lib/eft'
+import { markVendorToldEft, vendorInEftLane, getEftMode, getPaymentRail, withEftMarker } from '@/lib/eft'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -145,18 +145,26 @@ export async function tryHandleEftProofMedia(
     return { handled: true, laneAdded: false, reply: `Thanks${who ? ' ' + who : ''}, I can see you sent a file but it didn't come through clearly on my side. I've let the team know so they can follow up with you here. If you can, send it again as a photo or PDF.` }
   }
 
-  // Make sure they are on the lane BEFORE recording proof, otherwise recordEftProof 403s.
+  // WHERE THE PROOF SHOWS depends on the payment rail (Taona 2026-09-02: "it
+  // should auto upload for samreen under samreen proof"):
+  //  - master rail  -> EFT is covert, Samreen must never see it, so lane the
+  //    vendor ⟦EFT⟧ (master lane). This is the original outage seal.
+  //  - samreen_eft / yoco rail -> the proof belongs on SAMREEN's fenced EFT
+  //    Proofs page. Do NOT lane it ⟦EFT⟧: eftProofVisibleToOwner() hides any
+  //    ⟦EFT⟧ vendor from her, so laning would bury the very proof she should see.
+  //    Capture still works without laning because recordEftProof runs with
+  //    captureRegardless below (it no longer needs the vendor on the lane).
+  // The protected pre-cutover cohort (the frozen 66) stays hidden either way:
+  // eftProofVisibleToOwner keys on protectedIds + the ⟦EFT⟧ marker they already
+  // carry, which this never removes.
   //
-  // STALE-READ FIX (2026-09-02): markVendorToldEft writes ⟦EFT⟧ to the DB row, but
-  // recordEftProof re-runs its OWN lane gate against the admin_notes we PASS it. We
-  // were passing vendor.admin_notes, the value read BEFORE the marker was written, so
-  // with global EFT mode OFF (the current state) vendorInEftLane() saw no marker and
-  // recordEftProof 403'd — dropping the proof of a vendor we had just laned. It fired
-  // 6 times in 30 days (incl. Gaya Collection + Sataari) with "could not save it from
-  // here". Reflect the write locally so the gate we already passed once passes again.
+  // STALE-READ note: when we DO lane, markVendorToldEft writes ⟦EFT⟧ to the DB but
+  // recordEftProof re-checks the admin_notes we PASS it, so we reflect the write
+  // locally (withEftMarker) or its own lane gate would 403 the vendor we just laned.
+  const rail = await getPaymentRail()
   let laneAdded = false
   let effectiveNotes = vendor.admin_notes || ''
-  if (!alreadyLane && !vendor.paid_at) {
+  if (rail === 'master' && !alreadyLane && !vendor.paid_at) {
     const marked = await markVendorToldEft({ email: vendor.email, phone: vendor.phone })
     laneAdded = !!marked
     if (laneAdded) effectiveNotes = withEftMarker(effectiveNotes)

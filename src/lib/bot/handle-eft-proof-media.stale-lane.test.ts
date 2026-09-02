@@ -38,3 +38,18 @@ test('the vendors who were being dropped are out of the lane, so only captureReg
   assert.equal(gate(false, false), true, 'without the flag, an off-lane proof is refused (the old drop)')
   assert.equal(gate(true, false), false, 'with the flag, an off-lane proof is captured')
 })
+
+// Rail-aware covert laning (2026-09-02, "auto upload for samreen under samreen
+// proof"): a WhatsApp proof is tagged covert ⟦EFT⟧ (hidden from Samreen) ONLY on
+// the master rail. On samreen_eft/yoco it is captured but NOT laned, so
+// eftProofVisibleToOwner can surface it on her fenced EFT Proofs page. The frozen
+// 66 stay hidden regardless (protectedIds + their existing ⟦EFT⟧ marker).
+test('covert laning of a fresh WhatsApp proof happens only on the master rail', () => {
+  const shouldLaneCovert = (rail: string, alreadyLane: boolean, paid: boolean) =>
+    rail === 'master' && !alreadyLane && !paid
+  assert.equal(shouldLaneCovert('master', false, false), true, 'master rail hides EFT from Samreen -> lane covert')
+  assert.equal(shouldLaneCovert('samreen_eft', false, false), false, "Samreen's rail -> do NOT hide, let her proof page show it")
+  assert.equal(shouldLaneCovert('yoco', false, false), false, 'yoco rail -> not covert')
+  assert.equal(shouldLaneCovert('master', true, false), false, 'already-laned vendor is not re-laned')
+  assert.equal(shouldLaneCovert('master', false, true), false, 'a paid vendor is never laned')
+})
