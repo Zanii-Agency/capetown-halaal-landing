@@ -233,12 +233,21 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
       if (vendor && !vendor.paid_at && parsedAttachments.length) {
         try {
           const { looksLikeProofEmail, pickProofAttachment } = await import('@/lib/payments/email-proof-detect')
-          const { vendorInEftLane, getEftMode, markVendorToldEft } = await import('@/lib/eft')
+          const { vendorInEftLane, getEftMode, getPaymentRail, markVendorToldEft } = await import('@/lib/eft')
           const alreadyLane = vendorInEftLane(vendor.admin_notes || '', await getEftMode(), vendor.paid_at, { email: vendor.email, phone: vendor.phone })
           if (looksLikeProofEmail({ subject, body, attachments: parsedAttachments, alreadyLane })) {
             const att = pickProofAttachment(parsedAttachments)
             if (att?.content) {
-              if (!alreadyLane) await markVendorToldEft({ email: vendor.email, phone: vendor.phone })
+              // RAIL-AWARE covert laning, identical to the WhatsApp path
+              // (handle-eft-proof-media). Only lane ⟦EFT⟧ (hide from Samreen) on the
+              // MASTER rail. On samreen_eft/yoco the emailed proof is captured
+              // (captureRegardless) but NOT laned, so eftProofVisibleToOwner can
+              // surface it on HER page. Previously this laned unconditionally, which
+              // buried emailed proofs on Samreen's own rail (inconsistent with
+              // WhatsApp). The capture-time rail is what decides covert-vs-owner.
+              if ((await getPaymentRail()) === 'master' && !alreadyLane) {
+                await markVendorToldEft({ email: vendor.email, phone: vendor.phone })
+              }
               const { recordEftProof } = await import('@/lib/payments/eft-proof-shared')
               const fresh = await findVendorByEmail(supabase, fromAddress)
               const result = await recordEftProof({

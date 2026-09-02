@@ -37,8 +37,15 @@ export interface EftProofInput {
    *  is the right guard for the PORTAL upload button (don't invite an EFT payment
    *  from a card-only vendor), but a proof already in our hands must be stored and
    *  the master alerted so a human can reconcile it. Set by the WhatsApp/email bot
-   *  paths, never by the portal. Capture only: it never adds the ⟦EFT⟧ lane marker
-   *  or moves the vendor's lane, so the Samreen seal is untouched. */
+   *  paths, never by the portal.
+   *
+   *  SEAL NOTE: this flag does not itself add the ⟦EFT⟧ marker, but recordEftProof
+   *  ALWAYS stamps eft_submitted_at (below), and eftProofVisibleToOwner treats a
+   *  post-cutover eft_submitted_at on a non-⟦EFT⟧, non-protected vendor as "hers".
+   *  So capture is NOT seal-neutral on its own: the CALLER decides covert-vs-owner
+   *  by laning ⟦EFT⟧ on the master rail only (handle-eft-proof-media +
+   *  support-mail-fetcher are rail-aware). On the master rail the vendor is laned
+   *  and stays hidden; on samreen_eft the proof is meant to reach her page. */
   captureRegardless?: boolean
   /** 'accessories' = an ACCESSORY-balance EFT from a vendor whose stall fee is
    *  already settled (split-bill, 2026-08-04). Uses the `payment.acc` sub-ledger
