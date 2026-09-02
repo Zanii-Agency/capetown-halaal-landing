@@ -68,3 +68,13 @@ public/stalls.excel-extracted.json.bak
 # session scratch files: never part of a deploy (Law 1: the tree is the manifest)
 scratchpad/
 tmp-*
+
+# local session handoff state: regenerated each session, never tracked (git log
+# confirms it has never been committed). Kept out so it never dirties the tree
+# and never ships via vercel --prod.
+.claude-session.md
+
+# generated data exports: vendor spreadsheets written by ad-hoc export scripts.
+# They contain vendor PII, so they must NEVER be committed OR shipped to prod
+# (Law 2). Anchored to the repo root; the export scripts themselves stay tracked.
+/exports/
