@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid } from '@/lib/eft'
+import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid, isOwnerVisible } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { formatRand } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
@@ -11,16 +11,26 @@ import { AdminPage } from '@/components/admin/AdminPage'
 
 export const dynamic = 'force-dynamic'
 
-// PAID vendors, scoped to Samreen's world: Yoco (card/cash/waived) + her
-// reconciled EFT (...629). The covert master lane (...191: frozen-66, ⟦EFT⟧
-// markers, master-rail) NEVER appears here, so the page is safe for the festival
-// owner to open. Predicate: rosterPaid (settled: paid_at or status 'paid') AND
-// NOT onCovertMasterLane. Verified live 2026-09-02: 73 vendors, 0 covert leak
-// (no master-manual method, no frozen-set member surfaced). Unpaid/deferred
-// hand-over vendors are correctly excluded (rosterPaid gates them out).
+// PAID vendors, scoped to Samreen's world: Yoco (card/cash/waived) + her EFT
+// (...629), INCLUDING vendors deliberately handed to her with ⟦OWNERVIS⟧ even
+// though they sit in the frozen cutover set. The covert master lane (...191:
+// frozen-66 with NO OWNERVIS, un-OWNERVIS ⟦EFT⟧ markers, master-rail) NEVER
+// appears, so the page is safe for the festival owner to open.
+//
+// Scope = onSamreenSide && paidish:
+//   onSamreenSide = isOwnerVisible(⟦OWNERVIS⟧) OR NOT onCovertMasterLane. The
+//     OWNERVIS override is why the earlier `!onCovertMasterLane`-only version
+//     wrongly dropped Africa Muslims Agency, Farfashions, Vanilla Cream, Y&K and
+//     Stubborn Monkey: onCovertMasterLane returns true for ANY frozen member,
+//     ignoring the deliberate per-vendor hand-back marker. OWNERVIS is hand-set
+//     (never blanket), so honouring it cannot leak the covert cohort.
+//   paidish = rosterPaid (paid_at/status 'paid') OR status 'collected' (EFT money
+//     received, awaiting Yoco settle; the vendor already sees paid).
+// Verified live 2026-09-02: 78 vendors, 0 covert leak (no frozen-non-OWNERVIS
+// surfaced). Unpaid/deferred/proof-only hand-over vendors stay out (not paidish).
 //
 // Note: onCovertMasterLane short-circuits to true for everyone when the global
-// rail is 'master', so full-covert mode blanks this page rather than leaking.
+// rail is 'master'; OWNERVIS still overrides, so her hand-backs stay visible.
 const METHOD_LABEL: Record<string, string> = {
   yoco: 'Yoco (card)', eft: 'EFT', manual_card: 'Card (manual)',
   manual: 'Manual', cash: 'Cash', waived: 'Waived',
@@ -41,7 +51,7 @@ export default async function PaidVendorsPage() {
     .neq('status', 'rejected')
 
   type Row = {
-    id: string; name: string; contact: string | null; paidOn: string; method: string
+    id: string; name: string; contact: string | null; paidOn: string; method: string; payState: 'Paid' | 'EFT received'
     stall: number; accTotal: number; accOwing: number; accState: string; totalPaid: number
   }
   const rows: Row[] = []
@@ -50,21 +60,26 @@ export default async function PaidVendorsPage() {
     if (isTestVendor(v as { business_name?: string | null; email?: string | null })) continue
     const notes = (v.admin_notes as string) || null
     const paidAt = (v.paid_at as string) || null
-    // Samreen scope: settled AND not on the covert master lane.
-    if (!rosterPaid(notes, paidAt)) continue
-    if (onCovertMasterLane(v.id as string, notes, rail, fullEft)) continue
+    const pay = parsePortalState(notes || '').payment
+    // Money is IN on Samreen's side: settled (Yoco/paid) or EFT collected.
+    const paidish = rosterPaid(notes, paidAt) || pay?.status === 'collected'
+    if (!paidish) continue
+    // Samreen's side: not the covert master lane, OR a deliberate ⟦OWNERVIS⟧
+    // hand-back (which overrides the frozen-set membership).
+    const onSamreenSide = isOwnerVisible(notes) || !onCovertMasterLane(v.id as string, notes, rail, fullEft)
+    if (!onSamreenSide) continue
 
     let bill: ReturnType<typeof vendorBill>
     try {
       bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt })
     } catch { continue }
-    const pay = parsePortalState(notes || '').payment
     rows.push({
       id: v.id as string,
       name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
       contact: (v.contact_name as string) || null,
       paidOn: (pay?.paid_at as string) || (pay?.eft_collected_at as string) || paidAt || '',
       method: METHOD_LABEL[String(pay?.method || '')] || (bill.payClass === 'card' ? 'Yoco (card)' : 'EFT'),
+      payState: rosterPaid(notes, paidAt) ? 'Paid' : 'EFT received',
       stall: bill.stall.price,
       accTotal: bill.accessories.total,
       accOwing: bill.accessories.owing,
@@ -127,7 +142,12 @@ export default async function PaidVendorsPage() {
                 {rows.map((r) => (
                   <tr key={r.id} className="hover:bg-neutral-50">
                     <td className="px-5 py-3">
-                      <div className="font-medium text-neutral-900">{r.name}</div>
+                      <div className="font-medium text-neutral-900 flex items-center gap-2">
+                        {r.name}
+                        {r.payState === 'EFT received' && (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">EFT received</span>
+                        )}
+                      </div>
                       {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
                     </td>
                     <td className="px-5 py-3 text-neutral-600">{fmtDate(r.paidOn)}</td>
