@@ -78,3 +78,11 @@ tmp-*
 # They contain vendor PII, so they must NEVER be committed OR shipped to prod
 # (Law 2). Anchored to the repo root; the export scripts themselves stay tracked.
 /exports/
+
+# scratch lane for THROWAWAY one-off scripts. Everything under scripts/scratch/
+# is ignored so it never dirties the tree or trips the deploy review-gate (which
+# blocks vercel --prod on any untracked file); the README stays tracked so the
+# lane is self-documenting. A script worth keeping goes in scripts/ proper and is
+# committed like the other ~85. See scripts/CLAUDE.md.
+scripts/scratch/*
+!scripts/scratch/README.md
