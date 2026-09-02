@@ -28,6 +28,9 @@ import { POST as supportReply } from '@/app/api/admin/support/[id]/reply/route'
 import { POST as chase } from '@/app/api/admin/chase/route'
 import { GET as stats } from '@/app/api/admin/stats/route'
 import { GET as finance } from '@/app/api/admin/finance/route'
+import { POST as eftProofConfirm } from '@/app/api/admin/eft-proofs/confirm/route'
+import { loadPaidVendors } from '@/lib/payments/paid-vendors'
+import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -101,7 +104,7 @@ const TOOLS: Record<string, { description: string; inputSchema: Json; run: (a: J
     run: (a) => call(applicationsList, req('/api/admin/applications', { query: { status: a.status, search: a.search, sector: a.sector, tier: a.tier, order: a.order, limit: a.limit ?? 50, offset: a.offset } })),
   },
   vendor_full: {
-    description: 'Everything about one vendor application: details, stall, documents, portal state, messages. Needs the application id (from search or applications_list).',
+    description: 'Everything about one vendor application: details, stall, documents, portal state incl. payment (status, amount, method, paid_at, proofs), messages, audit events. Needs the application id (from search or applications_list).',
     inputSchema: { type: 'object', required: ['id'], properties: { id: str('vendor application uuid') } },
     run: (a) => call(vendorFull, req(`/api/admin/vendors/${a.id}/full`), { id: String(a.id) }),
   },
@@ -126,9 +129,34 @@ const TOOLS: Record<string, { description: string; inputSchema: Json; run: (a: J
     run: () => call(stats, req('/api/admin/stats')),
   },
   finance_summary: {
-    description: 'Vendor finance view: who has paid, who is outstanding, totals. Optional payment filter (paid | unpaid).',
-    inputSchema: { type: 'object', properties: { payment: str() } },
+    description: 'The Finance page: per-vendor payment status (paid | pending | deferred | none), amounts, due dates, overdue flags, and headline totals (paid count, pending, overdue, revenue). Headline revenue counts card (Yoco) settled money; use paid_vendors for the roster that also lists EFT confirmations and proofs. Optional payment filter (paid | unpaid).',
+    inputSchema: { type: 'object', properties: { payment: str('paid | unpaid') } },
     run: (a) => call(finance, req('/api/admin/finance', { query: { payment: a.payment } })),
+  },
+  paid_vendors: {
+    description: 'The Paid Vendors page: every vendor with money in, with payState = Paid (settled by card or confirmed EFT) | EFT received | Proof pending (vendor uploaded an EFT proof, waiting for the operator to confirm). Per row: method, paidOn, stall price, accessories total/owing/state, totalPaid. Totals: paidTotal (confirmed money only) and accOwingTotal. Use this for "who has paid", "what does X still owe", "how much have we collected".',
+    inputSchema: { type: 'object', properties: { state: { type: 'string', enum: ['all', 'confirmed', 'pending'], description: 'default all' }, q: str('filter by vendor or contact name') } },
+    run: async (a) => {
+      const d = await loadPaidVendors()
+      const q = String(a.q ?? '').trim().toLowerCase()
+      let rows = a.state === 'confirmed' ? d.confirmedRows : a.state === 'pending' ? d.pendingRows : d.rows
+      if (q) rows = rows.filter((r) => r.name.toLowerCase().includes(q) || (r.contact ?? '').toLowerCase().includes(q))
+      return { status: 200, data: { rows, counts: { paid: d.confirmedRows.length, proofPending: d.pendingRows.length }, paidTotal: d.paidTotal, accOwingTotal: d.accOwingTotal } }
+    },
+  },
+  eft_proofs: {
+    description: 'The EFT Proofs page: vendors who uploaded proof of an EFT payment, newest first. Per row: reference, amount, uploadedAt, paid (true once confirmed), proofUrl (opens the uploaded proof, valid 1 hour), note. Totals: totalAmount and paidAmount. Use before confirming a proof.',
+    inputSchema: { type: 'object', properties: { unconfirmed_only: { type: 'boolean', description: 'default false' } } },
+    run: async (a) => {
+      const d = await loadEftProofs()
+      const rows = a.unconfirmed_only ? d.rows.filter((r) => !r.paid) : d.rows
+      return { status: 200, data: { eftActive: d.ownerEftActive, rows, totalAmount: d.totalAmount, paidAmount: d.paidAmount } }
+    },
+  },
+  eft_proof_confirm: {
+    description: 'Confirm an EFT proof: marks the vendor PAID and sends them the payment-received message. Irreversible. Before calling: show the operator the vendor name, reference and amount from eft_proofs and get an explicit yes for THAT vendor. Never call it for a vendor whose proof the operator has not seen.',
+    inputSchema: { type: 'object', required: ['applicationId'], properties: { applicationId: str('vendor application uuid from eft_proofs') } },
+    run: (a) => call(eftProofConfirm, req('/api/admin/eft-proofs/confirm', { method: 'POST', body: { applicationId: a.applicationId } })),
   },
 }
 
@@ -162,7 +190,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   switch (method) {
     case 'initialize':
-      return rpc(id, { result: { protocolVersion: (p?.protocolVersion as string) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'cth-festival-ops', version: '1.0.0' }, instructions: `You are connected to the Young at Heart Festival admin portal as ${actor.email}. Before any tool that sends a message (inbox_reply, support_reply, followup_send), show the exact text to the operator and get a yes. followup_send must be previewed with dry_run=true first.` } })
+      return rpc(id, { result: { protocolVersion: (p?.protocolVersion as string) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'cth-festival-ops', version: '1.0.0' }, instructions: `You are connected to the Young at Heart Festival admin portal as ${actor.email}. Before any tool that sends a message (inbox_reply, support_reply, followup_send), show the exact text to the operator and get a yes. followup_send must be previewed with dry_run=true first. eft_proof_confirm marks a vendor paid: show name, reference and amount first and get a yes for that vendor. Payment vocabulary: Paid = money settled (card via Yoco, or an EFT the operator confirmed); Proof pending = the vendor uploaded an EFT proof that still needs confirming; none = nothing received; pending/deferred = agreed to pay later. The Finance page headline counts card settlements; the Paid Vendors page is the full roster of money in. Amounts are in South African Rand.` } })
     case 'ping':
       return rpc(id, { result: {} })
     case 'tools/list':

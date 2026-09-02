@@ -8,7 +8,8 @@ Your Claude can now:
 
 - **Read and answer the inbox.** WhatsApp and email conversations, the same ones you see under Communications in the portal. Claude drafts, you say yes, it sends.
 - **Chase vendors.** "Remind everyone approved in Fashion who has not uploaded documents." Claude shows you the list and the message first, then sends by WhatsApp or email.
-- **Check things.** "How many applications are pending?", "What is the status of Table Art?", "Who paid this week?", "Show me the dashboard numbers."
+- **Check things.** "How many applications are pending?", "What is the status of Table Art?", "Show me the dashboard numbers."
+- **Understand payments.** "Who has paid?", "What does Elegant Muslimah still owe?", "Which EFT proofs are waiting for me?", "How much have we collected?" Claude reads the same Finance, Paid Vendors and EFT Proofs pages you use, and can confirm an EFT proof for you after you say yes.
 
 It sees exactly what your portal login sees. Nothing more, nothing less. Every message it sends is recorded in the portal as sent by you.
 
@@ -50,10 +51,18 @@ Start a new chat, click the **+** (or the tools / connectors icon) in the messag
 - "What are the dashboard numbers today?"
 - "Mark the thread with Amc cookware as done."
 
+## Payments, in Claude's words
+
+- **Paid** = money settled: a card payment through Yoco, or an EFT you confirmed.
+- **Proof pending** = the vendor uploaded a proof of EFT and it is waiting for you to confirm. Ask "show me the proofs waiting" and Claude lists them with the reference, the amount and a link to the proof file.
+- **Confirming a proof:** say "confirm the proof for Haadiya Bakes". Claude shows you the name, reference and amount, and only marks them paid after you say yes. That is the same as the Confirm button on the EFT Proofs page, and the vendor gets the payment-received message.
+- **none / pending / deferred** = nothing received yet, or agreed to pay later.
+- "How much have we collected" uses confirmed money only; proofs waiting are never counted.
+
 ## Rules Claude follows
 
 - It **always shows you the message before it sends**, and for a group send it always previews the recipient list first.
-- It cannot delete anything.
+- It cannot delete anything, and it never marks a vendor paid without showing you the proof details and getting your yes.
 - It cannot approve or reject applications; do that in the portal as before.
 - If it says "Vendor not found", the vendor is not in your portal view either.
 
