@@ -77,10 +77,15 @@ const inboxO = await callTool(owner, 'inbox_list', { limit: 500 })
 const inboxM = await callTool(master, 'inbox_list', { limit: 500 })
 if (inboxO.isError) failures.push(`owner inbox_list failed: ${JSON.stringify(inboxO.data).slice(0, 120)}`)
 if (inboxM.isError) failures.push(`master inbox_list failed: ${JSON.stringify(inboxM.data).slice(0, 120)}`)
-type Contact = { application_id?: string; phone?: string; email?: string; name?: string; contact_name?: string; mailbox?: string; eft?: boolean; is_eft?: boolean; lane?: string }
+type Contact = { application_id?: string; phone?: string; email?: string; name?: string; contact_name?: string; mailbox?: string; last_message_at?: string; eft?: boolean; is_eft?: boolean; lane?: string }
 const key = (c: Contact) => c.application_id || c.phone || c.email || ''
-const masterByKey = new Map(((inboxM.data?.contacts ?? []) as Contact[]).map(c => [key(c), c]))
+const masterContacts = (inboxM.data?.contacts ?? []) as Contact[]
+const masterByKey = new Map(masterContacts.map(c => [key(c), c]))
+// Both lists cap at 500 newest-first. The master sees strictly more, so his
+// window ends EARLIER than hers: only compare inside his window.
+const masterFloor = masterContacts.length >= 500 ? (masterContacts[masterContacts.length - 1]?.last_message_at ?? '') : ''
 for (const c of (inboxO.data?.contacts ?? []) as Contact[]) {
+  if (masterFloor && (c.last_message_at ?? '') < masterFloor) continue
   const m = masterByKey.get(key(c))
   // The owner's own Gmail mailbox (capetownhalaal@gmail.com) is hers by design.
   if (!m && c.mailbox === 'gmail') continue
