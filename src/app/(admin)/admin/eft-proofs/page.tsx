@@ -66,6 +66,11 @@ export default async function EftProofsPage() {
   const fmtDate = (iso: string) =>
     iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
 
+  // Totals across the proofs on this page: the full amount owed, and how much of
+  // it is already confirmed paid, so Samreen sees the running total at a glance.
+  const totalAmount = rows.reduce((s, r) => s + r.amount, 0)
+  const paidAmount = rows.filter((r) => r.paid).reduce((s, r) => s + r.amount, 0)
+
   return (
     <AdminPage title="EFT Proofs" subtitle="Vendors who paid by EFT and uploaded their proof of payment">
       {ownerEftActive && (
@@ -134,6 +139,14 @@ export default async function EftProofsPage() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-neutral-200 bg-neutral-50 font-semibold text-neutral-900">
+                  <td className="px-5 py-3" colSpan={2}>Total · {rows.length} proof{rows.length === 1 ? '' : 's'}</td>
+                  <td className="px-5 py-3 text-right">{formatRand(totalAmount)}</td>
+                  <td className="px-5 py-3" colSpan={2} />
+                  <td className="px-5 py-3 text-right text-emerald-700">{formatRand(paidAmount)} paid</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
