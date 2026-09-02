@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { ShoppingCart, Trash2, CreditCard, X, Sparkles, ArrowRight } from 'lucide-react'
+import { ShoppingCart, Trash2, CreditCard, X, LogIn, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
 import { fireSuccessConfetti } from '@/lib/confetti'
 
@@ -135,7 +135,7 @@ export function Cart() {
           <Link href="/login" className="w-full">
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
               <Button className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 shadow-lg shadow-blue-500/25 h-12 text-base font-semibold">
-                <Sparkles className="w-5 h-5 mr-2" />
+                <LogIn className="w-5 h-5 mr-2" />
                 Login to Reserve
               </Button>
             </motion.div>

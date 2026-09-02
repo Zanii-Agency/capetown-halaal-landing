@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -98,6 +99,16 @@ export async function GET(req: NextRequest) {
   } else {
     return NextResponse.json({ error: 'contactId or threadId required' }, { status: 400 })
   }
+
+  // EFT lane: H3 above stops an arbitrary ?phone=, but a caller may still pass any
+  // contactId/threadId, so the resolved phone/email can still belong to a lane
+  // vendor. Check AFTER resolution, before the three history queries below.
+  // TWO layers (2026-07-26): vendor, then content.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocks({ phone: phoneRaw, email: emailRaw })) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
+  const hideEft = hidesEftContent(user.email)
 
   // Pagination. Default 50, max 200. Skeptic D F1: page latency was the cost
   // of serial awaits over three tables; we now parallelise and trim. Callers
@@ -236,8 +247,13 @@ export async function GET(req: NextRequest) {
 
   rows.sort((a, b) => +new Date(b.at) - +new Date(a.at))
 
-  const total = rows.length
-  const page = rows.slice(offset, offset + limit)
+  const identity = { phone: phoneRaw, email: emailRaw }
+  const total = stripEftMessages(rows, (r) => r.body, hideEft, { scope, identity, at: (r) => r.at }).length
+  // EFT wall is CONTENT-level (2026-07-26): strip before paginating, so `total`
+  // and has_more describe what the viewer can actually see rather than promising
+  // rows that were then filtered away.
+  const visible = stripEftMessages(rows, (r) => r.body, hideEft, { scope, identity, at: (r) => r.at })
+  const page = visible.slice(offset, offset + limit)
   const has_more = offset + page.length < total
 
   return NextResponse.json({

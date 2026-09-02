@@ -86,6 +86,10 @@ const RULES: IntentRule[] = [
       /\bdid (you |we )?(get|receive|approve) (my|the) (application|form)\b/i,
       /\b(any )?update.*(application|stall|booth)\b/i,
       /\bwhen will i (hear|know|get a reply)\b/i,
+      /\b(trestle\s*)?table\b/i,
+      /\bchairs?\b/i,
+      /\bfurniture\b/i,
+      /\bwhat.*included.*(stall|booth)\b/i,
     ],
   },
   // vendor_docs
@@ -108,6 +112,9 @@ const RULES: IntentRule[] = [
       /\b(banking details|account number|swift)\b/i,
       /\b(stall|booth|electricity).*(fee|cost|paid|payment)\b/i,
       /\bproof of payment\b/i,
+      /\bvat\b/i,
+      /\btax\s*(invoice|number|reg)\b/i,
+      /\bvat\s*(number|registered|reg)\b/i,
     ],
   },
   // sponsorship
@@ -223,15 +230,15 @@ export function intentFaqKeys(intent: Intent): import('./faq').FaqKey[] {
     case 'vendor_application':
       return ['vendor_apply', 'stall_sizes', 'halaal_cert', 'electricity']
     case 'vendor_status':
-      return ['vendor_apply', 'contact']
+      return ['vendor_apply', 'vendor_table_chairs', 'contact']
     case 'vendor_docs':
       return ['halaal_cert', 'contact']
     case 'vendor_payment':
-      return ['vendor_payment_method', 'stall_sizes', 'contact']
+      return ['vendor_payment_method', 'vendor_invoice_vat', 'stall_sizes', 'contact']
     case 'sponsorship':
       return ['contact', 'dates', 'venue']
     case 'general_inquiry':
-      return ['dates', 'venue', 'contact', 'website']
+      return ['dates', 'venue', 'contact', 'website', 'vendor_invoice_vat', 'vendor_table_chairs']
     case 'human_request':
     case 'spam':
       return []

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, type StaffMember } from '@/lib/portal-state'
+import { vendorInOwnerScope } from '@/lib/eft'
 import { getOrders, type WCOrder } from '@/lib/woocommerce'
 import { PeopleTable, type PersonRow } from '@/components/admin/people/PeopleTable'
 
@@ -31,12 +32,15 @@ export default async function PeoplePage() {
   // ---- Vendors + staff (one Supabase round-trip) ----
   const { data: vendors } = await admin
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, admin_notes')
+    .select('id, business_name, contact_name, email, phone, admin_notes, paid_at')
     .eq('status', 'approved')
 
   const vendorRows: PersonRow[] = []
   const staffRows: PersonRow[] = []
   for (const v of vendors || []) {
+    // The people register must not reveal EFT-lane vendors or their staff to the
+    // festival owner. Master-lane vendors are still visible to the EFT admin.
+    if (!vendorInOwnerScope(v.admin_notes as string | null, v.paid_at as string | null)) continue
     const vId = v.id as string
     const businessName = (v.business_name as string) || 'Vendor'
     vendorRows.push({

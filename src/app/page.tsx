@@ -3,12 +3,11 @@
 import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { motion, useScroll, useTransform, useInView, AnimatePresence } from 'framer-motion'
+import { motion, useInView, AnimatePresence } from 'framer-motion'
 import {
-  Calendar, MapPin, Users, Building2, ArrowRight, ArrowUpRight,
-  Utensils, ShoppingBag, Sparkles, Globe, Award, Clock,
-  ChevronRight, Instagram, Facebook, Youtube,
-  Mail, Phone, Star, Ticket, Store, Play, ChevronDown, Zap, LogIn
+  Users, ArrowRight, ArrowUpRight,
+  Utensils, ShoppingBag, Sparkles, Globe, Award,
+  Star, Ticket, Store, Play, ChevronDown, Zap, LogIn
 } from 'lucide-react'
 import { Logo, LogoMark } from '@/components/logo'
 import { HeroSection } from '@/components/hero-section'
@@ -599,113 +598,9 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer id="contact" className="border-t border-neutral-200 py-16 bg-neutral-50">
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-12">
-            <div>
-              <Logo size="lg" showText={true} className="mb-6" />
-              <p className="text-neutral-600 text-sm mb-6">
-                A South African lifestyle exhibition. December 11-13, 2026 at Youngsfield Military Base, Cape Town.
-              </p>
-              <div className="flex gap-3">
-                {[
-                  { icon: Instagram, href: 'https://www.instagram.com/youngatheart_capetown/' },
-                  { icon: Facebook, href: 'https://www.facebook.com/capetownhalaal/' },
-                  { icon: Youtube, href: '#' },
-                ].map((social, i) => (
-                  <a
-                    key={i}
-                    href={social.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-10 h-10 rounded-xl bg-neutral-100 hover:bg-[#cd2653]/20 text-neutral-600 hover:text-[#cd2653] flex items-center justify-center transition-all"
-                  >
-                    <social.icon className="w-5 h-5" />
-                  </a>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-neutral-900 mb-6">Quick Links</h4>
-              <ul className="space-y-3 text-sm">
-                {[
-                  { label: 'About', href: '#about' },
-                  { label: 'Apply as Vendor', href: '/apply' },
-                  { label: 'Buy Tickets', href: 'https://tickets.youngatheart.co.za' },
-                  { label: 'Gallery', href: '#gallery' },
-                  { label: 'Sponsors', href: '#sponsors' },
-                ].map((link) => (
-                  <li key={link.label}>
-                    {link.href.startsWith('#') ? (
-                      <a
-                        href={link.href}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          document.querySelector(link.href)?.scrollIntoView({ behavior: 'smooth' })
-                        }}
-                        className="text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
-                      >
-                        {link.label}
-                      </a>
-                    ) : (
-                      <Link href={link.href} className="text-neutral-600 hover:text-neutral-900 transition-colors">
-                        {link.label}
-                      </Link>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-neutral-900 mb-6">Event Info</h4>
-              <ul className="space-y-3 text-sm">
-                <li className="flex items-center gap-2 text-neutral-600">
-                  <Calendar className="w-4 h-4 text-[#cd2653]" />
-                  December 11-13, 2026
-                </li>
-                <li className="flex items-center gap-2 text-neutral-600">
-                  <MapPin className="w-4 h-4 text-[#cd2653]" />
-                  Youngsfield Military Base
-                </li>
-                <li className="flex items-center gap-2 text-neutral-600">
-                  <Clock className="w-4 h-4 text-[#cd2653]" />
-                  3 Day Event
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-neutral-900 mb-6">Contact</h4>
-              <ul className="space-y-3 text-sm">
-                <li>
-                  <a href="mailto:support@youngatheart.co.za" className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors">
-                    <Mail className="w-4 h-4" />
-                    support@youngatheart.co.za
-                  </a>
-                </li>
-                <li>
-                  <a href="tel:+27659435012" className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors">
-                    <Phone className="w-4 h-4" />
-                    065 943 5012
-                  </a>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="border-t border-neutral-200 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-neutral-500 text-sm">
-              © 2026 Young at Heart Festival. All rights reserved.
-            </p>
-            <a href="https://zanii.agency" target="_blank" rel="noopener noreferrer" className="text-neutral-500 hover:text-neutral-700 text-sm tracking-wide transition-colors">
-              Built by <span className="font-semibold">zanii</span><span className="text-[#2563eb]">.</span>
-            </a>
-          </div>
-        </div>
-      </footer>
+      {/* The footer used to be inlined here. It now lives in SiteFooter, mounted
+          once from the root layout, so every page gets the same one instead of
+          the homepage getting two stacked and every other page getting none. */}
     </div>
   )
 }

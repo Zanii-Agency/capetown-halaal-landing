@@ -17,16 +17,32 @@ function ForgotPassword() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
+  const [sends, setSends] = useState(0)
+  // Seconds until another request is allowed. The success screen had NO resend
+  // control at all, so a vendor whose email had not arrived yet could only
+  // reload the page and submit again: on 2026-07-27 one did exactly that 70
+  // seconds later, and got two links. The server allows 3 per email per 10
+  // minutes, so nothing was blocked, it was just invisible. Give them a real
+  // button and a visible wait instead of leaving them to improvise.
+  const [cooldown, setCooldown] = useState(0)
   const [errFromCallback, setErrFromCallback] = useState<string | null>(null)
   const sp = useSearchParams()
+
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const id = setTimeout(() => setCooldown((c) => c - 1), 1000)
+    return () => clearTimeout(id)
+  }, [cooldown])
 
   useEffect(() => {
     const err = sp?.get('err')
     if (err) setErrFromCallback(err)
   }, [sp])
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault()
+  /** One send path, used by the form and by Resend, so the cooldown cannot be
+   *  sidestepped by going back to the form. */
+  async function send() {
+    if (loading || cooldown > 0) return
     setLoading(true)
     try {
       await fetch('/api/exhibitor/send-password-reset', {
@@ -38,6 +54,13 @@ function ForgotPassword() {
       // swallow — always show success so we never leak which emails exist
     }
     setSent(true); setLoading(false); setErrFromCallback(null)
+    setSends((n) => n + 1)
+    setCooldown(60)
+  }
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    send()
   }
 
   return (
@@ -49,8 +72,35 @@ function ForgotPassword() {
             <div className="text-center">
               <div className="w-11 h-11 rounded-xl bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-5 h-5" /></div>
               <h2 className="text-xl font-bold text-neutral-900">Check your inbox</h2>
-              <p className="text-neutral-500 text-sm mt-2">If an exhibitor account exists for <b>{email}</b>, a reset link is on its way. It expires in 1 hour.</p>
-              <a href="/exhibitor/login" className="inline-block mt-5 text-sm font-semibold text-[#cd2653]">← Back to sign in</a>
+              <p className="text-neutral-500 text-sm mt-2">
+                If an exhibitor account exists for <b>{email}</b>, a reset link is on its way. It can take a minute to arrive, and it expires in 1 hour.
+              </p>
+              <p className="text-neutral-500 text-sm mt-2">
+                Not there? Check your spam or promotions folder before asking for another one.
+              </p>
+
+              {/* PROVEN 2026-07-27 against a throwaway account: minting a second
+                  recovery link invalidates the first, which then fails with
+                  "Email link is invalid or has expired". No hedge needed, and a
+                  vendor who opens the wrong email deserves to know why. */}
+              {sends > 1 && (
+                <p className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                  You have asked for {sends} links. Only the <b>most recent</b> email works now, the earlier ones have been cancelled.
+                </p>
+              )}
+
+              <button
+                onClick={send}
+                disabled={cooldown > 0 || loading}
+                className="mt-5 w-full rounded-lg border border-neutral-200 py-2.5 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+              >
+                {loading ? 'Sending…' : cooldown > 0 ? `You can request another in ${cooldown}s` : 'Send another link'}
+              </button>
+              <p className="mt-1.5 text-[11px] text-neutral-400">
+                Asking again cancels the link we just sent.
+              </p>
+
+              <a href="/exhibitor/login" className="inline-block mt-4 text-sm font-semibold text-[#cd2653]">← Back to sign in</a>
             </div>
           ) : (
             <>
@@ -69,9 +119,10 @@ function ForgotPassword() {
                   <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@business.co.za"
                     className="w-full rounded-lg border border-neutral-200 pl-9 pr-3 py-3 text-sm outline-none focus:border-[#cd2653] focus:ring-2 focus:ring-[#cd2653]/20" />
                 </div>
-                <button disabled={loading}
+                <button disabled={loading || cooldown > 0}
                   className="w-full bg-[#cd2653] hover:bg-[#b01f45] text-white font-semibold rounded-lg py-3 text-sm flex items-center justify-center gap-2 disabled:opacity-60 transition-colors">
-                  {loading && <Loader2 className="w-4 h-4 animate-spin" />}{loading ? 'Sending...' : 'Send reset link'}
+                  {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {loading ? 'Sending…' : cooldown > 0 ? `Wait ${cooldown}s` : 'Send reset link'}
                 </button>
               </form>
               <a href="/exhibitor/login" className="inline-block mt-4 text-sm text-neutral-500 hover:text-[#cd2653]">← Back to sign in</a>

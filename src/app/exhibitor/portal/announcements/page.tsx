@@ -42,7 +42,9 @@ export default async function AnnouncementsPage() {
                 {i < items.length - 1 && <div className="absolute left-[19px] top-11 bottom-0 w-px bg-[#B8924A]/40" />}
                 {/* avatar */}
                 <div className="w-10 h-10 rounded-full bg-[#FDFAF1] border border-[#B8924A]/40 flex items-center justify-center shrink-0 z-10 ring-4 ring-[#F6F2E8]">
-                  <Image src="/logo.png" alt="Young at Heart" width={28} height={28} className="object-contain" />
+                  {/* logo-mark.png: at 28px the padded logo.png left 9px of
+                      actual badge. See components/logo.tsx for the measurements. */}
+                  <Image src="/logo-mark.png" alt="Young at Heart" width={28} height={28} className="object-contain" />
                 </div>
                 {/* post */}
                 <div className={`flex-1 bg-[#FDFAF1] border rounded-2xl p-4 ${a.pinned ? 'border-[#cd2653]/30' : 'border-[#B8924A]/40'}`}>

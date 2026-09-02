@@ -66,6 +66,9 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `Stall position change requested by ${bizName} (currently ${currentStall}, prefers ${zoneLabel}). Details: ${details}\n\nReview at /admin/stall-changes`,
       audience: 'all',
+      // Owner sees this only for a vendor SHE owns (paid via Yoco/cash/waived).
+      // Taona 2026-07-26: "never have access to unpaid vendors".
+      vendorId: app.id as string,
     })
   } catch (e) {
     console.error('[exhibitor/stand/move] notifyOwners failed:', (e as Error).message)

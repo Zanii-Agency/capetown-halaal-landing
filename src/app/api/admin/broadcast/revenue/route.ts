@@ -23,6 +23,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getOrders } from '@/lib/woocommerce'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +49,7 @@ export async function GET() {
     if (!adminUser) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const admin = createAdminClient()
+    const restrict = !isEftAdmin(user.email ?? null)
     const now = Date.now()
     const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000
 
@@ -82,6 +84,7 @@ export async function GET() {
       const p = parsePortalState(a.admin_notes || '').payment || {}
       const paid = !!a.paid_at || p.status === 'paid'
       if (!paid) continue
+      if (restrict && !vendorInOwnerScope(a.admin_notes, a.paid_at)) continue
       const amt = Number(p.amount ?? computeVendorPricing(a).total)
       if (!amt) continue
       // Restrict to the 2026 cycle so legacy paid rows do not double-count.

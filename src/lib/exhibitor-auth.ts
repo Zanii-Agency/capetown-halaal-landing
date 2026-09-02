@@ -107,3 +107,54 @@ export async function syncExhibitorAuth(opts: {
     return { updated: false, error: (e as Error).message }
   }
 }
+
+/**
+ * Mint a ONE-TAP portal login link for a vendor who cannot get through the
+ * password flow. The stuck cohort (measured 2026-09-02: ~56 approved vendors on
+ * a temporary password, never signed in) taps a reset email, lands on the
+ * set-password form, and cannot complete it on a phone, so they fall back to
+ * WhatsApp for everything. This reuses the SAME proven recovery-token mechanism
+ * as send-password-reset (generateLink -> hashed_token -> /auth/callback ->
+ * verifyOtp establishes the session), with two changes that make it land them
+ * straight in:
+ *   1. it clears must_change_password, so the portal layout does not bounce them
+ *      to /exhibitor/set-password (operator-approved 2026-09-02: land them in,
+ *      drop the forced password change; the link is single-use + 1h TTL + goes
+ *      only to their own verified number),
+ *   2. it targets /exhibitor/portal/payments so they arrive exactly where they
+ *      need to be to pay or upload proof.
+ * The caller sends the returned URL over WhatsApp, sidestepping the email
+ * deliverability problem entirely.
+ *
+ * Capture/auth only: it does not touch vendor_applications, lane markers, or
+ * payment state, so no festival-owner visibility changes.
+ */
+export async function mintPortalLoginLink(
+  email: string,
+  opts: { next?: string } = {},
+): Promise<{ ok: true; url: string } | { ok: false; reason: 'no_account' | 'mint_failed'; detail?: string }> {
+  const admin = createAdminClient()
+  const clean = (email || '').trim().toLowerCase()
+  const user = await findUserByEmail(admin, clean)
+  if (!user) return { ok: false, reason: 'no_account' }
+
+  // Clear the forced-password-change bounce (merge, never overwrite metadata).
+  if (user.user_metadata?.must_change_password) {
+    await admin.auth.admin
+      .updateUserById(user.id, { user_metadata: { ...(user.user_metadata || {}), must_change_password: false } })
+      .catch(() => {}) // non-fatal: the link still logs them in, they just land on set-password
+  }
+
+  const next = opts.next && opts.next.startsWith('/') && !opts.next.startsWith('//') ? opts.next : '/exhibitor/portal/payments'
+  const origin = 'https://cthalaal.co.za'
+  const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`
+
+  const { data, error } = await admin.auth.admin.generateLink({ type: 'recovery', email: clean, options: { redirectTo } })
+  if (error) return { ok: false, reason: 'mint_failed', detail: error.message }
+  const hashedToken = data?.properties?.hashed_token
+  const verificationType = data?.properties?.verification_type
+  if (!hashedToken || !verificationType) return { ok: false, reason: 'mint_failed', detail: 'no hashed_token' }
+
+  const params = new URLSearchParams({ token_hash: hashedToken, type: verificationType, next })
+  return { ok: true, url: `${origin}/auth/callback?${params.toString()}` }
+}

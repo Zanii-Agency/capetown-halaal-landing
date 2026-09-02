@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export type ToolPrimitiveCategory = "guard" | "resolver" | "chokepoint" | "persistence" | "introspection";
 export type ToolPrimitive<TInput = unknown, TOutput = unknown, TAdapters = unknown> = {
     name: string;

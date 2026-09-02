@@ -8,16 +8,19 @@ import {
   toE164,
   fetchMediaBytes,
 } from '@/lib/whatsapp'
+import { recordLedger } from '@/lib/zanii-ledger'
 import {
   recordOptOut,
   recordConsent,
   touchInbound,
   isStopKeyword,
   isStartKeyword,
+  isOptedOut,
 } from '@/lib/wa-consent'
 import { askFestivalBrain } from '@/lib/festival-brain'
+import { isPartPaymentAsk, FAQ } from '@/lib/festival-brain/faq'
 import { detectHumanIntent, escalateToHuman, isInHandover, isPendingHandover, setPendingHandover } from '@/lib/bot/handover'
-import { notifyOwners } from '@/lib/bot/notify'
+import { notifyOwners, sendToAdmin } from '@/lib/bot/notify'
 import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { findAdmin, isDevNumber } from '@/lib/bot/admins'
@@ -25,12 +28,18 @@ import { resolveIdentity } from '@/lib/bot/identity'
 import { handleAdminMessage } from '@/lib/bot/admin-chat'
 import { routeToBrain } from '@/lib/bot/brains'
 import { vendorAgentEnabled, runVendorAgent } from '@/lib/bot/vendor-agent'
+import { runMasterAgent } from '@/lib/bot/master-agent'
+import { seeImage } from '@/lib/bot/see-image'
 import { resolveVendorSession, confirmVendorVerification } from '@/lib/bot/vendor-session'
+import { uploadDocument } from '@/lib/bot/tools/registry'
+import { tryHandleEftProofMedia } from '@/lib/bot/handle-eft-proof-media'
 import { emailConciergeEnabled, pendingEmailForAdmin, handleEmailConfirm } from '@/lib/email-concierge'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { isMaintenanceEnabled } from '@/lib/maintenance'
 import { guardReply, logGuardRedaction } from '@/lib/bot/reply-guard'
 import { shouldProcess } from '@/lib/brain-core/index.js'
+import { isAcknowledgement } from '@/lib/bot/ack'
+import { isMarker } from '@/lib/inbox/channel-threads'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -38,6 +47,10 @@ export const dynamic = 'force-dynamic'
 // then sendMedia) has time to finish post-200. The 200 itself still returns fast;
 // this only extends how long the function may keep running for the after() work.
 export const maxDuration = 60
+
+// Handover and relay alerts pass `vendorPhone` to notifyOwners, which resolves the
+// vendor by last-9 and withholds from the festival owner unless she owns them
+// (paid via Yoco/cash/waived). An unresolvable number reaches both, as before.
 
 // ---------------------------------------------------------------------------
 // N2: per-sender LLM rate limit.
@@ -125,6 +138,43 @@ async function logLLMThrottle(waId: string, count: number) {
     })
   } catch (e) {
     console.warn('[wa-webhook] LLM throttle log failed:', (e as Error).message)
+  }
+}
+
+/**
+ * Did WE ask this number something in our last message? If so, whatever comes
+ * back is an answer and must be processed, even when it looks like a closer:
+ * "yes" is both. Fails OPEN (returns true, meaning "assume we asked") on a DB
+ * error, because a spurious reply is a far smaller failure than swallowing a
+ * vendor's answer.
+ */
+async function weAskedSomething(e164: string): Promise<boolean> {
+  try {
+    const db = createAdminClient()
+    const { data } = await db
+      .from('wa_messages')
+      // BOTH key forms. This stripped the leading '+', but wa_phone is written
+      // WITH it on the modern path, so the query only ever saw a minority of
+      // legacy rows. Measured on one live number: the stripped key returned an
+      // approval template from weeks earlier, while the real last outbound was
+      // "Here you go, jazakallah for your patience. Your contract's waiting..."
+      // So the "did we just ask a question?" test was answering about the wrong
+      // message, and on any number with no legacy rows it saw nothing at all and
+      // answered false. Either way the acknowledgement suppression fired when it
+      // should not have, and a vendor replying "yes" to "Want me to send your
+      // contract?" was classified as a conversation-closer and dropped: no
+      // reply, no model call, no trace. Same +27 vs 27 key fragmentation already
+      // documented in tools/registry.ts.
+      .select('body')
+      .in('wa_phone', [e164, e164.replace(/^\+/, '')])
+      .eq('direction', 'out')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    const last = (data?.[0] as { body?: string } | undefined)?.body || ''
+    return /[?？]/.test(last)
+  } catch (e) {
+    console.warn('[wa-webhook] weAskedSomething failed (assuming we asked):', (e as Error).message)
+    return true
   }
 }
 
@@ -218,6 +268,22 @@ async function handleInbound(msg: {
 
   await logMessage({ direction: 'in', wa_phone: e164, body: msg.text, status: 'received', providerMessageId: msg.messageId, media: msg.media })
 
+  // Signed proof-of-action (messaging, REQUEST side): a vendor messaged the bot.
+  // Pairs with cth.bot.message_to_vendor (the reply) to show both directions.
+  // Content hashed; best-effort, never throws.
+  // Media-type distinction on the proof layer: a vendor's payment proof is
+  // usually an image or a pdf, and that must read distinctly on the ledger
+  // instead of collapsing into one message_from_vendor. A bare URL in a text
+  // body counts as a shared link.
+  const inKind = msg.media?.kind
+    ? (msg.media.kind === 'document' && /pdf/i.test(String(msg.media.mimeType || '')) ? 'pdf' : msg.media.kind)
+    : (/https?:\/\/\S+/i.test(String(msg.text || '')) ? 'link' : 'text')
+  void recordLedger('vendor-bot', `cth.bot.message_from_vendor.${inKind}`, {
+    from: e164,
+    body: msg.text,
+    ...(msg.media ? { media: msg.media.kind } : {}),
+  })
+
   // 1) STOP — hard opt-out, confirm once, then go silent.
   if (isStopKeyword(msg.text)) {
     await recordOptOut({ waPhone: e164, source: 'inbound' })
@@ -227,8 +293,10 @@ async function handleInbound(msg: {
     return
   }
 
-  // 2) START — re-opt-in.
-  if (isStartKeyword(msg.text)) {
+  // 2) START — re-opt-in. ONLY for someone who actually opted out: otherwise a
+  // normal message that merely contains a start-like word (and previously "yes")
+  // fell in here and got "You're back in" instead of a real answer (2026-08-10).
+  if (isStartKeyword(msg.text) && (await isOptedOut(e164))) {
     await touchInbound(e164, msg.name)
     await recordConsent({ waPhone: e164, source: 'inbound', profileName: msg.name })
     await sendText(e164, "You're back in 🎉 You'll get Young at Heart Festival updates here. How can I help?")
@@ -345,6 +413,8 @@ async function handleInbound(msg: {
               body: `${admin.name} → ${ackName}\nPhone: ${target.vendorE164}\n"${msg.text.slice(0, 240)}"\n\nSwipe-reply to continue.`,
               audience: 'all',
               exclude: e164,
+              // Owner sees the relay only for a vendor she owns (paid via Yoco/cash/waived).
+              vendorPhone: target.vendorE164,
             })
           } catch (e) { console.error('[swipe] cross-mirror failed:', (e as Error).message) }
         }
@@ -380,7 +450,26 @@ async function handleInbound(msg: {
     }
 
     const adminResult = await handleAdminMessage(admin, msg.text)
-    const reply = adminResult.reply ||
+    let reply = adminResult.reply
+    // MASTER BRAIN: when no rigid command matched, let Taona's ops assistant
+    // answer his free-form question (vendor lookups, pipeline numbers, drafts)
+    // instead of a canned hint. Read-only + master-gated (the tool wall refuses
+    // any non-master caller); returns null when disabled or the LLM is
+    // unavailable, so we fall through to the canned reply below.
+    // The festival owner reaches the same brain over a smaller world (Taona
+    // 2026-07-28: "whenever she texts the bot u an help her with info sh needs
+    // as long as it deosnt open eft lane"). Her scoping is enforced inside
+    // runMasterAgent and executeMasterTool, not here, so this stays a routing
+    // decision and there is exactly one place the wall lives.
+    if (!reply && (admin.role === 'master' || admin.role === 'festival_owner')) {
+      try {
+        const brain = await runMasterAgent(admin, msg.text, { history: await recentHistory(e164) })
+        if (brain?.message) reply = brain.message
+      } catch (e) {
+        console.error('[master-brain] failed:', (e as Error).message)
+      }
+    }
+    reply = reply ||
       (admin.role === 'festival_owner'
         ? `Got it ${admin.name.split(' ')[0]}, passed to Taona. Ask me 'stats' for live numbers, or tell me who you want to email and I'll draft it.`
         : `Logged for you, ${admin.name}. Try 'stats' or 'email approved unpaid the payment reminder'.`)
@@ -400,20 +489,85 @@ async function handleInbound(msg: {
     return
   }
 
-  if (msg.type !== 'text' || !msg.text.trim()) {
-    // Non-text inbound (image / document / sticker). The media bytes are already
-    // captured to vendor-docs by logMessage above. Resolve who sent it so a known
-    // vendor gets a warm "got your document, attached it to your application"
-    // acknowledgement instead of the generic tour. Never deflect a document.
+  // MEDIA INBOUND. Two separate failures lived here, both hit by one real
+  // message: Zhaahira sent a screenshot of a payment link that would not open,
+  // captioned "Slms the link doesn't work", and got back "got your document and
+  // it is on your application."
+  //
+  // 1. Her CAPTION was thrown away. parseInbound already folds a media caption
+  //    into msg.text, so the question was right there, but this branch tested
+  //    msg.type and short-circuited before anything could read it. A captioned
+  //    image is a message with a picture attached, not a silent upload.
+  // 2. The IMAGE was never opened. Taona: "its suppose to scan the image
+  //    quietly to understand context". So we look, and hand what we see to the
+  //    agent as context rather than narrating it back at the vendor.
+  //
+  // Only genuinely wordless, unreadable media still gets the plain ack.
+  if (msg.type !== 'text') {
     const mediaSender = await resolveIdentity(e164)
-    if (mediaSender.role === 'vendor' && msg.type !== 'sticker') {
-      const ack = mediaSender.firstName
-        ? `Thanks ${mediaSender.firstName}, I have your document and attached it to your application. The team will review it. Anything else I can help with in the meantime?`
-        : `Thanks, I have your document and attached it to your application. The team will review it. Anything else I can help with in the meantime?`
-      const res = await sendText(e164, ack)
-      await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+    const caption = msg.text.trim()
+
+    const seen = msg.media?.kind === 'image'
+      ? await seeImage(msg.media.id, msg.media.mimeType)
+      : null
+
+    // Payment proof (image or PDF) from a known vendor: lane them if needed,
+    // record the proof, alert the master, and stop here so it never gets lost
+    // as a generic "thanks for your document" ack.
+    if (msg.media) {
+      const proof = await tryHandleEftProofMedia(e164, msg.media, caption, seen)
+      if (proof.handled) {
+        const res = await sendText(e164, proof.reply)
+        await logMessage({ direction: 'out', wa_phone: e164, body: proof.reply, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+        return
+      }
+    }
+
+    if (seen) {
+      // Context for the agent, never shown verbatim to the vendor.
+      const note = seen.isPaymentProof
+        ? `[They attached an image. It looks like a proof of payment: ${seen.description} Do not confirm the payment as received or settled: say it has been passed to the team to check against the account, and answer anything else they asked.]`
+        : seen.isProblem
+          ? `[They attached a screenshot showing a problem: ${seen.description} Help them with THIS problem directly. Do not thank them for a document.]`
+          : `[They attached an image: ${seen.description}]`
+      msg.text = caption ? `${caption}\n\n${note}` : note
+    } else if (caption) {
+      // Vision was unavailable or the format unreadable, but they still wrote
+      // something. Their words alone beat a canned acknowledgement.
+      msg.text = `${caption}\n\n[They also attached ${msg.media?.kind === 'image' ? 'an image' : 'a file'} which could not be read automatically.]`
+    } else {
+      // Nothing to go on: no words, nothing legible. If a verified vendor sent a
+      // document/photo, actually upload it to their portal Documents bucket
+      // instead of just saying "got it". This closes the "I emailed it" loop and
+      // keeps the admin activity feed honest.
+      if (mediaSender.role === 'vendor' && msg.type !== 'sticker' && mediaSender.vendor?.id && msg.media) {
+        const session = {
+          status: 'verified' as const,
+          waPhone: e164,
+          vendorId: mediaSender.vendor.id,
+          media: msg.media,
+        }
+        const result = await uploadDocument(session)
+        const res = await sendText(e164, result)
+        await logMessage({ direction: 'out', wa_phone: e164, body: result, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+        return
+      }
+      if (mediaSender.role === 'vendor' && msg.type !== 'sticker') {
+        const ack = mediaSender.firstName
+          ? `Thanks ${mediaSender.firstName}, got your document and it is on your application. The team will take a look.`
+          : `Thanks, got your document and it is on your application. The team will take a look.`
+        const res = await sendText(e164, ack)
+        await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+        return
+      }
+      await sendText(e164, "Hi! I'm the Young at Heart Festival assistant. Ask me about tickets, vendors, directions, or anything about the festival. Type 'talk to human' to reach our support team. Reply STOP to unsubscribe.")
       return
     }
+    // Fall through: this is now a normal message and takes the normal path,
+    // including the handover gates and the vendor agent below.
+  }
+
+  if (!msg.text.trim()) {
     await sendText(e164, "Hi! I'm the Young at Heart Festival assistant. Ask me about tickets, vendors, directions, or anything about the festival. Type 'talk to human' to reach our support team. Reply STOP to unsubscribe.")
     return
   }
@@ -427,7 +581,7 @@ async function handleInbound(msg: {
     const res = await sendText(e164, ack)
     await logMessage({ direction: 'out', wa_phone: e164, body: ack, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
     try {
-      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all' })
+      await notifyOwners({ event: 'vendor_support_message', body: await buildHandoverAlert(e164, msg.text), audience: 'all', vendorPhone: e164 })
     } catch (e) { console.error('[bot] notifyOwners on pending handover failed:', (e as Error).message) }
     return
   }
@@ -454,6 +608,7 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text),
         audience: 'all',
+        vendorPhone: e164,
       })
     } catch (e) { console.error('[bot] notifyOwners on handover failed:', (e as Error).message) }
     return
@@ -467,6 +622,7 @@ async function handleInbound(msg: {
         event: 'vendor_support_message',
         body: await buildHandoverAlert(e164, msg.text, true),
         audience: 'all',
+        vendorPhone: e164,
       })
     } catch (e) { console.error('[bot] notifyOwners during handover failed:', (e as Error).message) }
     // Don't auto-reply. Samreen replies through /admin/bot-inbox.
@@ -485,10 +641,41 @@ async function handleInbound(msg: {
     return
   }
 
+  // Let a conversation END. A vendor reacted ❤️ to her approval and typed
+  // "Yeaaahh"; the bot replied "Haha, love the energy! 😄 What's got you excited
+  // ...", reopening a conversation that had just closed. The system prompt
+  // already forbade that and the model did it anyway, because replying is what a
+  // model is for, so the decision is made here instead of being asked for.
+  //
+  // Gated on our OWN last message, which is the part that makes it safe: if we
+  // asked something, ANY answer is real input, and "yes" is both a closer and an
+  // answer. Suppression only applies when nobody is waiting on a reply.
+  if (isAcknowledgement(msg.text) && !(await weAskedSomething(e164))) {
+    console.log(JSON.stringify({ at: 'webhook', event: 'acknowledgement_no_reply', e164_last4: e164.slice(-4), text: msg.text.slice(0, 40) }))
+    return
+  }
+
   // Resolve who this is so every reply is personalised (vendor name, ticket
   // count, etc.). Admins are already handled above; resolution here is for
   // vendors / ticket buyers / unknowns.
   const identity = await resolveIdentity(e164)
+
+  // Deterministic guard: part-payment / instalment / payment-plan questions are
+  // a firm no and must NEVER escalate to a human. The model sometimes misses the
+  // phrasing (e.g. "payment plan"), so we short-circuit with the canonical FAQ
+  // answer before any brain/agent call.
+  if (identity.role === 'vendor' && isPartPaymentAsk(msg.text)) {
+    const answer = FAQ.vendor_part_payment.answer
+    const res = await sendText(e164, answer)
+    await logMessage({ direction: 'out', wa_phone: e164, body: answer, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
+    return
+  }
+
+  // NOTE: the EFT lane deliberately does NOT change the bot's replies. Vendors in
+  // the lane get the normal agent/brain like everyone else (no "maintenance"
+  // message). The lane only affects the PAYMENT VIEW (EFT details vs Yoco) and
+  // which admin surface shows the conversation (dev /admin/eft tab vs main inbox),
+  // both handled outside the bot. "Everything remains normal" on WhatsApp.
 
   const history = await recentHistory(e164)
   // New brain shape: pass the latest user turn as the message, prior turns as
@@ -507,9 +694,36 @@ async function handleInbound(msg: {
   const llmAllowed = checkLLMBucket(e164) && (await durableLLMRateOk(e164))
   if (!llmAllowed) {
     await logLLMThrottle(e164, LLM_MAX_PER_5MIN + 1)
+
+    // THIS LINE USED TO BE A LIE, AND IT REPEATED.
+    //
+    // Soxbox, 2026-07-26: three inbound messages in 90 seconds each got the
+    // identical "A human will respond shortly", because the branch was
+    // stateless (no check for whether it had just said this), self-reinforcing
+    // (every inbound is logged at the top of handleInbound BEFORE the early
+    // returns, so each one extended the very window that was throttling her),
+    // and it notified NOBODY: no escalateToHuman, no notifyOwners, no handover
+    // marker. So the sentence was false, and because no handover was opened the
+    // "already in handover, stay quiet" gate above could never catch the repeat
+    // either.
+    //
+    // Now: escalate for real, tell the team, and say it ONCE. escalateToHuman
+    // writes the [HUMAN_HANDOVER_ON] marker, so every subsequent message in this
+    // burst takes the quiet handover path instead of coming back here.
+    try {
+      await escalateToHuman(e164, 'rate limited, handed to a human')
+      await notifyOwners({
+        event: 'vendor_support_message',
+        body: await buildHandoverAlert(e164, msg.text, false),
+        audience: 'all',
+        vendorPhone: e164,
+      })
+    } catch (e) {
+      console.error('[wa-webhook] throttle escalation failed:', (e as Error).message)
+    }
     reply = identity.firstName
-      ? `Thanks ${identity.firstName}, we've received your message. A human will respond shortly. For tickets visit cthalaal.co.za`
-      : "We've received your message. A human will respond shortly. For tickets visit cthalaal.co.za"
+      ? `Thanks ${identity.firstName}, I have passed this to the team and someone will come back to you here.`
+      : 'Thanks, I have passed this to the team and someone will come back to you here.'
   } else {
     try {
       // Phase D (ADR-0005): when CTH_AGENT is on, vendors and unknown senders go
@@ -526,7 +740,7 @@ async function handleInbound(msg: {
           const r = await confirmVendorVerification(e164, codeOnly[1])
           if (r.reason !== 'no_pending') {
             reply = r.ok
-              ? "You're verified. How can I help with your stall, payment, contract, or documents?"
+              ? "Thanks, that is you confirmed. What can I do for you?"
               : r.reason === 'expired'
                 ? "That code has expired. Tell me your application email again and I'll send a fresh one."
                 : r.reason === 'too_many_attempts'
@@ -537,6 +751,7 @@ async function handleInbound(msg: {
         }
         if (!handled) {
           const session = await resolveVendorSession(e164)
+          if (msg.media) session.media = msg.media
           const out = await runVendorAgent(session, msg.text, { history })
           reply = out.message
           deferredActions.push(...out.deferred)
@@ -631,7 +846,9 @@ async function mirrorToMaster(from: { role: string; name: string }, text: string
   const master = findAdmin('+971501168462')
   if (!master || master.role !== 'master') return
   try {
-    await sendText(master.phone, `🪞 ${from.name.split(' ')[0]}'s desk:\n${(text || '').slice(0, 900)}`)
+    // Window-aware: the master rarely replies to the bot, so plain sendText died
+    // on "Re-engagement message" for weeks. sendToAdmin templates it when shut.
+    await sendToAdmin(master, `🪞 ${from.name.split(' ')[0]}'s desk:\n${(text || '').slice(0, 900)}`)
   } catch (e) {
     console.error('mirrorToMaster error', e)
   }
@@ -761,14 +978,33 @@ async function logMessage(row: {
   const idOnlyMetadata = row.media
     ? { media: { kind: row.media.kind, id: row.media.id, mime_type: row.media.mimeType, filename: row.media.filename, caption: row.media.caption } }
     : null
-  const { data: inserted } = await db.from('wa_messages').insert({
-    direction: row.direction,
-    wa_phone: row.wa_phone,
-    body: row.body,
-    status: row.status,
-    provider_message_id: row.providerMessageId || null,
-    ...(idOnlyMetadata ? { metadata: idOnlyMetadata } : {}),
-  }).select('id').single()
+
+  // DOUBLE-WRITE GUARD (2026-08-02). sendText/sendTemplate already log their own
+  // outbound row via logWhatsAppOutbound, and most webhook call sites ALSO call
+  // logMessage after the send — the reply then rendered TWICE in the chat (same
+  // provider_message_id, e.g. Shamillas Fashions' logo ack sent two identical
+  // bubbles). If a row with this provider id already exists, skip the insert;
+  // thread bookkeeping + the refresh below still run.
+  let inserted: { id?: string } | null = null
+  if (row.direction === 'out' && row.providerMessageId) {
+    const { data: existing } = await db
+      .from('wa_messages')
+      .select('id')
+      .eq('provider_message_id', row.providerMessageId)
+      .limit(1)
+    if (existing && existing.length > 0) inserted = existing[0] as { id?: string }
+  }
+  if (!inserted) {
+    const { data: ins } = await db.from('wa_messages').insert({
+      direction: row.direction,
+      wa_phone: row.wa_phone,
+      body: row.body,
+      status: row.status,
+      provider_message_id: row.providerMessageId || null,
+      ...(idOnlyMetadata ? { metadata: idOnlyMetadata } : {}),
+    }).select('id').single()
+    inserted = ins as { id?: string } | null
+  }
 
   // Defer the slow media capture off the synchronous 200 path. after() runs
   // post-response on Vercel and survives the function (unlike a bare floating
@@ -923,13 +1159,25 @@ async function recentHistory(e164: string): Promise<Array<{ role: 'user' | 'assi
   const { data } = await db
     .from('wa_messages')
     .select('direction, body')
-    .eq('wa_phone', e164)
+    // Both key forms: rows exist with and without the leading '+', and an
+    // eq on one of them silently returns a partial conversation.
+    .in('wa_phone', [e164, e164.replace(/^\+/, '')])
     .order('created_at', { ascending: false })
-    .limit(8)
+    .limit(12)
   const rows = (data as Array<{ direction: string; body: string }>) || []
   return rows
     .reverse()
     .filter((r) => r.body)
+    // OUR BOOKKEEPING IS NOT THE BOT'S OWN SPEECH. [NEEDS_HUMAN],
+    // [HUMAN_HANDOVER_*] and the 🛎️ owner pings were being replayed as
+    // `assistant` turns, so the model read internal notes about OTHER vendors as
+    // things it had itself said, and treated them as established fact. This is
+    // the most likely source of the "vendor pack" it kept promising: the phrase
+    // exists NOWHERE in any prompt, template or email in this repo, so it was
+    // either invented once or picked up from a human-typed line in the thread,
+    // and then this replay kept feeding it back until it was true by repetition.
+    .filter((r) => !isMarker(r.body))
+    .slice(-8)
     .map((r) => ({ role: r.direction === 'in' ? ('user' as const) : ('assistant' as const), content: r.body }))
 }
 

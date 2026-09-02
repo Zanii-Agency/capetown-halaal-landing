@@ -3,6 +3,13 @@
 import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { FileCheck, Upload, Loader2, ExternalLink, CheckCircle2, Clock, XCircle, AlertTriangle } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 export interface DocView {
   type: string
@@ -36,6 +43,7 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [successDoc, setSuccessDoc] = useState<string | null>(null)
   const inputs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const byType = Object.fromEntries(docs.map((d) => [d.type, d]))
@@ -48,6 +56,7 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
       const res = await fetch('/api/exhibitor/documents', { method: 'POST', body: fd })
       const j = await res.json()
       if (!res.ok) throw new Error(j.error || 'Upload failed')
+      setSuccessDoc(docType)
       router.refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
@@ -56,11 +65,30 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
     }
   }
 
-  return (
-    <div className="space-y-4">
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+  const successLabel = successDoc ? REQUIRED.find((r) => r.type === successDoc)?.label : null
 
-      {REQUIRED.map((r) => {
+  return (
+    <>
+      <Dialog open={!!successDoc} onOpenChange={() => setSuccessDoc(null)}>
+        <DialogContent className="sm:max-w-md text-center">
+          <div className="mx-auto w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mb-2">
+            <CheckCircle2 className="w-7 h-7" />
+          </div>
+          <DialogHeader>
+            <DialogTitle>Document uploaded</DialogTitle>
+            <DialogDescription>
+              {successLabel
+                ? `Your ${successLabel} has been uploaded and is now in review. You can see it on this page once the team has checked it.`
+                : 'Your document has been uploaded and is now in review. You can see it on this page once the team has checked it.'}
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+
+      <div className="space-y-4">
+        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+
+        {REQUIRED.map((r) => {
         const doc = byType[r.type]
         const st = doc ? STATUS[doc.status] : null
         return (
@@ -113,5 +141,6 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
       })}
       <p className="text-xs text-neutral-400 px-1">PDF, JPG or PNG, up to 10MB. Documents are reviewed by the organisers before show day.</p>
     </div>
+    </>
   )
 }

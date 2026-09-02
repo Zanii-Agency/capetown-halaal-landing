@@ -11,8 +11,13 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
-import { sendText } from '@/lib/whatsapp'
+// Window-aware admin send (free text inside 24h, admin_alert UTILITY template
+// outside). Every bubble below went to sendText for 7 days straight and died on
+// "Re-engagement message": neither admin had messaged the bot within 24h.
+import { sendToAdmin } from '@/lib/bot/notify'
 import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, EMAIL_MIRROR, type InboundEmail } from '@/lib/email-concierge'
+import { parseAttachmentMarker } from '@/lib/email/attachments'
+import { getEftMode, revealsPaymentArrangement } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -27,7 +32,12 @@ export async function GET(req: Request) {
   }
 
   const db = createAdminClient()
-  const confirmer = EMAIL_CONFIRMER
+  // Global EFT mode: route the confirm flow to the master (Taona), so support@
+  // emails never ping the festival owner (Samreen). She still SEES paid vendors'
+  // emails passively in the support inbox; only the active WhatsApp draft/confirm
+  // moves to Taona. Reverts when EFT mode is off (Taona 2026-07-23).
+  const eftOn = await getEftMode()
+  const confirmer = eftOn ? EMAIL_MIRROR : EMAIL_CONFIRMER
 
   // One in-flight: if Samreen already has an email awaiting her confirm, wait
   // — UNLESS it's gone stale (found 2026-07-12: this had no timeout at all, so
@@ -42,12 +52,25 @@ export async function GET(req: Request) {
   const STALE_MINUTES = 60
   const { data: inflightRows } = await db
     .from('support_inbox_messages')
-    .select('id, received_at')
+    .select('id, received_at, created_at')
     .eq('concierge_status', 'awaiting_confirm')
     .eq('concierge_admin', confirmer.phone)
   const staleCutoff = Date.now() - STALE_MINUTES * 60 * 1000
-  const stale = (inflightRows || []).filter((r) => new Date(r.received_at as string).getTime() < staleCutoff)
-  const fresh = (inflightRows || []).filter((r) => new Date(r.received_at as string).getTime() >= staleCutoff)
+  // Staleness is measured from when the email entered OUR system (created_at),
+  // NOT from when the vendor sent it (received_at).
+  //
+  // On received_at, any email imported more than an hour after it was written
+  // was stale the instant we asked about it, and got auto-skipped on the very
+  // next 2-minute cron run. 2026-07-27: a vendor's payment problem arrived
+  // 07:33, was imported 11:30 by the Gmail backfill, alerted, and was dead
+  // before the operator's reply landed ONE MINUTE later. Every email that
+  // backfill recovered was in the same position. The window is meant to stop
+  // the queue wedging on an unanswered prompt, so it has to start when the
+  // prompt was sent.
+  const basis = (r: { created_at?: string | null; received_at?: string | null }) =>
+    new Date((r.created_at || r.received_at) as string).getTime()
+  const stale = (inflightRows || []).filter((r) => basis(r) < staleCutoff)
+  const fresh = (inflightRows || []).filter((r) => basis(r) >= staleCutoff)
   if (stale.length > 0) {
     await db
       .from('support_inbox_messages')
@@ -59,16 +82,37 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, waiting: 'an email is awaiting confirmation', autoSkippedStale: stale.length })
   }
 
-  // Oldest NEW inbound email.
-  const { data: rows } = await db
+  // VENDOR-ONLY: the WhatsApp draft/confirm flow fires only for emails whose
+  // sender is a known vendor (matches a vendor_applications email exactly).
+  // Marketing blasts, newsletters, and cold senders (e.g. an NPO fundraising
+  // email from a communications@ address that is NOT the vendor's contact on
+  // file) are bulk-marked skipped_nonvendor so they never ping WhatsApp and never
+  // wedge the queue (Taona 2026-07-24: "only emails from vendors"). They remain
+  // visible in the admin support inbox for manual handling.
+  const BATCH = 25
+  const { data: batch } = await db
     .from('support_inbox_messages')
     .select('id, from_address, from_name, to_address, subject, body_text, message_id, concierge_draft')
     .eq('direction', 'in')
     .is('concierge_status', null)
     .order('received_at', { ascending: true })
-    .limit(1)
-  const r = rows?.[0] as Record<string, unknown> | undefined
-  if (!r) return NextResponse.json({ ok: true, nothing: 'no new emails' })
+    .limit(BATCH)
+  if (!batch?.length) return NextResponse.json({ ok: true, nothing: 'no new emails' })
+
+  // Vendor email set (lowercased) — full column so case/format never breaks the
+  // match. ~O(vendors) rows, negligible.
+  const { data: vendorRows } = await db.from('vendor_applications').select('email')
+  const vendorEmails = new Set((vendorRows || []).map((v) => String(v.email || '').trim().toLowerCase()).filter(Boolean))
+  const isVendor = (addr: unknown) => vendorEmails.has(String(addr || '').trim().toLowerCase())
+
+  const nonVendor = batch.filter((b) => !isVendor(b.from_address))
+  if (nonVendor.length) {
+    await db.from('support_inbox_messages')
+      .update({ concierge_status: 'skipped_nonvendor' })
+      .in('id', nonVendor.map((b) => b.id))
+  }
+  const r = batch.find((b) => isVendor(b.from_address)) as Record<string, unknown> | undefined
+  if (!r) return NextResponse.json({ ok: true, nothing: 'no new vendor emails', skippedNonVendor: nonVendor.length })
 
   const email: InboundEmail = {
     id: String(r.id),
@@ -98,19 +142,46 @@ export async function GET(req: Request) {
   // Sanitize attacker-controlled header fields before they hit WhatsApp, so a
   // crafted from-name/subject can't fake fields or the SEND/SKIP footer (#7b).
   const clean = (s: string | null, n: number) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n)
-  const box = email.account === 'gmail' ? 'capetownhalaal@gmail.com' : 'support@youngatheart.co.za'
-  const snippet = clean(email.body, 500)
+  // Label from the actual RECIPIENT where we have one. The alert told the
+  // operator this email was on support@ when it had been sent to the Gmail box,
+  // so he searched the wrong tab for it. to_address is unambiguous; the mailbox
+  // column is only the fallback.
+  const toAddr = (email.to_address || '').toLowerCase()
+  const box = toAddr.includes('capetownhalaal') ? 'capetownhalaal@gmail.com'
+    : toAddr.includes('support@youngatheart') ? 'support@youngatheart.co.za'
+    : email.account === 'gmail' ? 'capetownhalaal@gmail.com' : 'support@youngatheart.co.za'
+  // Strip the ⟦ATTACH:<base64>⟧ marker before it reaches WhatsApp. The alert for
+  // Fahema Ryklief's proof of payment carried ~300 characters of base64 into the
+  // operator's chat, burying the actual message. The marker is how attachments
+  // are stored on body_text; it is never something a human should read.
+  const { cleanBody, attachments } = parseAttachmentMarker(email.body)
+  const attachNote = attachments.length
+    ? `\n\n📎 ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}: ${attachments.map((a) => a.filename).join(', ')}`
+    : ''
+  const snippet = clean(cleanBody, 500)
   const bubble1 =
     `📧 New email on ${box}\n` +
     `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
     `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
-    `"${snippet}${snippet.length >= 500 ? '…' : ''}"`
-  const r1 = await sendText(confirmer.phone, bubble1)
+    `"${snippet}${snippet.length >= 500 ? '…' : ''}"${attachNote}`
+  // OWNER SEAL. These bubbles now actually arrive (template fallback), so the
+  // same wall notifyOwners applies runs here: an email that reveals a payment
+  // arrangement (EFT proof, bank details, reference) never reaches the festival
+  // owner. Taona takes the confirm for that one email instead, and the claim is
+  // re-pointed so HIS SEND/SKIP is what pendingEmailForAdmin matches.
+  const sealed = confirmer.phone === EMAIL_CONFIRMER.phone
+    && revealsPaymentArrangement(`${email.subject || ''}\n${cleanBody}`)
+  const target = sealed ? EMAIL_MIRROR : confirmer
+  if (sealed) {
+    await db.from('support_inbox_messages').update({ concierge_admin: target.phone }).eq('id', email.id)
+    console.log(JSON.stringify({ at: 'email-concierge', event: 'owner_sealed', email_id: email.id }))
+  }
+  const r1 = await sendToAdmin(target, bubble1)
 
   const bubble2 = draft
     ? `✍️ Suggested reply (AI draft, please check):\n\n${draft}\n\nReply SEND to send this, SEND: your own message to change it, or SKIP to skip.`
     : `I couldn't auto-draft a reply for this one. Reply SEND: your message to send your wording, or SKIP to skip.`
-  const r2 = await sendText(confirmer.phone, bubble2)
+  const r2 = await sendToAdmin(target, bubble2)
 
   // If BOTH bubbles failed to deliver, REVERT the claim so the row isn't stuck
   // pending with no notification (skeptic HIGH #6b) — it retries next run.
@@ -123,20 +194,24 @@ export async function GET(req: Request) {
 
   // Mirror to Taona (FYI only; Samreen is handling/confirming). Best-effort, one
   // compact message so he sees every email come in without being the confirmer.
-  try {
-    const mirror =
-      `👀 Mirror (Samreen is handling): email on ${box}\n` +
-      `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
-      `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
-      `"${snippet.slice(0, 350)}"` +
-      (draft ? `\n\nDraft: ${draft.slice(0, 450)}` : '')
-    await sendText(EMAIL_MIRROR.phone, mirror)
-  } catch (e) {
-    console.warn('[email-concierge] mirror to Taona failed:', (e as Error).message)
+  // In EFT mode Taona IS the confirmer, so the mirror is redundant and would
+  // mislabel ("Samreen is handling") — skip it.
+  if (!eftOn && !sealed) {
+    try {
+      const mirror =
+        `👀 Mirror (Samreen is handling): email on ${box}\n` +
+        `From: ${clean(email.from_name, 80)} <${clean(email.from_address, 120)}>\n` +
+        `Subject: ${clean(email.subject, 140) || '(no subject)'}\n\n` +
+        `"${snippet.slice(0, 350)}"` +
+        (draft ? `\n\nDraft: ${draft.slice(0, 450)}` : '')
+      await sendToAdmin(EMAIL_MIRROR, mirror)
+    } catch (e) {
+      console.warn('[email-concierge] mirror to Taona failed:', (e as Error).message)
+    }
   }
 
   return NextResponse.json({
     ok: !r1.skipped && !r2.skipped,
-    notified: confirmer.phone, email_id: email.id, from: email.from_address, drafted: Boolean(draft),
+    notified: target.phone, sealed, email_id: email.id, from: email.from_address, drafted: Boolean(draft),
   })
 }

@@ -18,8 +18,14 @@
  */
 
 import nodemailer from 'nodemailer'
+import { guardBankingTalk } from '@/lib/bot/banking-guard'
+import { mirrorOutboundToSupportInbox } from '@/lib/email/support-mirror'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getEftMode, mentionsEft, markVendorToldEft } from '@/lib/eft'
+import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
+import { FESTIVAL_FACTS, SPECIFICS_RULE, guardUngroundedDates } from '@/lib/ai-grounding'
+import { joburgClockBlock } from '@/lib/joburg-clock'
 
 export const EMAIL_CONFIRMER = { name: 'Samreen', phone: '+27723803393' }
 // Taona gets a MIRROR (FYI) of every email notification, but does NOT confirm —
@@ -72,16 +78,46 @@ function stripEmDashes(s: string): string {
   return s.replace(/\s*[—–]\s*/g, ', ').replace(/, ,/g, ',')
 }
 
+/**
+ * The prompt the drafter actually runs on. Exported so a test can assert the
+ * grounding is on the served prompt and not on a copy of it (same reason
+ * bot/grounding.test.ts exists: the tested prompt and the shipped prompt drifted).
+ *
+ * This block used to hold no festival facts and no date at all, which is how the
+ * drafter came to tell a vendor her outcome was due "1 June 2026". A model given
+ * nothing and asked when something happens does not decline, it answers.
+ */
+export function draftSystemPrompt(paymentFacts: string): string {
+  return (
+    `You draft email replies on behalf of the Cape Town Halaal Festival team (operator: Samreen). ` +
+    `ONE FESTIVAL, TWO NAMES: "Cape Town Halaal" and "Young at Heart Festival" are the same single event, not two. ` +
+    `Never treat a mention of either name as a different festival or a misdirected message. ` +
+    `Tone: warm, professional, concise, helpful, South African English. ` +
+    `NEVER use em-dashes (use commas, periods, colons). ` +
+    `Reply to what the email ACTUALLY asks, point by point, using the facts you are given. ` +
+    `\n\n${joburgClockBlock()}\n\n${FESTIVAL_FACTS}\n\n${SPECIFICS_RULE}\n\n` +
+    `If you cannot answer something, write a short, friendly holding reply saying the team will look into it and follow up. ` +
+    paymentFacts +
+    `End with a sign-off line: "Cape Town Halaal Festival Team". ` +
+    `Output ONLY the reply body, no subject line, no "Here is a draft", no quotes.`
+  )
+}
+
 /** Draft a reply with Claude. body_text is already clean (mailparser). */
 export async function draftReply(email: InboundEmail): Promise<string> {
   if (!anthropic) return ''
-  const system =
-    `You draft email replies on behalf of the Cape Town Halaal Festival team (operator: Samreen). ` +
-    `Tone: warm, professional, concise, helpful, South African English. ` +
-    `NEVER use em-dashes (use commas, periods, colons). ` +
-    `Do not invent facts, prices, or commitments you were not given. If you cannot answer something, write a short, friendly holding reply saying the team will look into it and follow up. ` +
-    `End with a sign-off line: "Cape Town Halaal Festival Team". ` +
-    `Output ONLY the reply body, no subject line, no "Here is a draft", no quotes.`
+  // Payment reality is time-dependent. While EFT mode is on (Yoco outage) a vendor
+  // asking how to pay must be answered with the EFT flow + terms, not a vague
+  // holding reply. Give the model those facts so it can answer the actual request.
+  const eftOn = await getEftMode()
+  const paymentFacts = eftOn
+    // Never explain the lane to a vendor (Taona 2026-07-26). Bank transfer is
+    // simply how a stall is paid for. No outage, no "temporarily", no acronym,
+    // no framing it as a fallback: a vendor told the payment system is broken
+    // loses confidence in the festival, not just the gateway.
+    ? `CURRENT STALL FEE PAYMENT: send the vendor to their exhibitor portal payment page at cthalaal.co.za/exhibitor/login and stop there. Do NOT name a payment method, do NOT say "banking details", "account details", "account number", "branch code" or "bank transfer", and do NOT describe what the payment page contains: the portal holds the live values and anything you say about them can be out of date. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay. TERMS the vendor must follow: ${EFT_TERMS_TEXT} `
+    : ''
+  const system = draftSystemPrompt(paymentFacts)
   // The email is UNTRUSTED, attacker-controllable data. Wrap it in delimiters and
   // tell the model never to follow instructions inside it (skeptic MED #7a).
   const user =
@@ -100,7 +136,17 @@ export async function draftReply(email: InboundEmail): Promise<string> {
       messages: [{ role: 'user', content: user }],
     })
     const text = r.content[0]?.type === 'text' ? r.content[0].text.trim() : ''
-    return stripEmDashes(text)
+    // Same guard the WhatsApp bot passes through. It was wired into guardReply
+    // only, so this second path to a vendor was never covered and the drafter
+    // duly wrote "The banking details and your unique payment reference are
+    // available on your exhibitor portal" (2026-07-27, to a vendor asking why
+    // her payment failed). One outbound rule, both channels.
+    const safe = guardBankingTalk(stripEmDashes(text)).reply
+    // Samreen approves this draft with one word (SEND), so anything left in it
+    // ships verbatim. A date the prompt never mentioned is not hers to catch.
+    const dated = guardUngroundedDates(safe, `${system}\n${user}`)
+    if (dated.replaced) console.warn('[email-concierge] dropped ungrounded date(s):', dated.ungrounded.join(', '))
+    return dated.text
   } catch (e) {
     console.error('[email-concierge] draft failed:', (e as Error).message)
     return ''
@@ -137,6 +183,20 @@ export async function sendEmailReply(email: InboundEmail, replyText: string): Pr
       from, to: email.from_address, subject, text: stripEmDashes(replyText.trim()),
       ...(email.message_id ? { inReplyTo: email.message_id, references: email.message_id } : {}),
     })
+    // MIRROR IT INTO THE THREAD. This sent via raw nodemailer and returned, so
+    // the reply reached the vendor and appeared NOWHERE in the admin inbox: the
+    // thread still showed the vendor's message as the newest, still read
+    // "Waiting on a reply", and the operator had no record of what was said.
+    // 2026-07-27: Taona replied to Fahema Ryklief through the WhatsApp SEND
+    // flow, the bot confirmed "Sent ✅", and the Support Email thread was
+    // unchanged. Resend's sendEmail mirrors automatically; every raw SMTP path
+    // has to do it explicitly, exactly as unified/reply's gmail branch already
+    // does.
+    await mirrorOutboundToSupportInbox({
+      to: email.from_address,
+      subject,
+      text: stripEmDashes(replyText.trim()),
+    }).catch((e) => console.error('[email-concierge] mirror failed:', (e as Error).message))
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
@@ -209,5 +269,7 @@ export async function handleEmailConfirm(
     return { reply: `I couldn't send that email (${res.error}). Nothing went out. Try again or SKIP.`, resolved: false, recognized: true }
   }
   await db.from('support_inbox_messages').update({ concierge_status: 'sent', concierge_draft: bodyToSend }).eq('id', email.id)
+  // Told this vendor about EFT -> move their comms onto the Master lane.
+  if (mentionsEft(bodyToSend)) await markVendorToldEft({ email: email.from_address })
   return { reply: `Sent to ${email.from_name || email.from_address} ✅. I'll bring you the next email when one comes in.`, resolved: true, recognized: true }
 }

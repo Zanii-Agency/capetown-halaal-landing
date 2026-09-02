@@ -62,22 +62,46 @@ export function StallChangesClient() {
       .catch((e) => setError(e.message || 'Failed to load'))
   }
 
+  // When the matcher cannot resolve a vendor's own wording (a "2.4m x 1.8m
+  // trailer" is not one of our ten tiers), the API now returns the tier list so
+  // we can ASK instead of dead-ending the operator on another page.
+  const [pick, setPick] = useState<{ reqId: string; text: string; tiers: { slug: string; label: string; price: number }[] } | null>(null)
+
   useEffect(load, [])
 
-  const act = async (req: ChangeRequest, action: 'approve' | 'reject') => {
+  // Declining used to be silent: the vendor asked, the request vanished, and
+  // nobody told them why. Taona 2026-07-30: "I should be able to reject it via
+  // message". The API has always relayed a note to the vendor; only this screen
+  // had no way to write one.
+  const [decline, setDecline] = useState<{ reqId: string; text: string } | null>(null)
+
+  const act = async (req: ChangeRequest, action: 'approve' | 'reject', tier?: string, note?: string) => {
     setBusy({ id: req.id, action })
     try {
       const res = await fetch('/api/admin/stall-changes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: req.id, action, kind: 'size' }),
+        body: JSON.stringify({ id: req.id, action, kind: 'size', ...(tier ? { tier } : {}), ...(note ? { note } : {}) }),
       })
       const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body.error || `Server ${res.status}`)
+      if (!res.ok) {
+        // Not an error to shout about: the vendor described their own equipment
+        // and we simply need to know which tier it maps to.
+        if (body.code === 'UNRESOLVED_TIER' && Array.isArray(body.tiers)) {
+          setPick({ reqId: req.id, text: String(body.requestedText || req.requestedTierLabel), tiers: body.tiers })
+          return
+        }
+        throw new Error(body.error || `Server ${res.status}`)
+      }
+      setPick(null)
+      setDecline(null)
+      // Say which channel actually carried it, so "declined" is never mistaken
+      // for "told". Outside the 24h window only the email goes.
+      const via = body.whatsapp === 'sent' ? ' and told on WhatsApp' : note ? ' and emailed' : ''
       toast.success(
         action === 'approve'
-          ? `${req.business_name} moved to ${req.requestedTierLabel}`
-          : `${req.business_name}'s request declined`,
+          ? `${req.business_name} moved to ${req.requestedTierLabel}${via}`
+          : `${req.business_name}'s request declined${via}`,
       )
       // Optimistically drop the resolved request from the queue.
       setRequests((prev) => (prev || []).filter((r) => r.id !== req.id))
@@ -171,13 +195,83 @@ export function StallChangesClient() {
                         Requested {formatDateTime(req.requestedAt)}
                       </p>
                     )}
+
+                    {pick?.reqId === req.id && (
+                      <div className="mt-3 rounded-xl border border-[#cd2653]/30 bg-[#cd2653]/5 p-3">
+                        <p className="text-xs text-[#1B1A17]/75">
+                          <span className="font-semibold">&ldquo;{pick.text}&rdquo;</span> is not one of our stall
+                          sizes. Which tier should they move to?
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {pick.tiers.map((t) => (
+                            <button
+                              key={t.slug}
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => act(req, 'approve', t.slug)}
+                              className="px-2.5 py-1.5 rounded-lg border border-[#B8924A]/40 bg-white text-xs font-medium text-[#1B1A17] hover:border-[#cd2653] hover:text-[#cd2653] disabled:opacity-50"
+                            >
+                              {t.label} <span className="text-[#1B1A17]/45">R{t.price.toLocaleString('en-ZA')}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPick(null)}
+                          className="mt-2 text-[11px] text-[#1B1A17]/50 underline underline-offset-2"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+
+                    {decline?.reqId === req.id && (
+                      <div className="mt-3 rounded-xl border border-[#E5E5E5] bg-[#FAFAFA] p-3">
+                        <label className="text-xs font-semibold text-[#1B1A17]/75">
+                          Why are you declining? They get this word for word.
+                        </label>
+                        <textarea
+                          autoFocus
+                          rows={2}
+                          value={decline.text}
+                          onChange={(e) => setDecline({ reqId: req.id, text: e.target.value })}
+                          placeholder="We are fully booked on that size, but we can hold your current stall."
+                          className="mt-1.5 w-full rounded-lg border border-[#E5E5E5] px-2.5 py-2 text-xs text-[#1B1A17] outline-none focus:border-[#B8924A]"
+                        />
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={isBusy || !decline.text.trim()}
+                            onClick={() => act(req, 'reject', undefined, decline.text.trim())}
+                            className="px-3 py-1.5 rounded-lg bg-[#cd2653] text-xs font-semibold text-white hover:bg-[#b01f47] disabled:opacity-40"
+                          >
+                            Decline and send
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => act(req, 'reject')}
+                            className="text-[11px] text-[#1B1A17]/50 underline underline-offset-2 disabled:opacity-50"
+                          >
+                            Decline without a message
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDecline(null)}
+                            className="ml-auto text-[11px] text-[#1B1A17]/50 underline underline-offset-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
                       disabled={isBusy}
-                      onClick={() => act(req, 'reject')}
+                      onClick={() => setDecline({ reqId: req.id, text: '' })}
                       className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-[#E5E5E5]/60 text-sm font-semibold text-[#1B1A17]/70 hover:bg-[#FAFAFA] disabled:opacity-50"
                     >
                       {isBusy && busy?.action === 'reject'
@@ -244,6 +338,7 @@ export function StallChangesClient() {
                         Requested {formatDateTime(req.requestedAt)}
                       </p>
                     )}
+
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">

@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Tent, ArrowLeftRight, Bell } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -40,8 +40,15 @@ const navGroups: NavGroup[] = [
   {
     label: 'COMMUNICATIONS',
     items: [
-      { name: 'Inbox', href: '/admin/customer-inbox', icon: MessageCircle },
-      { name: 'Needs You', href: '/admin/customer-inbox?view=needs', icon: Bell },
+      // The channel split (2026-07-27). The merged "Inbox" and "Needs You" are
+      // GONE from navigation on Taona's instruction ("kill the unified inbox
+      // totally, it's not working according to how it should be"). The route
+      // still exists and is still reachable by URL until Phase 3 gives these
+      // tabs take-over / resolve / search, because deleting it today would
+      // remove the only way to silence the bot on a thread.
+      { name: 'WhatsApp', href: '/admin/inbox/whatsapp', icon: MessageCircle },
+      { name: 'Support Email', href: '/admin/inbox/support', icon: Mail },
+      { name: 'Gmail', href: '/admin/inbox/gmail', icon: Inbox },
       { name: 'Broadcast', href: '/admin/broadcast', icon: Megaphone },
       { name: 'Contacts', href: '/admin/contacts', icon: BookOpen },
     ],
@@ -50,6 +57,8 @@ const navGroups: NavGroup[] = [
     label: 'MONEY',
     items: [
       { name: 'Finance', href: '/admin/finance', icon: Wallet },
+      { name: 'Paid Vendors', href: '/admin/paid', icon: BadgeCheck },
+      { name: 'EFT Proofs', href: '/admin/eft-proofs', icon: Landmark },
       { name: 'Tickets', href: '/admin/tickets', icon: Ticket },
     ],
   },
@@ -68,6 +77,9 @@ const navGroups: NavGroup[] = [
 interface AdminSidebarProps {
   role: AdminRole
   email: string | null
+  // TEMPORARY EFT lane: show the dev-only /admin/eft nav item. Computed in the
+  // server layout (isEftAdmin) so this client component never imports @/lib/eft.
+  eftAdmin?: boolean
 }
 
 const ROLE_BADGE_STYLE: Record<AdminRole, { label: string; cls: string; Icon: typeof Shield }> = {
@@ -76,15 +88,28 @@ const ROLE_BADGE_STYLE: Record<AdminRole, { label: string; cls: string; Icon: ty
   viewer:   { label: 'Viewer',   cls: 'bg-neutral-100 text-neutral-600 border-neutral-200', Icon: Eye },
 }
 
-export function AdminSidebar({ role, email }: AdminSidebarProps) {
+export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const router = useRouter()
   const badge = ROLE_BADGE_STYLE[role]
+  // TEMPORARY EFT lane: the EFT admin is the master operator; badge them
+  // differently from the festival owner so the two Owner rows are not confused.
+  const isMaster = role === 'owner' && eftAdmin
+  const badgeLabel = isMaster ? 'Master' : badge.label
+  const badgeCls = isMaster
+    ? 'bg-purple-50 text-purple-700 border-purple-200'
+    : badge.cls
+  const groups: NavGroup[] = eftAdmin
+    ? navGroups.map((g) =>
+        g.label === 'MONEY'
+          ? { ...g, items: [...g.items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }] }
+          : g,
+      )
+    : navGroups
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [supportUnread, setSupportUnread] = useState(0)
-  const [needsResponse, setNeedsResponse] = useState(0)
+  const [channelCounts, setChannelCounts] = useState<Record<string, number>>({})
   const [pendingApps, setPendingApps] = useState<number | null>(null)
   // Collapsed state for desktop (lg+) sidebar. Persisted to localStorage so the
   // operator's preference survives reloads. Mobile drawer is unaffected.
@@ -110,20 +135,27 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
     setMobileOpen(false)
   }, [pathname])
 
-  // Poll the unified inbox unread count for the sidebar badge. Fires every 60s
-  // when the tab is visible. Best-effort, sidebar still works if it fails.
+  // Per-channel "waiting on a person" counts. These polled the merged
+  // /inbox/unified list, which goes away with the old inbox. Each tab now
+  // reports its own number from the endpoint that tab actually renders, so a
+  // badge and the page behind it can never disagree about how much work there
+  // is — which they did, because they were reading different queries.
   useEffect(() => {
     let cancelled = false
     const tick = async () => {
       if (document.hidden) return
       try {
-        const res = await fetch('/api/admin/inbox/unified?channel=all')
-        if (!res.ok) return
-        const j = await res.json()
+        const entries = await Promise.all(
+          (['whatsapp', 'support', 'gmail'] as const).map(async (c) => {
+            const res = await fetch(`/api/admin/inbox/channel/${c}`)
+            if (!res.ok) return [c, 0] as [string, number]
+            const j = await res.json()
+            return [c, (j.counts?.needs_response as number) || 0] as [string, number]
+          }),
+        )
         if (cancelled) return
-        setSupportUnread(j.counts?.unread || 0)
-        setNeedsResponse(j.counts?.needs_response || 0)
-      } catch { /* swallow */ }
+        setChannelCounts(Object.fromEntries(entries))
+      } catch { /* a badge is never worth breaking the sidebar */ }
     }
     tick()
     // 30s (was 60s) so the Needs You / unread badges track the inbox page more
@@ -188,11 +220,17 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
       <div className={cn('border-b border-neutral-200 relative', collapsed ? 'px-2 py-3' : 'px-4 py-4')}>
         {collapsed ? (
           <div className="flex justify-center">
+            {/* logo-mark.png, NOT logo.png. The full logo is a 1732x2310
+                portrait canvas whose badge occupies 43.8% of the width and
+                32.8% of the height, so object-contain in a square box rendered
+                the artwork at 13.1px and left 89.2% of the box empty. The mark
+                is that badge cropped square (measured alpha bbox 759x758) at
+                512px. /logo.png stays as-is: vendors download it for print. */}
             <Image
-              src="/logo.png"
+              src="/logo-mark.png"
               alt="Young at Heart"
-              width={48}
-              height={48}
+              width={96}
+              height={96}
               priority
               className="h-12 w-12 object-contain"
             />
@@ -200,10 +238,10 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
         ) : (
           <div className="flex items-center gap-2.5">
             <Image
-              src="/logo.png"
+              src="/logo-mark.png"
               alt="Young at Heart"
-              width={48}
-              height={48}
+              width={96}
+              height={96}
               priority
               className="h-10 w-10 object-contain flex-shrink-0"
             />
@@ -237,7 +275,7 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 p-3 overflow-y-auto">
-        {navGroups.map((group, gi) => (
+        {groups.map((group, gi) => (
           <div key={group.label ?? `group-${gi}`} className="space-y-1">
             {group.label && !collapsed && (
               <p className="px-4 mt-6 mb-1 text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
@@ -245,18 +283,11 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
               </p>
             )}
             {group.items.map((item) => {
-              // Inbox and Needs You share the /admin/customer-inbox path and are
-              // told apart by the ?view=needs query (usePathname drops the query,
-              // so disambiguate with searchParams).
-              const onInbox = pathname.startsWith('/admin/customer-inbox')
-              const isNeedsView = searchParams.get('view') === 'needs'
-              const isActive = item.href.includes('view=needs')
-                ? (onInbox && isNeedsView)
-                : item.href === '/admin/customer-inbox'
-                  ? (onInbox && !isNeedsView)
-                  : isItemActive(item.href)
-              const badgeNum = item.href.includes('view=needs') ? needsResponse
-                : item.href === '/admin/customer-inbox' ? supportUnread
+              // Every communications tab now has its own path, so the
+              // ?view=needs disambiguation the merged inbox needed is gone.
+              const isActive = isItemActive(item.href)
+              const channel = item.href.startsWith('/admin/inbox/') ? item.href.split('/').pop()! : null
+              const badgeNum = channel ? (channelCounts[channel] ?? 0)
                 : item.href === '/admin/applications' ? pendingApps
                 : null
               return (
@@ -373,12 +404,12 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
           <span
             className={cn(
               'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border',
-              badge.cls
+              badgeCls
             )}
-            title={`Role: ${badge.label}`}
+            title={`Role: ${badgeLabel}`}
           >
             <BadgeIcon className="w-3 h-3" />
-            {badge.label}
+            {badgeLabel}
           </span>
         </div>}
         <button
@@ -429,12 +460,12 @@ export function AdminSidebar({ role, email }: AdminSidebarProps) {
           <span
             className={cn(
               'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border',
-              badge.cls
+              badgeCls
             )}
-            title={`Role: ${badge.label}`}
+            title={`Role: ${badgeLabel}`}
           >
             <BadgeIcon className="w-3 h-3" />
-            {badge.label}
+            {badgeLabel}
           </span>
         </div>
       </div>

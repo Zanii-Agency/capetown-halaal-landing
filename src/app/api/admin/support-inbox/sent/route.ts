@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -55,7 +56,16 @@ export async function GET() {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const sentRows = (rows ?? []) as SentRow[]
+  // TWO layers (2026-07-26): drop mail to vendors the owner does not own, then
+  // strip anything EFT-related still left among the ones she does.
+  const scope = await laneScopeFor(user.email)
+  const sentRows = stripEftMessages(
+    ((rows ?? []) as SentRow[]).filter(
+      (r) => !scope.blocksEmail(r.to_address) && !scope.hidesMessage({ email: r.to_address }, r.received_at),
+    ),
+    (r) => `${r.subject || ''}\n${r.body_text || ''}`,
+    hidesEftContent(user.email),
+  )
   const threadIds = Array.from(new Set(sentRows.map((r) => r.thread_id)))
 
   let threadsById: Record<string, ThreadRow> = {}

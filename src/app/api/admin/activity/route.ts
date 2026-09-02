@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
+import { hiddenFromOwner, siteEventHiddenFromOwner } from '@/lib/audit-scope'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRole } from '@/lib/admin-rbac'
@@ -17,7 +19,7 @@ import { getRole } from '@/lib/admin-rbac'
 
 export const dynamic = 'force-dynamic'
 
-type EventCategory = 'all' | 'approvals' | 'messages' | 'documents' | 'payments' | 'mass_send'
+type EventCategory = 'all' | 'approvals' | 'messages' | 'documents' | 'payments' | 'mass_send' | 'logins'
 
 // Prefix-matched (Postgres ILIKE) categories for SITE_EVENTS. Each category
 // lists one or more prefixes to match the event_type against. Covers both the
@@ -30,6 +32,8 @@ const CATEGORY_PREFIXES: Record<Exclude<EventCategory, 'all'>, string[]> = {
   documents:  ['vendor_doc_', 'document_'],
   payments:   ['payment_', 'checkout_'],
   mass_send:  ['broadcast_', 'mass_', 'verification_blast'],
+  // Admin sign-ins, with the IP and city they came from (lib/admin-login-log.ts).
+  logins:     ['admin_login'],
 }
 
 // Exact-match categories for VENDOR_APPLICATION_EVENTS. These event_type values
@@ -104,6 +108,10 @@ interface VendorLite {
   id: string
   business_name: string
   contact_name: string
+  // Lane columns: needed to decide whether the festival owner may see an audit
+  // row about this vendor. Fetched here rather than re-queried per row.
+  admin_notes: string | null
+  paid_at: string | null
 }
 
 // The unified item shape the client already renders. Both streams normalize
@@ -219,15 +227,41 @@ export async function GET(request: Request) {
     if (vendorIds.size > 0) {
       const { data: vendors } = await admin
         .from('vendor_applications')
-        .select('id, business_name, contact_name')
+        .select('id, business_name, contact_name, admin_notes, paid_at')
         .in('id', Array.from(vendorIds))
       vendorMap = Object.fromEntries(
         ((vendors ?? []) as VendorLite[]).map(v => [v.id, v])
       )
     }
 
+    // --- LANE SCOPE ------------------------------------------------------
+    // This route authenticated the caller and then filtered nothing, so every
+    // admin role read every audit row. Measured at the time of the fix: 148 of
+    // 271 recent vendor events were about vendors outside the festival owner's
+    // scope, and 7 carried EFT wording outright, including the eft_lane_add /
+    // eft_lane_unexclude trail on Y&K gifts and toys. Y&K is the reason the
+    // content check exists as well as the vendor check: it was deliberately
+    // moved INTO her scope, so a vendor-only filter would have shown her the
+    // rows describing the arrangement on the very vendor it matters most for.
+    const restricted = !isEftAdmin(user.email)
+    const scopeOf = (id: string | null | undefined): boolean | undefined => {
+      if (!id) return undefined
+      const v = vendorMap[id]
+      return v ? vendorInOwnerScope(v.admin_notes, v.paid_at) : undefined
+    }
+
     // --- Normalize site_events into the unified item shape ---------------
-    const siteItems: ActivityItem[] = siteRows.map(ev => {
+    const siteItems: ActivityItem[] = siteRows.filter(ev => {
+      if (!restricted) return true
+      const meta = (ev.metadata ?? {}) as Record<string, unknown>
+      const vendorId = typeof meta.vendor_id === 'string'
+        ? meta.vendor_id
+        : (typeof meta.application_id === 'string' ? meta.application_id : null)
+      return !siteEventHiddenFromOwner(
+        { event_type: ev.event_type, metadata: ev.metadata },
+        vendorId ? scopeOf(vendorId) : undefined,
+      )
+    }).map(ev => {
       const meta = (ev.metadata ?? {}) as Record<string, unknown>
       const vendorId = typeof meta.vendor_id === 'string'
         ? meta.vendor_id
@@ -252,7 +286,14 @@ export async function GET(request: Request) {
     })
 
     // --- Normalize vendor_application_events into the same shape ---------
-    const vendorItems: ActivityItem[] = vendorRows.map(ev => {
+    const vendorItems: ActivityItem[] = vendorRows.filter(ev =>
+      !restricted || !hiddenFromOwner({
+        event_type: ev.event_type,
+        note: ev.note,
+        before_value: ev.before_value,
+        after_value: ev.after_value,
+      }, scopeOf(ev.application_id)),
+    ).map(ev => {
       const vendor = ev.application_id ? vendorMap[ev.application_id] ?? null : null
       // Keep the rich diff + note in metadata so the renderer can surface it,
       // mirroring the site_events `metadata` contract.

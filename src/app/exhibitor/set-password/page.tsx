@@ -43,6 +43,11 @@ export default function SetPassword() {
               // Strip the hash so refresh doesn't re-process it
               window.history.replaceState(null, '', window.location.pathname)
               setSessionReady(true)
+              // ANNOUNCE. setSession establishes a real session, so this page is
+              // a login door in its own right, and it was silent. A source guard
+              // in login-announce.test.ts found it after four others had already
+              // been fixed by hand, which is the whole argument for the guard.
+              fetch('/api/admin/login-log', { method: 'POST' }).catch(() => {})
             }
             return
           }

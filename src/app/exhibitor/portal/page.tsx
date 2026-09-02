@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { getExhibitorContext } from '@/lib/exhibitor'
-import { parsePortalState } from '@/lib/portal-state'
+import { parsePortalState, hasPaid } from '@/lib/portal-state'
 import { parseAllocation, tierLabel, TYPE_META, STALL_LIST, type StallType } from '@/lib/stalls'
 import { listAnnouncements } from '@/lib/announcements'
 import Link from 'next/link'
@@ -11,7 +11,7 @@ import {
 import { vendorSlug } from '@/lib/slugify'
 import { Gauge } from '@/components/exhibitor/Gauge'
 import { PageShell, PageHeader, Card } from '@/components/chrome/PageChrome'
-import { requirePaid } from '@/lib/exhibitor-paygate'
+import { requirePaid, computePaymentDue, daysUntil as daysUntilDate, fmtDate } from '@/lib/exhibitor-paygate'
 import { getRequiredDocs } from '@/lib/exhibitor/required-docs'
 import TaskChecklist from '@/components/exhibitor/TaskChecklist'
 import WelcomeModal from '@/components/exhibitor/WelcomeModal'
@@ -33,9 +33,16 @@ function ActionCard({ href, label, icon: Icon, disabled, external }: {
   return <Link href={href} className={classes}>{Icon && <Icon className="w-5 h-5" />}{label}</Link>
 }
 
-function StatTile({ icon: Icon, value, label, href, accent }: { icon: LucideIcon; value: string; label: string; href: string; accent?: boolean }) {
+function StatTile({ icon: Icon, value, label, href, accent, urgent }: { icon: LucideIcon; value: string; label: string; href: string; accent?: boolean; urgent?: boolean }) {
+  // `urgent` is a third tone for a deadline inside a week: readable on its own,
+  // not colour alone, because the value already says the number of days.
+  const tone = accent
+    ? 'bg-[#cd2653] border-[#cd2653] text-white'
+    : urgent
+      ? 'bg-[#cd2653]/8 border-[#cd2653]/45 hover:border-[#cd2653]'
+      : 'bg-[#FDFAF1] border-[#B8924A]/40 hover:border-[#cd2653]/50'
   return (
-    <a href={href} className={`group rounded-2xl p-4 border transition-colors ${accent ? 'bg-[#cd2653] border-[#cd2653] text-white' : 'bg-[#FDFAF1] border-[#B8924A]/40 hover:border-[#cd2653]/50'}`}>
+    <a href={href} className={`group rounded-2xl p-4 border transition-colors ${tone}`}>
       <Icon className={`w-4 h-4 mb-3 ${accent ? 'text-white/80' : 'text-[#cd2653]'}`} />
       <p className={`font-serif text-2xl leading-tight ${accent ? 'text-white' : 'text-[#1B1A17]'}`}>{value}</p>
       <p className={`text-xs mt-0.5 ${accent ? 'text-white/70' : 'text-[#1B1A17]/55'}`}>{label}</p>
@@ -75,9 +82,19 @@ export default async function Overview() {
   const docsLabel = requiredDocs.length === 0 ? 'no docs required' : 'documents in'
   const docsTileValue = requiredDocs.length === 0 ? '—' : `${docsUploaded}/${requiredDocs.length}`
   const staffCount = (state.staff || []).length
-  const isPaid = state.payment?.status === 'paid' || app?.payment_status === 'paid'
+  // 'collected' counts: the vendor was told they are paid, so their dashboard
+  // must say so too (see hasPaid in portal-state).
+  const isPaid = hasPaid(state) || app?.payment_status === 'paid'
   const profileLive = !!(state.profile?.logo_path || state.profile?.description)
-  const paymentDue = (app?.payment_due_date as string) || '1 Sep 2026'
+  // THE 30-DAY COUNTDOWN. computePaymentDue is the one rule: an explicit
+  // payment_due_date if set, else reviewed_at + 30 days. The dashboard used to
+  // ignore it entirely and fall back to a hardcoded '1 Sep 2026', so a vendor
+  // approved in July was shown a date unrelated to their own 30-day window, and
+  // no day count at all. Taona 2026-07-29: "make sure that evry vendor can see
+  // the 30 day countdown on their dashboard easily".
+  const dueDate = app ? computePaymentDue(app as { payment_due_date?: string | null; reviewed_at?: string | null }) : null
+  const paymentDue = dueDate ? fmtDate(dueDate) : ((app?.payment_due_date as string) || 'TBC')
+  const daysToPay = dueDate ? daysUntilDate(dueDate) : null
 
   const termsAccepted = !!state.terms_accepted_at
   const contractSigned = !!app?.contract_signed_at
@@ -85,7 +102,7 @@ export default async function Overview() {
     { done: true, label: 'Application approved', sub: 'Welcome to the festival', href: '/exhibitor/portal' },
     { done: termsAccepted, label: 'Accept terms & conditions', sub: termsAccepted ? 'Recorded against your account' : 'Required before payment', href: '/exhibitor/portal/terms' },
     { done: contractSigned, label: 'Sign vendor contract', sub: contractSigned ? 'Vendor Contract 2026 signed' : 'Locks your stall fee and your spot.', href: '/exhibitor/portal/contract' },
-    { done: isPaid, label: 'Pay your stall fee', sub: isPaid ? 'Received, thank you' : `Due ${paymentDue}`, href: '/exhibitor/portal/payments' },
+    { done: isPaid, label: 'Pay your stall fee', sub: isPaid ? 'Received, thank you' : daysToPay === null ? `Due ${paymentDue}` : daysToPay < 0 ? `Overdue, was due ${paymentDue}` : `${daysToPay} day${daysToPay === 1 ? '' : 's'} left, due ${paymentDue}`, href: '/exhibitor/portal/payments' },
     { done: !!stall, label: 'Stall allocated', sub: stall ? `${stall} · ${stallZone}` : 'Organisers will place you', href: '/exhibitor/portal/stand' },
     {
       done: requiredDocs.length === 0 || docsUploaded === requiredDocs.length,
@@ -158,7 +175,18 @@ export default async function Overview() {
             <StatTile icon={MapPin} value={stall || 'Pending'} label={stall ? (stallZone || 'your stall') : 'stall not set'} href="/exhibitor/portal/stand" />
             <StatTile icon={FileCheck} value={docsTileValue} label={docsLabel} href="/exhibitor/portal/documents" />
             <StatTile icon={Users} value={`${staffCount}`} label="team registered" href="/exhibitor/portal/staff" />
-            <StatTile icon={CreditCard} value={isPaid ? 'Paid' : 'Due'} label={isPaid ? 'stall fee' : paymentDue} href="/exhibitor/portal/payments" />
+            {/* Was value="Due" label="<date>", which buried the number that
+                actually matters. Now the day count IS the value, so the tile
+                reads at a glance like the days-to-opening one beside it. */}
+            <StatTile
+              icon={CreditCard}
+              value={isPaid ? 'Paid' : daysToPay === null ? 'Due' : daysToPay < 0 ? 'Overdue' : `${daysToPay}`}
+              label={isPaid ? 'stall fee' : daysToPay === null ? paymentDue
+                : daysToPay < 0 ? `was due ${paymentDue}`
+                : `day${daysToPay === 1 ? '' : 's'} to pay · ${paymentDue}`}
+              href="/exhibitor/portal/payments"
+              urgent={!isPaid && daysToPay !== null && daysToPay <= 7}
+            />
             <StatTile icon={Store} value={profileLive ? 'Live' : 'Set up'} label="public profile" href="/exhibitor/portal/profile" />
           </div>
         </div>

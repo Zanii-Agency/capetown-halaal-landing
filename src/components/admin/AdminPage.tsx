@@ -16,9 +16,21 @@ interface AdminPageProps {
    * the child should still carry its own base height there.
    */
   fill?: boolean
+  /**
+   * Drop the caption/title/subtitle block entirely and give the space to the
+   * content. The inbox tabs already say which channel you are in twice over (the
+   * highlighted sidebar item and the search placeholder), so a 120px header
+   * repeating it was costing three or four visible messages per screen.
+   * Taona 2026-07-27: "no need for that COMMUNICATIONS there since we already
+   * know what's there, let's create more space for the text."
+   */
+  bare?: boolean
 }
 
-export function AdminPage({ caption, title, subtitle, actions, children, fill }: AdminPageProps) {
+export function AdminPage({ caption, title, subtitle, actions, children, fill, bare }: AdminPageProps) {
+  if (fill && bare) {
+    return <div className="p-4 lg:px-6 lg:py-4 flex flex-col lg:h-full min-h-0">{children}</div>
+  }
   if (fill) {
     return (
       <div className="p-6 lg:p-8 flex flex-col gap-6 lg:h-full min-h-0">

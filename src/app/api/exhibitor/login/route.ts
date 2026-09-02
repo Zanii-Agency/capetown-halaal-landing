@@ -69,6 +69,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid email or password' }, { status: 401 })
   }
 
+  // Tell Taona who just came in, from where, and what is stuck for them.
+  // Awaited so the alert is not cut off by the serverless function freezing
+  // after the response, but wrapped so telemetry can never fail a sign-in.
+  try {
+    const { announceLogin } = await import('@/lib/login-announce')
+    await announceLogin(admin, req.headers, data.user, 'vendor form')
+  } catch (e) {
+    console.error('[exhibitor-login] telemetry failed:', (e as Error).message)
+  }
+
   const meta = data.user.user_metadata || {}
   const mustChange = Boolean(meta.must_change_password)
   return NextResponse.json({

@@ -212,6 +212,205 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
     ],
   },
+  // ---------------------------------------------------------------------------
+  // PAID-COHORT MESSAGE SUITE — added 2026-09-02. A flexible, two-way channel to
+  // the paid vendor union (Yoco / master-EFT / cash / waived / Samreen, i.e. the
+  // `paid=true` audience). Each is UTILITY so it dodges the marketing cap that
+  // silently dropped festival_announcement (0/1000). Shape is identical for all
+  // three: {{1}} = first name, {{2}} = the operator's free message. The approved
+  // body carries a "reply here on WhatsApp" invite so a vendor's reply reopens
+  // the 24h window and lands in the existing inbox/bot. Keep {{2}} transactional
+  // (about their confirmed stall); promotional content can get the SEND
+  // re-categorised as marketing by Meta and re-capped.
+  // ACTION REQUIRED (operator): create + approve these EXACT names (UTILITY,
+  // English) at Meta against the YAH WABA before they deliver. Bodies live in
+  // docs/whatsapp-templates.md; submit via scripts/submit-whatsapp-template.mjs.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'paid_vendor_update',
+    label: 'Paid vendor update (2-way)',
+    description: 'Send any update to a paid vendor about their confirmed stall. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, a message from Young at Heart Festival 2026 about your confirmed stall:\n\n{{2}}\n\nYou can reply here on WhatsApp if you have any questions. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'Setup opens Thursday 10 December from 09:00.', required: true },
+    ],
+  },
+  {
+    key: 'paid_vendor_action_required',
+    label: 'Paid vendor action needed (2-way)',
+    description: 'Ask a paid vendor to do one thing for their confirmed stall. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, one thing needs your attention for your confirmed stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp and we will help, or complete it in your portal: https://cthalaal.co.za/exhibitor/portal. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Action needed', placeholder: 'Upload your logo so you appear in the public listings.', required: true },
+    ],
+  },
+  {
+    key: 'paid_vendor_question',
+    label: 'Paid vendor question (2-way)',
+    description: 'Ask a paid vendor a question and collect their answer by reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, a quick question about your confirmed stall at Young at Heart Festival 2026:\n\n{{2}}\n\nJust reply here on WhatsApp with your answer. Thank you. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your question', placeholder: 'What time will your team arrive on setup day?', required: true },
+    ],
+  },
+  {
+    key: 'paid_vendor_setup_details',
+    label: 'Paid vendor setup details (2-way)',
+    description: 'Send setup-day logistics to a paid vendor about their confirmed stall. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, setup details for your confirmed stall at Young at Heart Festival 2026:\n\n{{2}}\n\nBring your vehicle pass and stall confirmation on the day. Reply here on WhatsApp if anything is unclear. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Setup details', placeholder: 'Setup opens Thursday 10 December from 09:00 at Youngsfield.', required: true },
+    ],
+  },
+  {
+    key: 'paid_vendor_schedule_update',
+    label: 'Paid vendor schedule update (2-way)',
+    description: 'Tell a paid vendor about a timing or schedule change for their confirmed stall.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, an update to the schedule for your confirmed stall at Young at Heart Festival 2026:\n\n{{2}}\n\nPlease note the change. Reply here on WhatsApp if this affects your plans. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Schedule change', placeholder: 'Trading now starts at 10:00 on the Saturday, not 09:00.', required: true },
+    ],
+  },
+  {
+    key: 'paid_vendor_reminder',
+    label: 'Paid vendor reminder (2-way)',
+    description: 'A friendly reminder to a paid vendor about their confirmed stall. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, a friendly reminder for your confirmed stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp if you need a hand. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Reminder', placeholder: 'Please confirm your final stall layout by 1 December.', required: true },
+    ],
+  },
+  {
+    key: 'paid_vendor_good_news',
+    // Meta re-categorised this to MARKETING on approval (2026-09-02): the "good
+    // news / glad to have you" register reads promotional to Meta's classifier.
+    // Kept by operator decision despite the 131049 marketing cap, so it can
+    // under-deliver like festival_announcement. Category here MUST match Meta
+    // (source of truth) or canSend applies the wrong window rules.
+    label: 'Paid vendor good news (MARKETING, may be capped)',
+    description: 'Positive/welcome note. Meta categorised this MARKETING, so it is subject to the delivery cap. For guaranteed delivery use paid_vendor_update instead.',
+    category: 'marketing',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, good news about your confirmed stall at Young at Heart Festival 2026:\n\n{{2}}\n\nWe are glad to have you with us. Reply here on WhatsApp anytime. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Good news', placeholder: 'Your stall is now live in the public vendor listings.', required: true },
+    ],
+  },
+  {
+    // Admin-only. Owner/master alerts outside the 24h window (notify.ts). NOT
+    // for vendors and NOT in the picker's intent: it carries no festival copy.
+    key: 'admin_alert',
+    label: 'Admin alert',
+    description: 'Internal: owner/master alert when their 24h window is shut.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, an item on the Young at Heart Festival admin desk needs your attention:\n\n{{2}}\n\nOpen the admin inbox to action it.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Samreen', required: true },
+      { key: 'alert', label: 'Alert', placeholder: 'VENDOR SUPPORT MESSAGE - ...', required: true },
+    ],
+  },
+  // ---------------------------------------------------------------------------
+  // MASTER-LANE (unpaid EFT cohort) message. The 2-way twin of paid_vendor_update
+  // for vendors on the EFT lane (collected / proof-uploaded / ⟦EFT⟧, not yet
+  // Yoco-reconciled), used by the /admin/eft Outreach composer. Copy says "your
+  // stall", NEVER "confirmed" (they are mid-settlement). UTILITY so it dodges the
+  // general_announcement marketing cap (0/1000). {{1}} = first name, {{2}} = the
+  // operator's free message. Keep {{2}} transactional (about their stall) so Meta
+  // does not re-categorise the send as marketing.
+  // ACTION REQUIRED (operator): create + approve this EXACT name (UTILITY, English)
+  // at Meta against the YAH WABA. Body in docs/whatsapp-templates.md; submit via
+  // scripts/submit-whatsapp-template.mjs. Until approved the WA send fails
+  // observably (wa_messages status 'failed'), never silently.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'master_lane_update',
+    label: 'Master-lane update (2-way)',
+    description: 'Send any update to an EFT-lane vendor about their stall. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, a message from Young at Heart Festival 2026 about your stall:\n\n{{2}}\n\nYou can reply here on WhatsApp if you have any questions. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'We have received your EFT, thank you.', required: true },
+    ],
+  },
+  // ---------------------------------------------------------------------------
+  // PAYMENT-CHECK SUITE — added 2026-09-02. Flexible two-way UTILITY templates
+  // for following up on / confirming a vendor's payment. Same [first_name,
+  // message] shape as the paid + master-lane suites. Copy says "your stall"
+  // (not "confirmed") because these go to vendors who have NOT paid yet. Audience
+  // + lane rules are enforced at the send layer (chase 403 gate / broadcast
+  // paid=false filter), never in the template body, which carries no amount/PII.
+  // Submit the exact names below (UTILITY, en) at Meta before they deliver.
+  // ---------------------------------------------------------------------------
+  {
+    key: 'payment_check',
+    label: 'Payment check (2-way)',
+    description: 'Follow up with a vendor on their stall payment. Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, we are checking in on the payment for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp if you have any questions or need the payment link again. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'Your stall fee of R3,500 is still outstanding.', required: true },
+    ],
+  },
+  {
+    key: 'payment_proof_request',
+    label: 'Payment proof request (2-way)',
+    description: 'Ask a vendor to reply with proof of a payment they say they made.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, we are confirming the payment for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nIf you have already paid, please reply here on WhatsApp with your proof of payment (a screenshot or PDF). The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'We do not yet see your payment on our side.', required: true },
+    ],
+  },
+  {
+    key: 'payment_arrangement_check',
+    label: 'Payment arrangement check (2-way)',
+    description: 'Check in on an agreed payment plan or extension for a vendor stall.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, we are checking in on the payment arrangement for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp to confirm or if anything has changed. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'Your agreed instalment was due on 15 November.', required: true },
+    ],
+  },
 ]
 
 export function findWaTemplate(key: string): WaTemplateSpec | undefined {
@@ -251,4 +450,76 @@ export function renderWaTemplatePreview(
     out = out.replaceAll(`{{${i + 1}}}`, v)
   })
   return out
+}
+
+/**
+ * The paid-cohort message suite (name + free message + reply invite). Every
+ * template here takes exactly two body vars, in this order: [first_name, message].
+ * Exported so the broadcast + chase allowlists and their positional-var builders
+ * stay in sync from one source instead of hardcoding the names three times.
+ */
+export const PAID_VENDOR_MESSAGE_TEMPLATE_KEYS = [
+  'paid_vendor_update',
+  'paid_vendor_action_required',
+  'paid_vendor_question',
+  'paid_vendor_setup_details',
+  'paid_vendor_schedule_update',
+  'paid_vendor_reminder',
+  'paid_vendor_good_news',
+] as const
+
+/**
+ * The master-lane (unpaid EFT cohort) message suite. Same [first_name, message]
+ * two-var shape as the paid suite, but for the /admin/eft Outreach composer's
+ * audience (EFT-lane vendors, not yet reconciled). Kept as its own export so the
+ * chase allowlist and the var mapper pick it up without conflating it with the
+ * paid cohort.
+ */
+export const MASTER_LANE_MESSAGE_TEMPLATE_KEYS = ['master_lane_update'] as const
+
+/**
+ * Payment-follow-up suite. Same [first_name, message] two-var shape, for
+ * checking on / confirming a vendor's payment (unpaid cohort). Own export so the
+ * send-route allowlists and the var mapper pick it up without conflating it with
+ * the paid or master-lane cohorts.
+ */
+export const PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS = [
+  'payment_check',
+  'payment_proof_request',
+  'payment_arrangement_check',
+] as const
+
+// Every two-var [first_name, message] template: paid + master-lane + payment-check.
+const TWO_VAR_MESSAGE_TEMPLATES = new Set<string>([
+  ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
+  ...MASTER_LANE_MESSAGE_TEMPLATE_KEYS,
+  ...PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
+])
+
+/**
+ * Build the ordered positional variables Meta expects for a broadcast/chase WA
+ * send, per template. The paid-cohort suite is a strict [first_name, message]
+ * pair; every other template keeps the legacy [name, business, stall, message]
+ * order with empty slots dropped. Centralised here so the two send routes map
+ * vars identically and cannot drift.
+ */
+export function waBroadcastVariables(
+  templateKey: string,
+  v: { firstName?: string | null; businessName?: string | null; stallCode?: string | null; message?: string | null },
+): string[] {
+  const name = (v.firstName || '').trim() || 'there'
+  const msg = (v.message || '').trim()
+  if (TWO_VAR_MESSAGE_TEMPLATES.has(templateKey)) {
+    // {{1}} = name, {{2}} = the operator's message. The message is required by
+    // the approved body; an empty {{2}} fails observably at Meta (logged) rather
+    // than shipping a blank slot, which is the correct loud failure.
+    //
+    // Meta rejects raw newlines/tabs INSIDE a body parameter (this flattened a
+    // digest in prod twice), so the variable stays one flowing line. Paragraph
+    // structure lives in the fixed, approved template body around {{2}}, not in
+    // the operator's text.
+    const oneLine = msg.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()
+    return [name, oneLine]
+  }
+  return [name, (v.businessName || '').trim(), (v.stallCode || '').trim(), msg].filter((s) => s.length > 0)
 }

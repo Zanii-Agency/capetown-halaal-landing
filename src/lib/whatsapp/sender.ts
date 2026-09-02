@@ -10,6 +10,8 @@
 // function only. No call site needs to change.
 // =============================================================================
 
+import { logWhatsAppOutbound } from '../outbound-log'
+
 const WABA_TOKEN = (process.env.META_WABA_TOKEN || '').trim()
 const WABA_PHONE_NUMBER_ID = (process.env.META_WABA_PHONE_NUMBER_ID || '').trim()
 const WABA_GRAPH_VERSION = (process.env.META_WABA_GRAPH_VERSION || 'v21.0').trim()
@@ -70,6 +72,13 @@ export async function sendTemplate(input: WaSendTemplateInput): Promise<WaSendRe
       return { ok: false, statusCode: res.status, error: (json?.error?.message as string) || `WABA HTTP ${res.status}` }
     }
     const id = json?.messages?.[0]?.id as string | undefined
+    await logWhatsAppOutbound({
+      phone: input.to,
+      body: `[Template: ${input.template}]`,
+      providerMessageId: id || null,
+      templateName: input.template,
+      metadata: { variables: input.variables },
+    })
     return { ok: true, providerMessageId: id }
   } catch (e) {
     return { ok: false, error: (e as Error).message }

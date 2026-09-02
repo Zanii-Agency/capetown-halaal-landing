@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { isPublicAnalyticsEvent, safeMetadata } from '@/lib/analytics-events'
 
 function parseUA(ua: string) {
   const mobile = /Mobile|Android|iPhone|iPad/i.test(ua)
@@ -30,6 +31,16 @@ export async function POST(req: NextRequest) {
 
     if (!session_id || !type) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
+    }
+
+    // THE GATE. This endpoint is unauthenticated and writes with the SERVICE
+    // ROLE, and site_events is not an analytics table — it is the project's
+    // general event log, which getEftMode() reads the global EFT switch out of.
+    // Without this allow-list, POSTing type:"eft_mode" from anywhere on the
+    // internet flipped the whole festival's payment lane. See
+    // src/lib/analytics-events.ts for the full account.
+    if (!isPublicAnalyticsEvent(type)) {
+      return NextResponse.json({ error: 'Unsupported event' }, { status: 400 })
     }
 
     const ua = req.headers.get('user-agent') || ''
@@ -67,7 +78,7 @@ export async function POST(req: NextRequest) {
         session_id,
         event_type: type,
         path: path || null,
-        metadata: metadata || {},
+        metadata: safeMetadata(metadata),
       })
       if (error) {
         console.error('Analytics event error:', error.message)

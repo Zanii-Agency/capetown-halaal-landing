@@ -76,7 +76,7 @@ export function TaskCenter() {
               description: 'Inbound festival email needs attention.',
               category: 'support',
               priority: unread > 10 ? 'high' : 'medium',
-              actionUrl: '/admin/support-inbox',
+              actionUrl: '/admin/inbox/support',
             })
           }
         }

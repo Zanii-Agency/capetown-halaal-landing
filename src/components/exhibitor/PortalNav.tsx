@@ -19,13 +19,16 @@ const NAV_GROUPS: NavItem[] = [
   { href: '/exhibitor/portal', label: 'Overview', icon: LayoutGrid },
   { href: '/exhibitor/portal/stand', label: 'My Stand', icon: MapPin },
   { href: '/exhibitor/portal/documents', label: 'Documents', icon: FileCheck },
-  { href: '/exhibitor/portal/marketing', label: 'Marketing', icon: Sparkles },
+  // Payments promoted into the main row (Taona 2026-08-04): the split
+  // stall/accessories bill lives there and must be one tap away. Marketing
+  // swapped down into the avatar menu, its page unchanged.
+  { href: '/exhibitor/portal/payments', label: 'Payments', icon: CreditCard },
   { href: '/exhibitor/portal/announcements', label: 'Announcements', icon: Megaphone },
   { href: '/exhibitor/portal/support', label: 'Support', icon: MessageCircle },
 ]
 
 const ACCOUNT: NavItem[] = [
-  { href: '/exhibitor/portal/payments', label: 'Payments', icon: CreditCard },
+  { href: '/exhibitor/portal/marketing', label: 'Marketing', icon: Sparkles },
   { href: '/exhibitor/portal/profile', label: 'Profile', icon: Store },
   { href: '/exhibitor/portal/resources', label: 'Resources', icon: BookOpen },
   { href: '/exhibitor/portal/staff', label: 'Staff & Badges', icon: Users },
@@ -53,9 +56,22 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
   const [menuOpen, setMenuOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const activeRef = useRef<HTMLAnchorElement>(null)
   const cleanName = businessName.replace(/^DEMO\s*·?\s*/i, '')
 
   useClickOutside(menuRef, () => setMenuOpen(false))
+
+  // On mobile the nav is a horizontal-scroll pill row. Centre the active pill in
+  // the scroller when the route changes, so the current page is never hidden
+  // off-screen (most vendors are on phones). Scoped to the scroller, so it never
+  // scrolls the page itself.
+  useEffect(() => {
+    const el = activeRef.current, sc = scrollerRef.current
+    if (!el || !sc) return
+    const target = el.offsetLeft + el.offsetWidth / 2 - sc.clientWidth / 2
+    sc.scrollTo({ left: Math.max(0, target), behavior: 'auto' })
+  }, [pathname])
 
   async function signOut() {
     setSigningOut(true)
@@ -70,13 +86,15 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
 
   return (
     <div className="sticky top-0 z-50 bg-[#fbfafa]/85 backdrop-blur-md">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3">
-        <div className="flex items-center gap-4 lg:gap-6 bg-white border border-neutral-200/80 rounded-2xl shadow-[0_6px_24px_rgba(20,15,17,0.06)] px-4 min-h-[72px] py-2.5">
-          <a href="/exhibitor/portal" className="flex items-center gap-3 min-h-[3.5rem] shrink-0 pr-3 lg:pr-5 border-r border-neutral-100">
+      <div className="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 sm:py-3">
+        <div className="flex items-center gap-2 sm:gap-4 lg:gap-6 bg-white border border-neutral-200/80 rounded-2xl shadow-[0_6px_24px_rgba(20,15,17,0.06)] px-2 sm:px-4 min-h-[56px] sm:min-h-[72px] py-2">
+          <a href="/exhibitor/portal" className="flex items-center gap-2 sm:gap-3 min-h-[2.75rem] sm:min-h-[3.5rem] shrink-0 pr-2 sm:pr-3 lg:pr-5 border-r border-neutral-100">
+            {/* logo-mark.png: logo.png is 89% empty canvas, so h-10 w-auto
+                rendered 13px of badge in a 40px slot. See components/logo.tsx. */}
             <img
-              src="/logo.png"
+              src="/logo-mark.png"
               alt="Young at Heart"
-              className="h-10 w-auto object-contain flex-shrink-0"
+              className="h-8 w-8 sm:h-10 sm:w-10 object-contain flex-shrink-0"
             />
             <span className="hidden lg:flex flex-col justify-center leading-tight">
               <span className="block font-bold text-neutral-900 text-sm">Young at Heart</span>
@@ -85,16 +103,16 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
           </a>
 
           {/* Nav buttons with horizontal scroll */}
-          <div className="flex items-center gap-2 lg:gap-3 flex-1 justify-center min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div ref={scrollerRef} className="flex items-center gap-1.5 sm:gap-2 lg:gap-3 flex-1 justify-start sm:justify-center min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {NAV_GROUPS.map((g) => {
               const active = isActive(g.href)
               const Icon = g.icon
               const showDot = inboxUnread && (g.href === '/exhibitor/portal/support' || g.href === '/exhibitor/portal')
 
               return (
-                <a key={g.href} href={g.href}
-                  className={`relative flex items-center gap-2 rounded-full px-4 lg:px-5 py-2 text-sm font-medium whitespace-nowrap transition-colors ${active ? 'bg-[#cd2653] text-white shadow-sm ring-1 ring-[#cd2653]/40' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'}`}>
-                  <Icon className="w-4 h-4" />{g.label}
+                <a key={g.href} href={g.href} ref={active ? activeRef : undefined}
+                  className={`relative flex items-center gap-1.5 sm:gap-2 rounded-full px-2.5 sm:px-4 lg:px-5 py-1.5 sm:py-2 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${active ? 'bg-[#cd2653] text-white shadow-sm ring-1 ring-[#cd2653]/40' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'}`}>
+                  <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />{g.label}
                   {showDot && (
                     <span aria-label="unread" className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white ${active ? 'bg-white' : 'bg-[#cd2653]'}`} />
                   )}
@@ -108,7 +126,7 @@ export default function PortalNav({ businessName, inboxUnread = false }: { busin
             <button onClick={() => setMenuOpen((o) => !o)}
               aria-label="Account menu"
               aria-expanded={menuOpen}
-              className="w-9 h-9 rounded-full bg-[#cd2653] text-white text-sm font-bold flex items-center justify-center hover:opacity-90 ring-1 ring-transparent hover:ring-[#cd2653]/30 transition-all">
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#cd2653] text-white text-xs sm:text-sm font-bold flex items-center justify-center hover:opacity-90 ring-1 ring-transparent hover:ring-[#cd2653]/30 transition-all">
               {initials(businessName)}
             </button>
             {menuOpen && (

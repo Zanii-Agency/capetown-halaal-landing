@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -98,6 +99,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch applications' }, { status: 500 })
     }
 
+    const restrict = !isEftAdmin(user.email ?? null)
+    const applications = restrict
+      ? (data ?? []).filter((a: {
+          status?: string | null
+          admin_notes?: string | null
+          paid_at?: string | null
+        }) => (a.status !== 'approved') || vendorInOwnerScope(a.admin_notes, a.paid_at))
+      : (data ?? [])
+
     // Separate canonical "pending counter" so the top-bar can show
     // "X to go" without re-querying when filters change.
     const { count: pendingTotal } = await admin
@@ -107,20 +117,22 @@ export async function GET(request: NextRequest) {
       .or('is_duplicate.is.null,is_duplicate.eq.false')
 
     // Approved counter: drives the capacity view (approved of 308 total spaces,
-    // remaining = 308 - approved). The festival has a fixed 308 spaces (243
-    // marquee + 20 bedouin + 30 food/drink trucks + 10 dessert + 5 snack), so
-    // "remaining" is the real number that matters, not a row-fetch cap.
-    const { count: approvedTotal } = await admin
+    // remaining = 308 - approved). GLOBAL for every viewer (2026-08-01): the
+    // owner saw 67 while the master saw 169, and a "241 spaces left" lie would
+    // have her approve a hundred vendors beyond capacity. A bare count names no
+    // one, so it leaks nothing — the LIST above stays lane-sealed for her.
+    const { count: approvedCount } = await admin
       .from('vendor_applications')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'approved')
       .or('is_duplicate.is.null,is_duplicate.eq.false')
+    const approvedTotal = approvedCount ?? 0
 
     return NextResponse.json({
-      applications: data ?? [],
+      applications,
       total: count ?? 0,
       pending_total: pendingTotal ?? 0,
-      approved_total: approvedTotal ?? 0,
+      approved_total: approvedTotal,
       limit,
       offset,
     })

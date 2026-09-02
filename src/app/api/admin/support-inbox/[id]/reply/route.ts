@@ -42,6 +42,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (tErr || !thread) return NextResponse.json({ error: tErr?.message || 'thread not found' }, { status: 404 })
 
   const peer = (thread as { peer_email: string }).peer_email
+
+  // No EFT lane gate (2026-07-26): replying is ordinary support work and both
+  // admins see the alerts that prompt it. PAYMENT actions stay walled (admin/chase).
+
   const currentSubject = (thread as { subject: string | null }).subject || 'Young at Heart Festival'
   const replySubject = subjectOverride
     ? subjectOverride

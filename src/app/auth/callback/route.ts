@@ -19,6 +19,40 @@ export const dynamic = 'force-dynamic'
 // Both paths land users on `?next=<path>` after a successful exchange. On any
 // failure we bounce to /exhibitor/forgot?err=<reason> so the user sees a real
 // message (not a dead form). Doctrine Law 7: no em-dashes in user-facing copy.
+/**
+ * Turn Supabase's "Email link is invalid or has expired" into something a vendor
+ * can act on.
+ *
+ * PROVEN 2026-07-27 against a throwaway account: minting a second recovery link
+ * INVALIDATES the first, and the rejected one fails with exactly that message.
+ * So the overwhelmingly likely reason a vendor lands here is that they asked for
+ * a reset twice and then opened the older email. The raw message tells them
+ * nothing, reads like the portal is broken, and turns into a support ticket.
+ */
+function resetErrorMessage(raw: string): string {
+  if (/invalid or has expired/i.test(raw)) {
+    return 'That reset link is no longer valid. If you asked for more than one email, only the most recent link works, so open the newest one. Otherwise the link has expired (they last 1 hour), and you can request a new one below.'
+  }
+  return `Reset link could not be verified: ${raw}. Please request a fresh email.`
+}
+
+// Both success paths below establish a session, and until 2026-07-29 neither
+// announced it. Raeesa Jenkins signed in through here minutes after her email
+// was repaired and nothing said so. announceLogin resolves admin vs vendor
+// itself, so this covers both. Best-effort: never block the redirect.
+async function announce(req: NextRequest, source: 'reset link') {
+  try {
+    const supa = await createClient()
+    const { data: { user } } = await supa.auth.getUser()
+    if (!user) return
+    const { createAdminClient } = await import('@/lib/supabase/admin')
+    const { announceLogin } = await import('@/lib/login-announce')
+    await announceLogin(createAdminClient(), req.headers, user, source)
+  } catch (e) {
+    console.error('[auth/callback] announce failed:', (e as Error).message)
+  }
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const tokenHash = url.searchParams.get('token_hash')
@@ -48,9 +82,10 @@ export async function GET(req: NextRequest) {
     })
     if (error) {
       const u = new URL('/exhibitor/forgot', url.origin)
-      u.searchParams.set('err', `Reset link could not be verified: ${error.message}. Please request a fresh email.`)
+      u.searchParams.set('err', resetErrorMessage(error.message))
       return NextResponse.redirect(u)
     }
+    await announce(req, 'reset link')
     return NextResponse.redirect(new URL(next, url.origin))
   }
 
@@ -59,9 +94,10 @@ export async function GET(req: NextRequest) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (error) {
       const u = new URL('/exhibitor/forgot', url.origin)
-      u.searchParams.set('err', `Reset link could not be verified: ${error.message}. Please request a fresh email.`)
+      u.searchParams.set('err', resetErrorMessage(error.message))
       return NextResponse.redirect(u)
     }
+    await announce(req, 'reset link')
     return NextResponse.redirect(new URL(next, url.origin))
   }
 

@@ -11,6 +11,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAttachmentMarker, EMAIL_ATTACHMENTS_BUCKET } from '@/lib/email/attachments'
+import { hidesEftContent, laneScopeFor } from '@/lib/inbox-lane'
+import { revealsPaymentArrangement } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -42,9 +44,22 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     const [, mailRowId, indexStr] = mailMatch
     const { data: row } = await db
       .from('support_inbox_messages')
-      .select('body_text')
+      .select('body_text, subject, from_address, to_address')
       .eq('id', mailRowId)
       .maybeSingle()
+    // CONTENT-level (2026-07-26). Attachment BYTES cannot be inspected, so the
+    // parent message decides: if the email that carried this file talks about EFT
+    // (subject or body), the file is EFT content and is withheld. That is the same
+    // test the message itself gets, applied one level up — a proof of payment
+    // arrives attached to a mail that says so.
+    const scope = await laneScopeFor(user.email)
+    if (
+      scope.blocksEmail(row?.from_address) ||
+      scope.blocksEmail(row?.to_address) ||
+      (hidesEftContent(user.email) && revealsPaymentArrangement(`${row?.subject || ''}\n${row?.body_text || ''}`))
+    ) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
     const { attachments } = parseAttachmentMarker(row?.body_text)
     const att = attachments[Number(indexStr)]
     if (!att) return NextResponse.json({ error: 'no_media' }, { status: 404 })
@@ -67,10 +82,23 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   const rowId = id.replace(/^wa:/, '')
   const { data: row } = await db
     .from('wa_messages')
-    .select('metadata')
+    .select('metadata, wa_phone, body')
     .eq('id', rowId)
     .maybeSingle()
   const media = (row?.metadata as { media?: MediaMeta } | null)?.media
+  // CONTENT-level, same as the mail branch: the caption/body that came with the
+  // media decides. Also withhold anything stored under an eft-proof path — a
+  // vendor's uploaded proof carries no caption to test.
+  const waScope = await laneScopeFor(user.email)
+  if (
+    waScope.blocksPhone(row?.wa_phone as string | null) ||
+    (hidesEftContent(user.email) &&
+      (revealsPaymentArrangement(row?.body as string | null) ||
+        revealsPaymentArrangement(media?.caption) ||
+        /eft-proof/i.test(media?.storage_path || '')))
+  ) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
   if (!media?.id && !media?.storage_path) return NextResponse.json({ error: 'no_media' }, { status: 404 })
 
   // B6: Prefer Storage. When the inbound media was copied into the private

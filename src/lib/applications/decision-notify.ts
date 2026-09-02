@@ -26,7 +26,7 @@ import { provisionExhibitorAccount } from '@/lib/exhibitor-auth'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { findWaTemplate, renderWaTemplatePreview } from '@/lib/templates/wa-meta'
 import { parseAllocation } from '@/lib/stalls'
-import { updatePortalState } from '@/lib/portal-state'
+import { updatePortalState, hasPaid } from '@/lib/portal-state'
 import type { createAdminClient } from '@/lib/supabase/admin'
 
 type AdminClient = ReturnType<typeof createAdminClient>
@@ -104,7 +104,10 @@ export async function notifyApplicationDecision({
           ...s,
           payment: {
             ...(s.payment || {}),
-            status: s.payment?.status === 'paid' ? 'paid' : 'pending',
+            // Never downgrade a settled vendor ('paid'/'waived'/'collected') to
+            // 'pending' on a re-approval: that would re-lock their portal and put
+            // them back in the chase queue after they had already paid.
+            status: hasPaid(s) ? (s.payment?.status ?? 'paid') : 'pending',
             due: dueDateIso,
           },
         }))
@@ -149,6 +152,20 @@ export async function notifyApplicationDecision({
           loginUrl: 'https://cthalaal.co.za/exhibitor/login',
           paymentDueDate: dueDateLabel,
         }),
+        // REQUIRED HERE, not optional. res.ok gates the ⟦APPROVED_NOTIFIED⟧
+        // marker below, and without this flag `ok` means "Resend ACCEPTED it",
+        // not "the vendor got it". Resend accepts a send addressed to a
+        // suppressed recipient and drops it afterwards, so four approved
+        // vendors (MaterniTee, Chocotag, Soapretty, Simply Educational) were
+        // stamped as notified on 2026-06/07 while receiving nothing — and this
+        // email is the ONLY place their temp password is delivered, so they
+        // could not log in either. They were then chased for payment for weeks.
+        //
+        // Worse, the marker is what remediation filters on, so every catch-up
+        // pass skipped precisely the people who had never been reached.
+        // confirmDelivery makes ok mean delivered, so a suppressed vendor stays
+        // un-marked and the next sweep picks them up.
+        confirmDelivery: true,
       })
 
       // Fire approval WhatsApp template (vendor_application_approved).
@@ -205,20 +222,12 @@ export async function notifyApplicationDecision({
         console.error('[approve] WA template send failed:', (e as Error).message)
       }
 
-      // Follow-up: the "here is how to use it" message — tells the newly-approved
-      // vendor the TWO ways to manage their stall (WhatsApp + portal) with simple
-      // examples (template: vendor_welcome_options). Best-effort + gated: until
-      // Meta approves the template this skips and NEVER affects the approval flow.
-      try {
-        const phoneW = (app.phone || app.whatsapp_number) as string | null
-        if (phoneW) {
-          const fnW = String(app.contact_name || '').trim().split(/\s+/)[0] || 'there'
-          const wo = await sendTemplate(toE164(phoneW), 'vendor_welcome_options', [fnW], { category: 'utility' })
-          if (wo.skipped) console.warn('[approve] welcome_options skipped (template pending Meta approval?):', wo.skipped)
-        }
-      } catch (e) {
-        console.warn('[approve] welcome_options send failed (non-fatal):', (e as Error).message)
-      }
+      // The "here is how to use it" follow-up (WhatsApp + portal self-serve) now
+      // lives in the approval EMAIL's "Manage your stall anytime" section, not a
+      // second WhatsApp template. The old vendor_welcome_options template was
+      // never registered in Meta, so it 404'd (#132001) on EVERY approval, a
+      // guaranteed-failing API call that told no one anything. The email reaches
+      // everyone, needs no Meta approval, and does not stack a second WA message.
 
       // Stamp the idempotency marker ONLY when the email actually went out, so a
       // failed send stays un-marked and remediation can retry it.

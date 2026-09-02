@@ -29,11 +29,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
 import { renderTemplate, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
+import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, MASTER_LANE_MESSAGE_TEMPLATE_KEYS, PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -108,6 +110,12 @@ const ALLOWED_WA_TEMPLATES = new Set<string>([
   'vendor_stall_allocation',
   'vendor_setup_reminder',
   'contract_sign_reminder',
+  // Paid-cohort message suite (flexible, two-way UTILITY templates).
+  ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
+  // Master-lane (unpaid EFT cohort) message suite, for the /admin/eft Outreach composer.
+  ...MASTER_LANE_MESSAGE_TEMPLATE_KEYS,
+  // Payment-follow-up suite (checking on / confirming a vendor's payment).
+  ...PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
 ])
 
 const CHASE_MAX_RECIPIENTS = 200
@@ -154,6 +162,21 @@ export async function POST(req: NextRequest) {
   // template names a leaked session might try to misuse.
   if (body.wa_template && !ALLOWED_WA_TEMPLATES.has(body.wa_template)) {
     return NextResponse.json({ error: 'unknown wa_template' }, { status: 400 })
+  }
+
+  // EFT lane: a chase is a PAYMENT message, so sending one to a master-lane vendor
+  // actively contradicts the EFT arrangement being run for them. Reject the whole
+  // batch rather than silently dropping recipients — a partial send that reports
+  // success is how an operator concludes a vendor was chased when they were not.
+  {
+    const scope = await laneScopeFor(gate.adminUser.email)
+    const blocked = recipients.filter((r) => scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }))
+    if (blocked.length > 0) {
+      return NextResponse.json(
+        { error: 'eft_lane_recipients', blocked: blocked.length, hint: 'These vendors are on the EFT master lane. The EFT admin handles their payment comms.' },
+        { status: 403 },
+      )
+    }
   }
 
   const useTemplate = !!body.template_key
@@ -281,13 +304,16 @@ export async function POST(req: NextRequest) {
             : scrub(body.custom_vars?.custom_message || '')
           const send = await sendTemplate({
             to: phoneRaw,
+            // Positional vars mapped per template: the paid-cohort suite is a
+            // strict [first_name, message] pair; legacy templates keep the
+            // [name, business, stall, message] order with empty slots dropped.
             template: waTemplate,
-            variables: [
-              vars.first_name || 'there',
-              vars.business_name || '',
-              vars.stall_code || '',
-              waCustom,
-            ].filter((v) => v && v.length > 0),
+            variables: waBroadcastVariables(waTemplate, {
+              firstName: vars.first_name,
+              businessName: vars.business_name,
+              stallCode: vars.stall_code,
+              message: waCustom,
+            }),
           })
           if (send.ok) results.wa.sent++
           else if (send.skipped) results.wa.skipped++

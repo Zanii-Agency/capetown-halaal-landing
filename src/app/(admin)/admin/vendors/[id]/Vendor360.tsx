@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { VendorTimeline } from '@/components/admin/inbox/VendorTimeline'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, MessageCircle, Mail, CreditCard, MapPin, Phone,
   FileText, Users, History, Eye, ChevronDown, ChevronUp, Loader2,
-  StickyNote, Plus, Check, X, Trash2, AlertTriangle,
+  StickyNote, Plus, Check, X, Trash2, RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AdminPage } from '@/components/admin/AdminPage'
@@ -26,6 +27,7 @@ import { VendorPaymentsSection } from '@/components/admin/vendor/VendorPaymentsS
 import { VendorContractSection } from '@/components/admin/vendor/VendorContractSection'
 import { VendorDocsChecklist } from '@/components/admin/vendor/VendorDocsChecklist'
 import { VendorActivityLog } from '@/components/admin/vendor/VendorActivityLog'
+import { SpecialRequirementsView } from '@/components/admin/SpecialRequirementsView'
 
 // Mirror of ELECTRICAL_OPTIONS in src/app/apply/page.tsx (minus 'none') and
 // ELECTRICAL_PRICES in src/lib/payments/pricing.ts. Keep in sync.
@@ -167,7 +169,6 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const stallCode = initialData.stall
   const stats = initialData.stats
 
-  const [commExpanded, setCommExpanded] = useState<Set<string>>(new Set())
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerView, setDrawerView] = useState<'contact' | 'doc' | 'paid'>('contact')
   const [previewDoc, setPreviewDoc] = useState<DocRecord | null>(null)
@@ -205,19 +206,12 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [withdrawReason, setWithdrawReason] = useState('')
   const [withdrawBusy, setWithdrawBusy] = useState(false)
+  const [reinstateBusy, setReinstateBusy] = useState(false)
   // Only a vendor carrying the withdrawn marker AND sitting at status='rejected'
   // is "withdrawn". A genuine application rejection (no marker) still reads as
   // 'rejected'; a re-approved vendor (status flips back) sheds the label.
   const isWithdrawn = !!portal.withdrawn && status === 'rejected'
 
-  function toggleCommExpanded(id: string) {
-    setCommExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
 
   function openContactDrawer() {
     setEditBusiness(businessName)
@@ -435,6 +429,24 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
     }
   }
 
+  // Reinstate a withdrawn vendor (Taona 2026-08-25). Reverses the withdrawal:
+  // clears the withdrawn marker, status back to 'approved', so they rejoin the
+  // roster + Excel at once. Does NOT re-allocate their stall (may be reassigned).
+  async function handleReinstate() {
+    setReinstateBusy(true)
+    try {
+      const r = await fetch(`/api/admin/vendors/${v.id}/reinstate`, { method: 'POST' })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { toast.error(j.error || `Failed to reinstate (${r.status})`); return }
+      toast.success(`${businessName} reinstated. They are back in the approved list. Allocate a stall if they need one.`)
+      router.refresh()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setReinstateBusy(false)
+    }
+  }
+
   // In-app targets (never leave the admin site). WhatsApp/Email open the master
   // inbox on THIS vendor's thread via a deep-link param; the old wa.me / mailto
   // links flung the operator out to an external app.
@@ -469,10 +481,17 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
         )}
         <StatusPill tone={statusTone(status)} label={isWithdrawn ? 'withdrawn' : status} />
         {isWithdrawn ? (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-neutral-500">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-            Withdrawn{portal.withdrawn?.at ? ` · ${fmtShortDate(portal.withdrawn.at)}` : ''}
-          </span>
+          // Same slot as Withdraw. Once withdrawn, the button flips to Reinstate.
+          <button
+            type="button"
+            onClick={handleReinstate}
+            disabled={reinstateBusy}
+            className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 border border-emerald-200 hover:border-emerald-300 rounded-md px-2.5 py-1.5 transition-colors disabled:opacity-50"
+            title="Reinstate this vendor: reverse the withdrawal and put them back in the approved list"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            {reinstateBusy ? 'Reinstating…' : 'Reinstate vendor'}
+          </button>
         ) : (
           <button
             type="button"
@@ -491,13 +510,13 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           icon={<MessageCircle className="w-4 h-4" />}
           label="Send WhatsApp"
           tone="mint"
-          onClick={waContact ? () => router.push(`/admin/customer-inbox?contact=${encodeURIComponent(waContact)}&channel=whatsapp`) : undefined}
+          onClick={waContact ? () => router.push(`/admin/inbox/whatsapp?contact=${encodeURIComponent(waContact)}`) : undefined}
         />
         <ActionChip
           icon={<Mail className="w-4 h-4" />}
           label="Send Email"
           tone="sky"
-          onClick={email ? () => router.push(`/admin/customer-inbox?contact=${encodeURIComponent(email)}&channel=email`) : undefined}
+          onClick={email ? () => router.push(`/admin/inbox/support?contact=${encodeURIComponent(email)}`) : undefined}
         />
         <ActionChip
           icon={<CreditCard className="w-4 h-4" />}
@@ -571,8 +590,11 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           />
           <LabeledField label="Stall code" value={stallCode || '—'} mono />
           <LabeledField label="Sector" value={category || '—'} />
-          <LabeledField label="Special requirements" value={v.special_requirements ? String(v.special_requirements) : '—'} />
           <LabeledField label="Items / menu" value={v.items_description ? String(v.items_description).slice(0, 200) : '—'} />
+          <div className="sm:col-span-2">
+            <p className="text-[11px] uppercase tracking-wide text-neutral-400 mb-1.5">Special requirements</p>
+            <SpecialRequirementsView raw={v.special_requirements as string | Record<string, unknown> | null} />
+          </div>
           <LabeledField label="Applied" value={v.created_at ? fmtDate(v.created_at as string) : '—'} />
         </div>
       </Section>
@@ -585,55 +607,12 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
         <QuickNotesSection applicationId={String(v.id)} />
       </Section>
 
-      <Section title="Communication Log" icon={<Mail className="w-4 h-4" />}>
-        {initialData.communications.length === 0 ? (
-          <p className="text-sm text-neutral-500">No messages recorded.</p>
-        ) : (
-          <div className="space-y-1">
-            {initialData.communications.map((c) => {
-              const expanded = commExpanded.has(c.id)
-              const preview = c.body.length > 120 ? c.body.slice(0, 120) + '...' : c.body
-              return (
-                <div
-                  key={c.id}
-                  className="border border-neutral-200 rounded-lg overflow-hidden"
-                >
-                  <button
-                    onClick={() => toggleCommExpanded(c.id)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-neutral-50 transition-colors"
-                  >
-                    <span className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-neutral-100 text-neutral-500">
-                      {c.channel === 'whatsapp' ? (
-                        <MessageCircle className="w-3.5 h-3.5" />
-                      ) : (
-                        <Mail className="w-3.5 h-3.5" />
-                      )}
-                    </span>
-                    <span className="shrink-0 text-xs text-neutral-400 tabular-nums w-28">
-                      {fmtDate(c.at)}
-                    </span>
-                    <span className="shrink-0 text-xs font-medium text-neutral-600 w-20 truncate">
-                      {c.from}
-                    </span>
-                    <span className="flex-1 text-xs text-neutral-700 truncate">
-                      {preview}
-                    </span>
-                    {c.body.length > 120 && (
-                      <span className="shrink-0 text-neutral-400">
-                        {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </span>
-                    )}
-                  </button>
-                  {expanded && c.body.length > 120 && (
-                    <div className="px-3 pb-3 pt-1 text-xs text-neutral-700 whitespace-pre-wrap border-t border-neutral-100 bg-neutral-50">
-                      {c.body}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
+      {/* One vendor, every channel, in time order. This is where the split
+          channels meet again (Taona: "how do we find a way that allows us to see
+          messages from both channels when we need to"). Replaces a flat,
+          unpaginated log that read from a separate server payload. */}
+      <Section title="Full History" icon={<Mail className="w-4 h-4" />}>
+        <VendorTimeline applicationId={String(v.id)} />
       </Section>
 
       <VendorDocsChecklist applicationId={String(v.id)} docs={portal.docs || []} />

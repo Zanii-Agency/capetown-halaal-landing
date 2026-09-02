@@ -51,7 +51,7 @@ interface ApplicationLike {
 
 interface SpecialRequirementsShape {
   stall_type?: string
-  electrical_appliances?: Record<string, number> | string[]
+  electrical_appliances?: Record<string, number> | string[] | string
   electrical_custom?: Array<{ label: string; amount: number; qty?: number }>
   hired_chairs?: number | string
   hired_tables?: number | string
@@ -73,15 +73,49 @@ function readReqs(app: ApplicationLike): SpecialRequirementsShape {
   return {}
 }
 
-export function computeVendorPricing(app: ApplicationLike): VendorPricing {
+export function computeVendorPricing(
+  app: ApplicationLike,
+  /** stringElectrical:false reproduces the pre-2026-08-04 computation (free-text
+   *  electrical ignored). Kept for tests and historical comparisons; the interim
+   *  vendorFacingPricing freeze that used it was replaced by the split bill
+   *  (vendor-bill.ts) the same day. */
+  opts?: { stringElectrical?: boolean },
+): VendorPricing {
   const reqs = readReqs(app)
-  const tierSlug = (reqs.stall_type as string) || (app.preferred_booth_tier as string) || ''
+  // SOURCE OF TRUTH for the charge is the price the SYSTEM stored: the amount the
+  // vendor selected/agreed at application time (special_requirements.stall_price),
+  // which is what the vendor portal shows and Yoco charges. A negotiated / sponsor
+  // rate (e.g. Telkom at R4,800 for a 3x3) lives here and must NOT be overwritten
+  // by a TIER_META standard-price lookup. Reading the tier price first (an earlier
+  // attempt at the MaterniTee fix) over-charged every vendor whose agreed price
+  // differs from the standard. The correct root fix is tierPricingFields, which
+  // RE-SYNCS this stored price whenever the tier actually changes, so reading the
+  // stored price is always current. TIER_META supplies the label, and a fallback
+  // price only for legacy rows that never stored a stall_price.
+  const hasTier = !!(app.preferred_booth_tier && String(app.preferred_booth_tier).trim())
+  const tierSlug = (app.preferred_booth_tier as string) || (reqs.stall_type as string) || ''
   const tier = TIER_META[tierSlug]
-  const stallLabel = tier?.label || tierSlug || 'Custom stall'
-  const stallPrice = tier?.price ?? Number(reqs.stall_price) ?? 0
+  const storedPrice = Number(reqs.stall_price)
+  // Base stall fee applies ONLY when a booth TIER is assigned. If Samreen clears
+  // the tier, the vendor is custom-only: NO base fee, just the custom charges
+  // below. This is the "reset to Other + a custom charge" she expects on clearing
+  // the tier (the flower sisters: R2,000 custom charge, not R3,750 stale base
+  // PLUS R2,000). A tiered vendor keeps their stored/agreed price.
+  const stallPrice = hasTier
+    ? (Number.isFinite(storedPrice) && storedPrice > 0 ? storedPrice : (tier?.price ?? 0))
+    : 0
+  const stallLabel = hasTier ? (tier?.label || tierSlug || 'Custom stall') : 'Custom (no tier)'
 
   const electrical: LineItem[] = []
   const elec = reqs.electrical_appliances
+  // electrical_custom is the admin's authoritative electrical list. When it
+  // exists it SUPERSEDES the vendor's free-text electrical_appliances string:
+  // both name the same appliances, so reading both double-charges. (The OLD code
+  // already used custom and ignored the string, so this keeps those vendors
+  // unchanged; the string parse below only fills the gap for vendors who have a
+  // string and NO custom, which is who was being under-billed.)
+  const customList = Array.isArray(reqs.electrical_custom) ? reqs.electrical_custom : []
+  const hasCustom = customList.some((e) => e && typeof e === 'object' && Number((e as { amount?: unknown }).amount) > 0)
   if (elec && typeof elec === 'object') {
     const entries = Array.isArray(elec)
       ? elec.map((k) => [k, 1] as const)
@@ -93,15 +127,33 @@ export function computeVendorPricing(app: ApplicationLike): VendorPricing {
       if (!meta) continue
       electrical.push({ label: meta.label, amount: meta.price * q, qty: q })
     }
+  } else if (typeof elec === 'string' && elec.trim() && !hasCustom && opts?.stringElectrical !== false) {
+    // THE FORM 218 OF 242 VENDORS ACTUALLY HAVE. The application stores the
+    // electrical selection as human-readable text, "1x Charger/Lighting (R400),
+    // 1x Double Fryer (R800)", and the object branch above never matched it, so
+    // for those vendors electricalTotal was 0 and the whole total collapsed to
+    // the bare stall fee. The vendor portal, invoice, and the EFT "collected"
+    // amount all read this total, so accessories were silently dropped from the
+    // balance (2026-08-04 audit: R9,250 under-collected across 10 already-paid
+    // EFT vendors, and every unpaid vendor with add-ons was mis-quoted too).
+    //
+    // The (R…) in each item is the LINE total (quantity already applied), so we
+    // sum those directly. "1x None (R0)" and any zero amount are skipped.
+    for (const m of elec.matchAll(/(\d+)\s*x\s*([^()]+?)\s*\(\s*R\s*([\d\s.,]+?)\s*\)/gi)) {
+      const q = Math.max(1, Math.floor(Number(m[1]) || 1))
+      const label = m[2].trim()
+      const amount = Number(String(m[3]).replace(/[^\d.]/g, '')) || 0
+      if (amount <= 0 || /^none$/i.test(label)) continue
+      electrical.push({ label, amount, qty: q })
+    }
   }
 
   // Admin-set custom charges (Samreen): off-list appliances OR any additional
   // payment request. The AMOUNT is what matters: any entry with a finite amount
   // > 0 charges, even if the label is blank (default it). Only non-finite/<=0
   // amounts are skipped, so typing just an amount adds it to the total.
-  const custom = reqs.electrical_custom
-  if (Array.isArray(custom)) {
-    for (const entry of custom) {
+  if (customList.length) {
+    for (const entry of customList) {
       if (!entry || typeof entry !== 'object') continue
       const amt = Number(entry.amount)
       if (!Number.isFinite(amt) || amt <= 0) continue
@@ -138,4 +190,24 @@ export function computeVendorPricing(app: ApplicationLike): VendorPricing {
 
 export function formatRand(n: number): string {
   return 'R' + Number(n || 0).toLocaleString('en-ZA')
+}
+
+// When a vendor's booth tier changes, the FROZEN special_requirements snapshot
+// (stall_type/stall_price/total_estimate) must move with it, or admin pages and
+// the stored invoice line keep showing the OLD size. computeVendorPricing reads
+// preferred_booth_tier for the live total, so pricing is already correct, but
+// these fields are the stored display copy that many admin surfaces render.
+// Returns the patched pricing fields for the new tier, preserving any add-on
+// delta (total - base); null if the tier is not a known TIER_META key. Every
+// path that writes preferred_booth_tier should Object.assign this onto reqs.
+export function tierPricingFields(
+  tierSlug: string,
+  prev: { stall_price?: number | string; total_estimate?: number | string },
+): { stall_type: string; stall_price: number; total_estimate: number } | null {
+  const meta = TIER_META[tierSlug]
+  if (!meta) return null
+  const prevStall = Number(prev.stall_price) || 0
+  const prevTotal = Number(prev.total_estimate) || prevStall
+  const addOns = Math.max(0, prevTotal - prevStall)
+  return { stall_type: meta.label, stall_price: meta.price, total_estimate: meta.price + addOns }
 }

@@ -70,7 +70,13 @@ export interface VendorProfile {
 export interface PortalState {
   v: number
   payment?: {
-    status?: 'none' | 'deferred' | 'pending' | 'paid' | 'waived'
+    /** 'collected' = TEMPORARY EFT lane interim state: an operator confirmed EFT
+     *  money landed, so the VENDOR sees PAID and gets an acknowledgment, but
+     *  `paid_at` stays NULL and it is NOT counted in finance totals. The payment
+     *  only becomes final `paid` when settled through Yoco (api/admin/eft/settle).
+     *  Because 'collected' never sets paid_at, the later Yoco settlement is the
+     *  first-and-only paid transition, so revenue can never be double-counted. */
+    status?: 'none' | 'deferred' | 'pending' | 'collected' | 'paid' | 'waived'
     /** Cumulative amount PAID so far (Rand), across the first payment plus any
      *  operator-requested top-ups. Outstanding = computeVendorPricing.total - amount. */
     amount?: number
@@ -100,11 +106,61 @@ export interface PortalState {
     zone?: string
     /** Free-text note the operator added when capturing a manual payment. */
     capture_note?: string
-    /** EFT receipt / refund proof files an operator uploaded. The file lives in
-     *  the private vendor-docs bucket; only the storage path is stored here, the
-     *  vendor portal mints a short-lived signed URL server-side (Law 2). Writer:
-     *  /api/admin/vendors/[id]/payment-proof. */
-    proofs?: Array<{ path: string; kind: 'receipt' | 'refund'; note?: string; uploaded_at: string }>
+    /** TEMPORARY EFT lane (Yoco-outage side-channel, lib/eft.ts). ISO time the
+     *  VENDOR uploaded their own EFT proof. This is a PROVISIONAL flag read ONLY
+     *  by the vendor-side portal (paygate + portal pages) to show "payment
+     *  received, pending confirmation" and unlock the portal. It deliberately
+     *  does NOT touch `status`/`paid_at`, so every admin surface still shows the
+     *  vendor as unpaid until an operator reconciles via the normal mark-paid.
+     *  Never set by confirmPayment(). Writer: /api/exhibitor/eft-proof. */
+    eft_submitted_at?: string
+    /** TEMPORARY EFT lane. ISO time the vendor last clicked "Show bank details to
+     *  pay" on their EFT panel — an intent signal they are about to pay. Used ONLY
+     *  to throttle the master-only WhatsApp heads-up (at most once per 12h) so a
+     *  vendor re-clicking does not buzz the operator repeatedly. Never touches
+     *  status/paid_at. Writer: /api/exhibitor/eft-intent. */
+    eft_revealed_at?: string
+    /** TEMPORARY EFT lane. ISO time an operator marked EFT money as COLLECTED
+     *  (status='collected'). Interim, vendor-visible-as-paid, NOT counted in
+     *  finance. Cleared/superseded when the payment is settled via Yoco and
+     *  transitions to real `paid`/`paid_at`. Writer: /api/admin/eft/reconcile. */
+    eft_collected_at?: string
+    /** An operator-agreed postponement, set alongside status='deferred'. `until`
+     *  is a plain YYYY-MM-DD date the vendor was told they have to settle by.
+     *  Read by isChaseSuppressed() so the payment cron and the manual chase
+     *  scripts stop billing a vendor we have promised more time. Writer:
+     *  scripts/confirm-arrangement.tsx. */
+    arrangement?: { until: string; agreed_at?: string; note?: string }
+    /** ACCESSORY (electricity/furniture) EFT sub-ledger for vendors whose STALL
+     *  fee is already settled but whose accessories were under-billed by the
+     *  pre-2026-08-04 pricing bug. Mirrors the stall two-state so revenue counts
+     *  once: `collected_at` = operator confirmed the accessory EFT landed (vendor
+     *  sees accessories PAID, NOT counted in finance); `settled_at` = the Yoco
+     *  settlement webhook folded `amount` into the cumulative payment.amount via
+     *  the top-up path (now counted, exactly once). revealed/submitted mirror the
+     *  stall lane's intent/proof stamps. Writers: eft-intent, eft-proof-shared,
+     *  admin/eft/reconcile (accessories:true), yoco webhook. */
+    acc?: { amount?: number; revealed_at?: string; submitted_at?: string; collected_at?: string; settled_at?: string; attempted_at?: string }
+    /** EFT receipt / refund proof files. The file lives in the private
+     *  vendor-docs bucket; only the storage path is stored here, the vendor
+     *  portal mints a short-lived signed URL server-side (Law 2). kind:
+     *  'receipt'|'refund' = operator-uploaded (/api/admin/vendors/[id]/payment-proof);
+     *  'eft_submission' = the vendor's own EFT proof (/api/exhibitor/eft-proof). */
+    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string }>
+    /** PRESENT-TO-OWNER (2026-08-23). The operator showed this EFT-collected
+     *  payment to the festival owner as a clean "paid via Yoco" entry (her
+     *  request: the interim EFT state makes her accounting harder, she knows
+     *  about EFT but wants one solid paid+Yoco view). Set by /api/admin/eft/present,
+     *  which reaches the REAL paid-Yoco state via confirmPayment(method:'yoco'),
+     *  so the owner-visibility wall is unchanged and the money counts exactly once.
+     *  `reference` is the YAH- reference she reconciles against. The EFT evidence
+     *  (eft_submitted_at, proofs, ⟦EFT⟧) stays on the record for the EFT admin. */
+    presented_eft?: { at: string; reference: string }
+    /** Operator-side "settle later" tracking for a presented_eft payment: the
+     *  operator marked that they have squared the actual EFT money on their side.
+     *  Pure bookkeeping — NO owner effect, NO finance effect (she already sees
+     *  paid). Writer: /api/admin/eft/present (reconcile:true). */
+    reconciled_at?: string
   }
   docs?: DocRecord[]
   staff?: StaffMember[]
@@ -222,6 +278,79 @@ export function parsePortalState(adminNotes?: string | null): PortalState {
   } catch {
     return { v: 1 }
   }
+}
+
+/** Payment states that mean the money is IN, or formally forgiven. 'collected'
+ *  belongs here: an operator confirmed the EFT money landed and the vendor was
+ *  already sent a payment acknowledgment, so from the vendor's side they HAVE
+ *  paid. `paid_at` stays null only so finance does not count the revenue twice
+ *  before Yoco settles (see the `status` doc above). */
+const PAID_STATES: ReadonlySet<string> = new Set(['paid', 'waived', 'collected'])
+
+/** True if this vendor has settled (or been waived). */
+export function hasPaid(state: PortalState): boolean {
+  return !!state.payment?.paid_at || PAID_STATES.has(state.payment?.status || '')
+}
+
+/** True if the vendor withdrew their application. Never chase a withdrawn vendor. */
+export function isWithdrawn(state: PortalState): boolean {
+  return !!state.withdrawn?.at
+}
+
+/** The in-force operator-agreed extension for this vendor, or null. An
+ *  extension is in force when status is 'deferred' and either no end date was
+ *  set (open-ended) or the end date has not passed. `until` is null for an
+ *  open-ended arrangement. Unlike isChaseSuppressed, this does NOT silence the
+ *  vendor: the cron still sends a gentle, extension-aware reminder that
+ *  acknowledges the date and asks them to pay by it (operator, 2026-08-10). */
+export function getArrangement(
+  state: PortalState,
+  now: Date = new Date()
+): { until: string | null } | null {
+  if (state.payment?.status !== 'deferred') return null
+  const until = state.payment?.arrangement?.until
+  if (until && now > new Date(`${until}T23:59:59.999Z`)) return null // lapsed
+  return { until: until ?? null }
+}
+
+/** Record an operator-agreed payment extension: status='deferred' + the date
+ *  the vendor must settle by (YYYY-MM-DD). Persists what was previously only
+ *  spoken in chat, so every chase reader (cron, batch) honours it. Used by the
+ *  backfill and by the bot when it grants more time. */
+export async function setArrangement(
+  applicationId: string,
+  until: string,
+  note?: string
+): Promise<PortalState> {
+  return updatePortalState(applicationId, (s) => ({
+    ...s,
+    payment: {
+      ...(s.payment || {}),
+      status: 'deferred',
+      arrangement: { until, agreed_at: new Date().toISOString(), ...(note ? { note } : {}) },
+    },
+  }))
+}
+
+/**
+ * True if the vendor must NOT be chased for payment right now, either because
+ * they have already settled or because an operator agreed a deferral that has
+ * not yet lapsed.
+ *
+ * Exists because every chase reader used to test `status === 'paid'` on its own,
+ * which billed vendors on 'collected' (already paid, already acknowledged) and
+ * ignored 'deferred' entirely, so a vendor promised more time was chased anyway.
+ * One predicate, so a new suppression state only has to be taught once.
+ */
+export function isChaseSuppressed(state: PortalState, now: Date = new Date()): boolean {
+  if (hasPaid(state)) return true
+  if (isWithdrawn(state)) return true
+  if (state.payment?.status !== 'deferred') return false
+  const until = state.payment?.arrangement?.until
+  // A deferral with no end date is open-ended. One WITH an end date lapses on
+  // that date and the vendor becomes chaseable again: an unbounded skip would be
+  // a silent revenue leak, not a courtesy.
+  return !until || now <= new Date(`${until}T23:59:59.999Z`)
 }
 
 /**

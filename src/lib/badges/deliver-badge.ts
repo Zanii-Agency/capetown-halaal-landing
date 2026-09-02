@@ -55,6 +55,8 @@ export async function deliverBadge(
             event: 'system_alert',
             body: `Staff badge email for ${input.name} (order ${input.wcOrderId}) did NOT reach ${input.vendorEmail}${r?.suppressed ? ' (Resend suppression: the address is blocked on Resend, not a typo)' : ''}. Send the badge manually via WhatsApp or another email.`,
             audience: 'all',
+            // CARVE-OUT: no vendorId. This is a DELIVERY FAILURE needing manual
+            // recovery, so it must reach a human regardless of the vendor's lane.
           })
         } catch (e) {
           console.error('[deliver-badge] ops alert failed:', (e as Error).message)

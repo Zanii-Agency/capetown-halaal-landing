@@ -11,7 +11,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 import { stripEmDashes } from '@/lib/festival-brain/system-prompt'
+import { getEftMode } from '@/lib/eft'
+import { EFT_TERMS_TEXT } from '@/lib/eft-terms'
+import { FESTIVAL_FACTS, SPECIFICS_RULE, guardUngroundedDates } from '@/lib/ai-grounding'
+import { joburgClockBlock } from '@/lib/joburg-clock'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -22,6 +27,7 @@ const client = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null
 const ACTIONS = [
   'smart_reply',
   'tone_adjust',
+  'spin',
   'follow_up',
   'summarize',
   'attachments',
@@ -34,17 +40,36 @@ const bodySchema = z.object({
   phone: z.string().max(30).optional(),
   email: z.string().email().max(160).optional(),
   draft: z.string().max(4000).optional(),
+  // 'spin' rewrites the operator's own text for the surface it is going out on,
+  // so it is the one action that must know the channel.
+  channel: z.enum(['whatsapp', 'email']).optional(),
+  instruction: z.string().max(500).optional(),
 })
 
 interface Turn { role: 'vendor' | 'team'; channel: 'whatsapp' | 'email'; text: string; at: string }
 
-const HARD_FACTS = `FESTIVAL FACTS (use only these, never invent):
-- Young at Heart Festival (Cape Town Halaal), 11 to 13 December 2026, Youngsfield Military Base, Wetton Road, Claremont, Cape Town.
-- Tickets R30/day, R60 weekend pass, children under 3 free. Buy + apply at cthalaal.co.za. Vendor apply: cthalaal.co.za/apply. Exhibitor portal: cthalaal.co.za/exhibitor/login.
-- All food on site is strictly halaal. Free parking on site. Contact: support@youngatheart.co.za.
-- Vendor flow: apply, approval takes a few working days, pay stall fee by card in the portal, stall allocated closer to the festival.`
+// Payment reality is time-dependent: while EFT mode is on (Yoco outage) the stall
+// fee is paid by EFT with strict terms, NOT by card. Grounding the smart reply on
+// the stale "card only" line was giving vendors a wrong answer, so the facts follow
+// the live mode and carry the same EFT terms the vendor sees on their portal.
+function hardFacts(eftOn: boolean): string {
+  const payLine = eftOn
+    // This drafts replies that go OUT to vendors, so it follows the same rule as
+    // the bot: never explain the lane, never name an outage (Taona 2026-07-26).
+    ? `- STALL FEE PAYMENT (current): the stall fee is paid by bank transfer. Present this as the plain, normal way to pay. The vendor sees the banking details, their unique reference and the full terms on their exhibitor portal payment page at cthalaal.co.za/exhibitor/login, and uploads proof of payment there. Direct them to the portal for the banking details, do NOT state account numbers yourself. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay the stall fee. TERMS the vendor must follow: ${EFT_TERMS_TEXT}`
+    : `- Vendor flow: apply, approval takes a few working days, pay the stall fee by card in the exhibitor portal, stall allocated closer to the festival.`
+  // Today comes from the trusted clock, not the model's sense of when it is. The
+  // email drafter with no date in its prompt told a vendor her outcome was due
+  // "1 June 2026", a deadline that never existed and had already passed.
+  return `${joburgClockBlock()}
 
-const STYLE = `STYLE: warm, plain, concise. 2 to 4 sentences. No em-dashes or en-dashes, use commas/periods/colons. Never say AI assistant, Claude, OpenAI, Anthropic. You are the Young at Heart festival team. Do not invent prices, stall numbers, dates, or banking details. If you do not know, defer to support@youngatheart.co.za.`
+${FESTIVAL_FACTS}
+${payLine}`
+}
+
+const STYLE = `STYLE: warm, plain, concise. 2 to 4 sentences. No em-dashes or en-dashes, use commas/periods/colons. Never say AI assistant, Claude, OpenAI, Anthropic. You are the Young at Heart festival team. Stall numbers and banking details are never yours to state, send them to the exhibitor portal for those. If you do not know, defer to support@youngatheart.co.za.
+
+${SPECIFICS_RULE}`
 
 async function loadThread(db: ReturnType<typeof createAdminClient>, phone?: string, email?: string): Promise<Turn[]> {
   const turns: Turn[] = []
@@ -53,12 +78,12 @@ async function loadThread(db: ReturnType<typeof createAdminClient>, phone?: stri
     const { data } = await db
       .from('wa_messages')
       .select('direction, body, created_at, template_name')
-      .or(`wa_phone.eq.+${noPlus},wa_phone.eq.${noPlus}`)
+      .in('wa_phone', [`+${noPlus}`, noPlus])
       .order('created_at', { ascending: true })
       .limit(60)
     for (const m of (data || []) as Array<{ direction: string; body: string | null; created_at: string; template_name: string | null }>) {
       const text = (m.body || '').trim()
-      if (!text || /^\s*\[[A-Z_]+\]/.test(text) || /HUMAN_HANDOVER/.test(text) || /^\s*🛎/u.test(text)) continue
+      if (!text || /^\s*\[[A-Z_]+[:\]]/.test(text) || /HUMAN_HANDOVER/.test(text) || /^\s*🛎/u.test(text)) continue
       turns.push({ role: m.direction === 'in' ? 'vendor' : 'team', channel: 'whatsapp', text, at: m.created_at })
     }
   }
@@ -93,21 +118,59 @@ function lastInbound(turns: Turn[]): string | null {
   return null
 }
 
-function promptFor(action: Action, turns: Turn[], draft: string): { system: string; user: string } | { error: string } {
+function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean, channel: 'whatsapp' | 'email' = 'email', instruction?: string): { system: string; user: string } | { error: string } {
   const convo = transcript(turns)
-  const base = `${HARD_FACTS}\n\n${STYLE}`
+  const base = `${hardFacts(eftOn)}\n\n${STYLE}`
+  const dir = instruction?.trim() ? `\n\nOPERATOR DIRECTION: ${instruction.trim()}` : ''
   switch (action) {
     case 'smart_reply': {
       const inbound = lastInbound(turns)
       if (!inbound) return { error: 'No incoming message to reply to yet.' }
-      return { system: `You are the Young at Heart festival team replying to a vendor or guest on the same channel. Write the reply only, no preamble.\n\n${base}`, user: `CONVERSATION:\n${convo}\n\nWrite the best reply to their latest message.` }
+      return {
+        system: `You are the Young at Heart festival team replying to a vendor or guest on the same channel. Write the reply only, no preamble.\n\n${base}`,
+        user: `CONVERSATION:\n${convo}\n\nTHEIR LATEST MESSAGE:\n"${inbound}"\n\nRead the full conversation above, then reply directly to what they actually asked or said in their latest message. Do not repeat points already covered in the thread. Do not send a generic acknowledgement or a template: answer their specific questions and requests using the facts above. If they ask about payment, part payment, deposits, proof of payment, or a deadline, answer using the current stall fee payment facts and terms exactly.${dir}`,
+      }
     }
     case 'tone_adjust': {
       if (!draft.trim()) return { error: 'Type a draft reply first, then adjust its tone.' }
-      return { system: `You rewrite a draft reply to be warmer and clearer while keeping the meaning and all facts. Output the rewritten reply only.\n\n${base}`, user: `DRAFT:\n${draft}\n\nRewrite it warmer, clearer, and a touch more professional. Keep it short.` }
+      return {
+        system: `You rewrite a draft reply to be warmer and clearer while keeping the meaning and all facts. Output the rewritten reply only.\n\n${base}`,
+        user: `DRAFT:\n${draft}\n\nRewrite it warmer, clearer, and a touch more professional. Keep it short.${dir}`,
+      }
+    }
+    // SPIN. The operator writes the message; this rewrites it for the surface it
+    // is going out on. Distinct from smart_reply, which invents a reply from the
+    // thread: here the operator's INTENT is the input and must survive intact.
+    //
+    // Channel-shaped on purpose (Taona 2026-07-28: "channel-appropriate version
+    // for each"). A WhatsApp message and an email are not the same message with
+    // different padding: one is a chat turn, the other is correspondence.
+    case 'spin': {
+      if (!draft.trim()) return { error: 'Type your message first, then spin it.' }
+      const shape = channel === 'whatsapp'
+        ? `TARGET: WhatsApp. Write it as a chat message. No subject line, no "Dear", no formal sign-off. Short sentences, one idea per line, blank line between ideas. You may use *single asterisks* for emphasis, which is how WhatsApp renders bold. Contractions are fine. Aim under 90 words.`
+        : `TARGET: email. Write it as correspondence. Open with a greeting on its own line, close with "Warm regards," then "The Young at Heart Festival Team" on the next line. Full sentences and complete paragraphs. Never use WhatsApp markup like *asterisks*. Aim under 160 words.`
+      return {
+        system: `You rewrite a festival team member's own message so it reads well on the channel it is being sent on. Output the rewritten message ONLY, with no preamble, no explanation, and no quotes around it.
+
+RULES THAT OVERRIDE EVERYTHING:
+- Keep the operator's MEANING and every fact, name, figure, date and link exactly. You are rewriting, not answering.
+- Fix spelling, grammar and obvious typos, including in email addresses and domains.
+- Do NOT add commitments, dates, prices, deadlines or promises that are not already in their text.
+- Do NOT add banking details, account numbers or branch codes. If they mention paying, point to the portal and stop there.
+- If their text contains a factual error about the festival that contradicts the facts below, correct it.
+
+${shape}
+
+${base}`,
+        user: `THE OPERATOR WROTE:\n${draft}\n\nRewrite it for the target channel, keeping their meaning and facts intact.${dir}`,
+      }
     }
     case 'follow_up':
-      return { system: `You write a short proactive follow-up to move this conversation forward (e.g. nudge to apply, pay, send a halaal certificate, or confirm details). Output the message only.\n\n${base}`, user: `CONVERSATION:\n${convo}\n\nWrite a helpful follow-up nudge appropriate to where this conversation stands.` }
+      return {
+        system: `You write a short proactive follow-up to move this conversation forward (e.g. nudge to apply, pay, send a halaal certificate, or confirm details). Output the message only.\n\n${base}`,
+        user: `CONVERSATION:\n${convo}\n\nWrite a helpful follow-up nudge appropriate to where this conversation stands.${dir}`,
+      }
     case 'summarize':
       return { system: `You summarise a support conversation for a festival operator. Output 1 to 2 sentences: who they are, what they want, and what is outstanding. No greeting.\n\n${STYLE}`, user: `CONVERSATION:\n${convo}\n\nSummarise it.` }
     case 'attachments':
@@ -136,22 +199,41 @@ export async function POST(req: NextRequest) {
   }
   if (!body.phone && !body.email) return NextResponse.json({ error: 'phone or email required' }, { status: 400 })
 
-  const turns = await loadThread(db, body.phone, body.email)
-  const prompt = promptFor(body.action, turns, body.draft || '')
+  // CONTENT-level (2026-07-26): any admin may run this on any vendor's thread,
+  // but the EFT turns are stripped BEFORE the transcript reaches the model —
+  // loadThread feeds an LLM prompt directly, so filtering the output would be
+  // too late.
+  const scope = await laneScopeFor(gate.adminUser.email)
+  if (scope.blocks({ phone: body.phone, email: body.email })) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
+  const hide = hidesEftContent(gate.adminUser.email)
+  const turns = stripEftMessages(await loadThread(db, body.phone, body.email), (t) => t.text, hide, {
+    scope,
+    identity: { phone: body.phone, email: body.email },
+    at: (t) => t.at,
+  })
+  const eftOn = await getEftMode()
+  const prompt = promptFor(body.action, turns, body.draft || '', eftOn, body.channel ?? (body.phone ? 'whatsapp' : 'email'), body.instruction)
   if ('error' in prompt) return NextResponse.json({ ok: false, message: prompt.error }, { status: 200 })
 
   try {
     const res = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 320,
+      max_tokens: 400,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
     })
     const text = res.content[0]?.type === 'text' ? res.content[0].text : ''
     const clean = stripEmDashes(text).trim()
+    // The composer text is one click from a vendor, so a date the model was not
+    // given never gets that far. The operator's own draft and the vendor's own
+    // messages are part of the prompt, so quoting a date from either still passes.
+    const dated = guardUngroundedDates(clean, `${prompt.system}\n${prompt.user}`)
+    if (dated.replaced) console.warn('[inbox/ai] dropped ungrounded date(s):', dated.ungrounded.join(', '))
     // reply/follow-up/tone/attachments fill the composer; summary/status show in a strip.
-    const fillsComposer = ['smart_reply', 'tone_adjust', 'follow_up'].includes(body.action)
-    return NextResponse.json({ ok: true, action: body.action, text: clean, fillsComposer })
+    const fillsComposer = ['smart_reply', 'tone_adjust', 'spin', 'follow_up'].includes(body.action)
+    return NextResponse.json({ ok: true, action: body.action, text: dated.text, fillsComposer })
   } catch (err) {
     console.error('[inbox/ai] error', err)
     return NextResponse.json({ ok: false, message: 'AI could not respond just now. Try again.' }, { status: 502 })

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
+import { isEftAdmin, vendorInOwnerScope, visiblePaymentStatus } from '@/lib/eft'
 import {
   STALL_LIST, STALL_GRID, STALL_ZONES, STALL_CAPACITY, TYPE_META,
   parseAllocation, withAllocation, removeStallCode, tierLabel, stallTypeOf,
@@ -10,6 +11,7 @@ import {
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { notifyVendor } from '@/lib/notifications'
 import { computeVendorPricing } from '@/lib/payments/pricing'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 // Festival-wide "blocked booth" set. A blocked booth has NO vendor, so it can't
 // live as a ⟦STALL⟧ marker on a vendor_applications row. Following the
@@ -56,10 +58,11 @@ async function requireAdmin() {
 }
 
 // Pull every application's allocation marker once, return a code -> occupant map.
-async function loadOccupants(admin: ReturnType<typeof createAdminClient>) {
+async function loadOccupants(admin: ReturnType<typeof createAdminClient>, viewerEmail?: string | null) {
+  const restrict = !!viewerEmail && !isEftAdmin(viewerEmail)
   const { data: apps } = await admin
     .from('vendor_applications')
-    .select('id, business_name, contact_name, phone, email, product_categories, preferred_booth_tier, status, admin_notes, special_requirements')
+    .select('id, business_name, contact_name, phone, email, product_categories, preferred_booth_tier, status, admin_notes, paid_at, special_requirements')
 
   const byCode = new Map<string, Record<string, unknown>>()
   const allocatable: Record<string, unknown>[] = []
@@ -71,13 +74,14 @@ async function loadOccupants(admin: ReturnType<typeof createAdminClient>) {
     // discarded rows cost nothing.
     const { stall, stalls, status } = parseAllocation(a.admin_notes as string)
     if (a.status !== 'approved' && stalls.length === 0) continue
+    if (restrict && !vendorInOwnerScope(a.admin_notes as string | null, a.paid_at as string | null)) continue
 
     const portal = parsePortalState(a.admin_notes as string)
     const pricing = computeVendorPricing({
       preferred_booth_tier: a.preferred_booth_tier as string,
       special_requirements: a.special_requirements,
     })
-    const paymentStatus = (portal.payment?.status || 'none') as string
+    const paymentStatus = visiblePaymentStatus(portal.payment?.status, viewerEmail)
     const paymentAmount =
       portal.payment?.amount && portal.payment.amount > 0 ? portal.payment.amount : pricing.total
     const row = {
@@ -111,7 +115,7 @@ export async function GET() {
   try {
     const auth = await requireAdmin()
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
-    const { byCode, allocatable } = await loadOccupants(auth.admin)
+    const { byCode, allocatable } = await loadOccupants(auth.admin, auth.adminUser.email)
     const blocked = await loadBlocked(auth.admin)
 
     const stalls = STALL_LIST.map((s) => {
@@ -156,6 +160,7 @@ export async function POST(req: NextRequest) {
     const gate = await requireOperator()
     if (!gate.ok) return gate.response
     const admin = createAdminClient()
+    const viewerEmail = gate.user.email
 
     const body = await req.json().catch(() => ({}))
     const stallCode: string = body.stall_code
@@ -166,7 +171,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Unknown stall ${stallCode}` }, { status: 400 })
     }
 
-    const { byCode } = await loadOccupants(admin)
+    const { byCode } = await loadOccupants(admin, viewerEmail)
     const blocked = await loadBlocked(admin)
     const current = byCode.get(stallCode) as { id: string; business_name?: string } | undefined
 
@@ -184,6 +189,11 @@ export async function POST(req: NextRequest) {
         blocked.add(stallCode)
         await saveBlocked(admin, blocked)
       }
+      await recordAdminAction({
+        actor: { email: gate.adminUser.email, role: gate.role },
+        action: 'block_stall',
+        payload: { stall_code: stallCode },
+      })
       return NextResponse.json({ ok: true, message: `${stallCode} blocked` })
     }
 
@@ -206,6 +216,12 @@ export async function POST(req: NextRequest) {
         }
         cleared = true
       }
+      await recordAdminAction({
+        actor: { email: gate.adminUser.email, role: gate.role },
+        action: 'clear_stall',
+        vendorId: current?.id ?? null,
+        payload: { stall_code: stallCode, cleared },
+      })
       return NextResponse.json({ ok: true, message: cleared ? `${stallCode} cleared` : `${stallCode} already free` })
     }
 
@@ -228,9 +244,14 @@ export async function POST(req: NextRequest) {
     // application must exist
     const { data: app } = await admin
       .from('vendor_applications')
-      .select('id, business_name, admin_notes, status')
+      .select('id, business_name, admin_notes, status, paid_at')
       .eq('id', applicationId).single()
     if (!app) return NextResponse.json({ error: 'Application not found' }, { status: 404 })
+
+    // Do not let the festival owner allocate stalls to master-lane vendors.
+    if (!isEftAdmin(viewerEmail ?? null) && !vendorInOwnerScope(app.admin_notes as string | null, app.paid_at as string | null)) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
 
     // Multi-booth: withAllocation APPENDS this code to the vendor's existing list
     // (does not move/replace their other booths). The over-confirm guard above
@@ -276,6 +297,13 @@ export async function POST(req: NextRequest) {
         console.error('[stalls] notifyVendor failed:', (e as Error).message)
       )
     }
+
+    await recordAdminAction({
+      actor: { email: gate.adminUser.email, role: gate.role },
+      action: 'allocate_stall',
+      vendorId: applicationId,
+      payload: { stall_code: stallCode, status: action },
+    })
 
     return NextResponse.json({ ok: true, message: `${stallCode} → ${app.business_name} (${action})` })
   } catch (e) {

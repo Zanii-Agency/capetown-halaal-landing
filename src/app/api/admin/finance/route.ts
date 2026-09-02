@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
+import { vendorInOwnerScope, visiblePaymentStatus } from '@/lib/eft'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getOrders, type WCOrder } from '@/lib/woocommerce'
 
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
     // read payment from portal_state below, and apply the payment filter in-code.
     const { data: vendors, error } = await admin
       .from('vendor_applications')
-      .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, created_at')
+      .select('id, business_name, contact_name, email, phone, status, admin_notes, paid_at, preferred_booth_tier, special_requirements, created_at, is_duplicate')
       .in('status', ['approved', 'pending', 'info_requested'])
       .order('business_name', { ascending: true })
     if (error) {
@@ -55,24 +56,61 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch vendors' }, { status: 500 })
     }
 
-    const rows = (vendors ?? []) as PaymentRow[]
+    // Drop merged duplicates so they don't inflate the totals (applications/merge).
+    const rows = ((vendors ?? []) as PaymentRow[]).filter((r) => !(r as { is_duplicate?: boolean }).is_duplicate)
 
     // Payment state comes ONLY from portal_state (the phantom columns don't
     // exist — see the query note above).
-    const payments = rows.map((v) => {
+    const viewerEmail = user.email
+
+    // YOCO-WORLD FOR EVERYONE, master included (Taona 2026-09-02: "keep master
+    // dashboard in yoco-world, matching samreen's"). This route feeds the home
+    // dashboard's Total Money In AND the /admin/finance page; both now reflect
+    // ONLY Yoco-reconciled vendors for every viewer. Master-lane / EFT money is
+    // deliberately kept off this surface and lives only on /admin/eft, which reads
+    // raw state and is unaffected. Previously the EFT admin bypassed this filter
+    // and saw the full total; that bypass is gone.
+    //
+    // Aggregates are scoped exactly like the detail list below. The scope must be
+    // the vendor set itself, not a display mask: summing the FULL set would fold
+    // master-lane (EFT) money back into the headline, and the gap against the
+    // detail list would leak the hidden cohort (measured 2026-08-24: 377,150
+    // unscoped - 336,050 scoped = 41,100 of EFT money across 5 vendors). A total
+    // that cannot be reconciled against the list IS the leak, even unnamed.
+    const scopedRows = rows.filter((v) => vendorInOwnerScope(v.admin_notes, v.paid_at))
+    const statPayments = scopedRows.map((v) => {
+      const portal = parsePortalState(v.admin_notes || '')
+      const p = portal.payment || {}
+      const isPaid = !!v.paid_at || p.status === 'paid'
+      const amount = p.amount ?? computeVendorPricing(v).total
+      const dueDate = p.due || null
+      const paymentStatus = p.status ?? (v.paid_at ? 'paid' : 'none')
+      let overdue = false
+      if (paymentStatus === 'pending' && dueDate) {
+        overdue = new Date(dueDate) < new Date()
+      }
+      return { is_paid: isPaid, payment_status: paymentStatus, payment_amount: amount, overdue }
+    })
+
+    // Stats from the full operational view.
+    const totalPaid = statPayments.filter(p => p.is_paid).length
+    const totalPending = statPayments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
+    const totalNone = statPayments.filter(p => !p.is_paid && p.payment_status === 'none').length
+    const totalOverdue = statPayments.filter(p => p.overdue).length
+    const totalRevenue = statPayments
+      .filter(p => p.is_paid)
+      .reduce((sum, p) => sum + (p.payment_amount || 0), 0)
+
+    // Scoped detail list for the festival owner's view.
+    const payments = scopedRows.map((v) => {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
 
-      // Derived from REAL sources only (no phantom columns). isPaid mirrors the
-      // exhibitor-paygate rule: the real paid_at column OR a marker status of
-      // 'paid'. amount prefers the marker, else the computed stall+electrical+
-      // hire total. due/paid_at come from the marker, paid_at falls back to the
-      // real column.
       const isPaid = !!v.paid_at || p.status === 'paid'
       const paidAt = p.paid_at || v.paid_at || null
       const amount = p.amount ?? computeVendorPricing(v).total
       const dueDate = p.due || null
-      const paymentStatus = p.status ?? (v.paid_at ? 'paid' : 'none')
+      const paymentStatus = visiblePaymentStatus(p.status ?? (v.paid_at ? 'paid' : 'none'), viewerEmail)
 
       let overdue = false
       if (paymentStatus === 'pending' && dueDate) {
@@ -96,15 +134,6 @@ export async function GET(req: NextRequest) {
         overdue,
       }
     })
-
-    // Stats
-    const totalPaid = payments.filter(p => p.is_paid).length
-    const totalPending = payments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
-    const totalNone = payments.filter(p => !p.is_paid && p.payment_status === 'none').length
-    const totalOverdue = payments.filter(p => p.overdue).length
-    const totalRevenue = payments
-      .filter(p => p.is_paid)
-      .reduce((sum, p) => sum + (p.payment_amount || 0), 0)
 
     // WooCommerce reconciliation: fetch completed orders for comparison
     let wcOrders: WCOrder[] = []

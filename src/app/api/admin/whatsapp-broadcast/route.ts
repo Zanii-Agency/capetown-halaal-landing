@@ -48,6 +48,8 @@ import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/inter
 import { parseAllocation } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
 import { assertRole } from '@/lib/admin-rbac'
+import { recordAdminAction } from '@/lib/zanii-ledger'
+import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -63,14 +65,14 @@ export const maxDuration = 300
 
 async function assertAdmin(
   requireRole: boolean = false,
-): Promise<{ ok: true; userId: string } | { ok: false; status: number; error: string }> {
+): Promise<{ ok: true; userId: string; email: string | null; role: string | null } | { ok: false; status: number; error: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, status: 401, error: 'Unauthorized' }
   const admin = createAdminClient()
   const { data: adminUser } = await admin
     .from('admin_users')
-    .select('id, role')
+    .select('id, role, email')
     .eq('id', user.id)
     .maybeSingle()
   if (!adminUser) return { ok: false, status: 403, error: 'Forbidden' }
@@ -83,7 +85,12 @@ async function assertAdmin(
       return { ok: false, status: 403, error: 'insufficient_role' }
     }
   }
-  return { ok: true, userId: user.id }
+  return {
+    ok: true,
+    userId: user.id,
+    email: ((adminUser as { email?: string | null }).email) ?? user.email ?? null,
+    role: ((adminUser as { role?: string | null }).role) ?? null,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +133,10 @@ const ALLOWED_WA_TEMPLATES = new Set<string>([
   'vendor_stall_allocation',
   'vendor_setup_reminder',
   'contract_sign_reminder',
+  // Paid-cohort message suite (flexible, two-way UTILITY templates).
+  ...PAID_VENDOR_MESSAGE_TEMPLATE_KEYS,
+  // Payment-follow-up suite (unpaid cohort; audience gated at the filter/lane layer).
+  ...PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
 ])
 
 // ---------------------------------------------------------------------------
@@ -476,16 +487,18 @@ export async function POST(req: NextRequest) {
             : (body.custom_message || '')
           const send = await sendTemplate({
             to: phoneRaw,
+            // Positional vars are mapped per template. The paid-cohort suite is
+            // a strict [first_name, message] pair; legacy templates keep the
+            // [name, business, stall, message] order. Meta WABA rejects empty
+            // positional vars, so the helper drops empty legacy slots and falls
+            // back to 'there' for a missing name.
             template: waTemplate,
-            variables: [
-              // Meta WABA rejects empty positional vars, so we fall back to
-              // 'there' here. Email uses the interpolate helper which drops
-              // the placeholder gracefully instead.
-              vars.first_name || 'there',
-              vars.business_name || '',
-              vars.stall_code || '',
-              waCustom,
-            ].filter((v) => v.length > 0),
+            variables: waBroadcastVariables(waTemplate, {
+              firstName: vars.first_name,
+              businessName: vars.business_name,
+              stallCode: vars.stall_code,
+              message: waCustom,
+            }),
           })
           if (send.ok) {
             results.wa.sent++
@@ -504,6 +517,12 @@ export async function POST(req: NextRequest) {
       }
     }
   }
+
+  await recordAdminAction({
+    actor: { email: auth.email, role: auth.role },
+    action: 'whatsapp_broadcast',
+    payload: { channel: body.channel, template: freeTextMode ? 'free_text' : body.template_key, wa_sent: results.wa.sent },
+  })
 
   return NextResponse.json(results)
 }

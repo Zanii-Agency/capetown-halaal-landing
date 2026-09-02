@@ -1,0 +1,74 @@
+[
+  {
+    "key": "papa chai",
+    "first": "Salmaan",
+    "days": 13,
+    "subject": "Salmaan, Papa Chai's stall fee is now 13 days overdue",
+    "heading": "Papa Chai, your stall is still waiting",
+    "lead": "Papa Chai's spot at the Young at Heart Festival is being held for you, but your stall fee is now 13 days past due and this is our fourth note. We would love your chai on the floor, so please settle it today to lock your place in.",
+    "wa": "Papa Chai's spot at the Young at Heart Festival is still being held for you, but the stall fee of R3,750 is now 13 days past due and this is the fourth time we have reached out. We really want your chai on the floor. Please log in and settle it today so we can lock your stall in: https://cthalaal.co.za/exhibitor/portal/payments. Your place is secured the moment payment reflects."
+  },
+  {
+    "key": "melonscape",
+    "first": "Rabia",
+    "days": 7,
+    "subject": "Rabia, a final reminder on Melonscape's stall fee",
+    "heading": "Melonscape, your stall is still held",
+    "lead": "We would love Melonscape at the Young at Heart Festival, but your stall fee is now 7 days overdue after a few reminders. Please settle it today to keep your spot.",
+    "wa": "We would love Melonscape at the Young at Heart Festival, but your stall fee of R3,700 is now 7 days overdue after a few reminders. To keep your spot, please log in and settle it today: https://cthalaal.co.za/exhibitor/portal/payments. Your stall holds as soon as payment reflects."
+  },
+  {
+    "key": "nisa gaibie artworx",
+    "first": "Nisa",
+    "days": 7,
+    "subject": "Nisa, your Artworx stall fee is 7 days overdue",
+    "heading": "Nisa Gaibie Artworx, your space is reserved",
+    "lead": "Your art stall at the Young at Heart Festival is still reserved, but the fee is now 7 days overdue and we have reminded you a few times. Please pay today to hold your space.",
+    "wa": "Your art stall at the Young at Heart Festival is still reserved, but the R6,500 fee is now 7 days overdue and we have reminded you a few times. Please log in and pay today to hold your space: https://cthalaal.co.za/exhibitor/portal/payments."
+  },
+  {
+    "key": "k's confectioners",
+    "first": "Faathima",
+    "days": 7,
+    "subject": "Faathima, K's Confectioners stall fee is overdue",
+    "heading": "K's Confectioners, your spot is waiting",
+    "lead": "K's Confectioners has a spot waiting at the Young at Heart Festival, but the stall fee is now 7 days overdue after several reminders. Please settle it today to keep your place.",
+    "wa": "K's Confectioners has a spot waiting at the Young at Heart Festival, but the R6,500 stall fee is now 7 days overdue after several reminders. Please log in and settle it today to keep your place: https://cthalaal.co.za/exhibitor/portal/payments."
+  },
+  {
+    "key": "fragrances by naz",
+    "first": "Asif",
+    "days": 7,
+    "subject": "Asif, a final reminder on your Fragrances by Naz stall fee",
+    "heading": "Fragrances by Naz, your stall is held",
+    "lead": "We are holding your Fragrances by Naz stall at the Young at Heart Festival, but the fee is now 7 days overdue and this follows a few reminders. Please pay today to secure it.",
+    "wa": "We are holding your Fragrances by Naz stall at the Young at Heart Festival, but the R6,500 fee is now 7 days overdue and this follows a few reminders. Please log in and pay today to secure it: https://cthalaal.co.za/exhibitor/portal/payments."
+  },
+  {
+    "key": "cellxpress and toyxpress",
+    "first": "Farhan",
+    "days": 7,
+    "subject": "Farhan, your stall fee is 7 days overdue",
+    "heading": "CellXpress and ToyXpress, your stall is reserved",
+    "lead": "Your CellXpress and ToyXpress stall at the Young at Heart Festival is reserved, but the fee is now 7 days overdue after several reminders. Please settle it today to keep your place.",
+    "wa": "Your CellXpress and ToyXpress stall at the Young at Heart Festival is reserved, but the R6,500 fee is now 7 days overdue after several reminders. Please log in and settle it today to keep your place: https://cthalaal.co.za/exhibitor/portal/payments."
+  },
+  {
+    "key": "maternitee",
+    "first": "Raeesa",
+    "days": 7,
+    "subject": "Raeesa, MaterniTee's stall fee is overdue",
+    "heading": "MaterniTee, your spot is being held",
+    "lead": "MaterniTee's spot at the Young at Heart Festival is being held for you, but the stall fee is now 7 days overdue and we have reached out a few times. Please pay today to secure it.",
+    "wa": "MaterniTee's spot at the Young at Heart Festival is being held for you, but the R6,500 stall fee is now 7 days overdue and we have reached out a few times. Please log in and pay today to secure it: https://cthalaal.co.za/exhibitor/portal/payments."
+  },
+  {
+    "key": "en vogue cpt",
+    "first": "Abdullah",
+    "days": 7,
+    "subject": "Abdullah, a final reminder on En Vogue's stall fee",
+    "heading": "En Vogue, your stall is held",
+    "lead": "We are holding your En Vogue stall at the Young at Heart Festival, but the fee is now 7 days overdue after several reminders. Please settle it today so your place is locked in.",
+    "wa": "We are holding your En Vogue stall at the Young at Heart Festival, but the R12,000 fee is now 7 days overdue after several reminders. Please log in and settle it today so your place is locked in: https://cthalaal.co.za/exhibitor/portal/payments."
+  }
+]

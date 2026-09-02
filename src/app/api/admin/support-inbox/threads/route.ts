@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -38,8 +39,26 @@ export async function GET(req: NextRequest) {
   if (status !== 'all') q = q.eq('status', status)
   if (tag) q = q.eq('tag', tag)
 
-  const { data: threads, error } = await q
+  const { data: threadRows, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // CONTENT-level (2026-07-26): this route returns every thread plus every message
+  // body. Threads themselves are ordinary work and stay visible; the individual
+  // messages that talk about EFT are stripped below, after they are fetched.
+  // TWO layers (2026-07-26): drop threads of vendors the owner does not own, then
+  // strip any remaining EFT messages inside the ones she can see.
+  const scope = await laneScopeFor(user.email)
+  const hide = hidesEftContent(user.email)
+  const threads = (threadRows || []).filter(
+    (t: { peer_email: string | null; vendor_application_id: string | null; last_inbound_at?: string | null }) => {
+      const id = { email: t.peer_email, applicationId: t.vendor_application_id }
+      if (scope.blocks(id)) return false
+      // The row itself, not just its messages: an emailed proof arrives with the
+      // attachment filename as the subject, so a stripped-but-visible thread
+      // still reads "ProofOfPayment.pdf" in her list.
+      return !scope.hidesMessage(id, t.last_inbound_at)
+    },
+  )
 
   const ids = (threads || []).map((t: { id: string }) => t.id)
   let messagesByThread: Record<string, unknown[]> = {}
@@ -50,7 +69,25 @@ export async function GET(req: NextRequest) {
       .in('thread_id', ids)
       .order('received_at', { ascending: true })
       .limit(2000)
-    messagesByThread = (messages || []).reduce((acc: Record<string, unknown[]>, m: { thread_id: string }) => {
+    // The OWNER CUTOFF is applied per thread, using that thread's own peer as
+    // the identity, because a cutoff belongs to a vendor and this query spans
+    // many. Without it a handed-over vendor's whole master-lane history stayed
+    // readable here even though the marker was set (2026-07-29, Farfashions).
+    const peerOf = new Map<string, { email?: string | null; applicationId?: string | null }>(
+      (threads || []).map((t: { id: string; peer_email?: string | null; vendor_application_id?: string | null }) =>
+        [t.id, { email: t.peer_email, applicationId: t.vendor_application_id }]),
+    )
+    const visible = stripEftMessages(
+      messages as Array<{ thread_id: string; subject: string | null; body_text: string | null; received_at: string }> | null,
+      (m) => `${m.subject || ''}\n${m.body_text || ''}`,
+      hide,
+      {
+        scope,
+        identity: {},
+        at: (m) => m.received_at,
+      },
+    ).filter((m) => !hide || !scope.hidesMessage(peerOf.get(m.thread_id) || {}, m.received_at))
+    messagesByThread = visible.reduce((acc: Record<string, unknown[]>, m: { thread_id: string }) => {
       const tid = m.thread_id
       if (!acc[tid]) acc[tid] = []
       acc[tid].push(m)

@@ -14,6 +14,7 @@ import { confirmPayment } from '@/lib/payments/confirm'
 import { zoneByKey } from '@/lib/venue-zones'
 import { notifyOwners } from '@/lib/bot/notify'
 import { requireOperator } from '@/lib/admin-rbac'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -99,10 +100,25 @@ export async function POST(req: NextRequest) {
     console.error('[capture] audit insert failed:', (e as Error).message)
   }
 
+  await recordAdminAction({
+    actor: { email: (adminUser.email as string | null) || user.email || null, role: gate.role },
+    action: 'finance_capture',
+    vendorId: parsed.applicationId,
+    payload: { amount: parsed.amount, zone: parsed.zone, reference: parsed.reference || null },
+  })
+
   const zoneLabel = zoneByKey(parsed.zone)?.label || 'Outside'
   notifyOwners({
     event: 'payment_succeeded',
     body: `${appRow.business_name || 'Vendor'} payment captured (${zoneLabel}): R${parsed.amount.toLocaleString('en-ZA')}${parsed.reference ? ` · ref ${parsed.reference}` : ''}.`,
+    // MASTER ONLY: this route captures EFT payments specifically (method: 'eft',
+    // hardcoded above), and payment alerts route on the METHOD — Yoco always
+    // reaches the festival owner, EFT never does (Taona 2026-07-26).
+    //
+    // It needs saying explicitly because the body here never contains the word
+    // "EFT" ("… payment captured (Outside): R4,500"), so the mentionsEft
+    // heuristic would not have caught it. The alert looked owner-safe and was not.
+    audience: 'master',
   }).catch((e) => console.error('[capture] notifyOwners failed:', (e as Error).message))
 
   return NextResponse.json({

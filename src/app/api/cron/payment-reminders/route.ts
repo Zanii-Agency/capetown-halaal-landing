@@ -22,26 +22,30 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState, updatePortalState } from '@/lib/portal-state'
-import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
+import { parsePortalState, updatePortalState, hasPaid, isWithdrawn, getArrangement } from '@/lib/portal-state'
+import { buildSuppressedPeople, newSendDeduper } from '@/lib/payments/chase-targeting'
+import { reminderWaBody, segFromWeek } from '@/lib/payments/reminder-copy'
+import { computeVendorPricing } from '@/lib/payments/pricing'
 import { sendEmail } from '@/lib/email/resend'
 import { VendorPaymentReminder } from '@/lib/email/templates/VendorPaymentReminder'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
+import { isTestVendor } from '@/lib/test-vendors'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const SITE = 'https://cthalaal.co.za'
 
-// Final settlement date for the 2026 cycle: 31 Aug 2026, 23:59 SAST (UTC+2).
-// A vendor who cannot meet their own payment due date may settle in full up to
-// this date and keeps their reserved space until then. That concession is offered
-// ON REQUEST only and is never volunteered (see the PART PAYMENTS block in
-// lib/festival-brain/system-prompt.ts), but it is the real date vendors are held
-// to, so reminders must run to it rather than stopping shortly after each
-// vendor's own due date. Per-vendor due dates are unchanged.
-const FINAL_SETTLEMENT = new Date('2026-08-31T21:59:59.999Z')
+// Reminders run until this cutoff, then stop (nothing left to chase for the cycle).
+// EXTENDED 2026-09-01: was 2026-08-31, a payment-concession date that silently
+// killed ALL chasing the moment it passed, even though the festival is 11-13 Dec
+// 2026 and 100+ vendors are still unpaid. Set to the festival start so the bot keeps
+// hunting for payment + proof right up to the event (Taona: "make sure the bot is
+// actively hunting for proof of payment"). Per-vendor due dates and the on-request
+// settlement concession are unchanged; move this earlier for a hard "pay or lose
+// your spot" deadline before the festival.
+const FINAL_SETTLEMENT = new Date('2026-12-11T21:59:59.999Z')
 
 function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
@@ -82,11 +86,41 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // Person-level suppression: a paid/deferred row on a person's OTHER approved
+  // application (a duplicate submission) must suppress ALL their rows. The
+  // per-row isChaseSuppressed inside the loop only sees one row, so a paid
+  // vendor with an empty twin row was chased on the shared phone (Melonscape,
+  // Chocotag, 2026-08-10). Built once from the full fetch.
+  const suppressed = buildSuppressedPeople((apps || []) as never[], today)
+  // A person with two unpaid rows must be messaged at most once per run.
+  const deduper = newSendDeduper()
+
   const results: Array<Record<string, unknown>> = []
+  // Vendors skipped because they are on the master EFT lane. Reported so the
+  // exclusion is observable in the run output, not silent.
+  let laneExcluded = 0
 
   for (const app of apps || []) {
+    // Seed rows are never billed: a reminder to a demo vendor is a real email
+    // out of the CTH account and a real billed WhatsApp template.
+    if (isTestVendor(app)) continue
     const state = parsePortalState(app.admin_notes as string)
-    if (state.payment?.status === 'paid') continue
+    // HARD skip (silent): paid/collected/waived or withdrawn, on this row OR on
+    // any other row for the same person (a duplicate submission). The old
+    // per-row test chased a paid vendor's empty twin on the shared phone
+    // (Melonscape, Chocotag, 2026-08-10).
+    if (hasPaid(state) || isWithdrawn(state)) continue
+    if (suppressed.hardHas(app as never)) continue
+    // MASTER EFT LANE (Taona 2026-09-02): a lane vendor shows unpaid to Samreen
+    // but is being handled personally by the EFT admin, so the generic "please
+    // pay" reminder must never reach them. They are chased from the EFT Outreach
+    // tab instead. Person-level, so a lane vendor's twin row is excluded too.
+    if (suppressed.laneHas(app as never)) { laneExcluded++; continue }
+
+    // An in-force extension does NOT silence the vendor: they still get a
+    // GENTLE, extension-aware reminder that acknowledges the new date and asks
+    // them to pay by it (operator, 2026-08-10). Resolved per-row or per-person.
+    const arrangement = getArrangement(state, today) || suppressed.arrangementFor(app as never)
 
     const reviewedAt = app.reviewed_at ? new Date(app.reviewed_at as string) : null
     if (!reviewedAt) continue
@@ -106,7 +140,14 @@ export async function GET(req: NextRequest) {
     const lastSent = history.length ? new Date(history[history.length - 1].at) : null
     if (lastSent && daysBetween(lastSent, today) < 7) continue
 
+    // This row is chaseable. Claim the person so a second unpaid row for the
+    // same phone/email does not send them a second reminder this run.
+    if (!deduper.claim(app as never)) continue
+
     const weekNumber = Math.min(history.length + 1, 4)
+    // Extension holders never escalate to a "final notice", however many
+    // reminders have fired: their reminder stays gentle and acknowledges the date.
+    const effectiveWeek = arrangement ? 1 : weekNumber
     const pricing = computeVendorPricing({
       preferred_booth_tier: app.preferred_booth_tier as string,
       special_requirements: app.special_requirements,
@@ -123,10 +164,10 @@ export async function GET(req: NextRequest) {
     }
 
     if (!dryRun) {
-      // Email
+      // Email (tone follows effectiveWeek: extension holders stay gentle).
       const emailRes = await sendEmail({
         to: app.email as string,
-        subject: weekNumber >= 4
+        subject: effectiveWeek >= 4
           ? `Final notice, stall fee overdue, ${businessName}`
           : `Reminder, your YAH Festival stall fee, ${businessName}`,
         react: VendorPaymentReminder({
@@ -137,21 +178,30 @@ export async function GET(req: NextRequest) {
           daysRemaining,
           invoiceUrl: `${SITE}/exhibitor/portal/invoice`,
           payUrl: `${SITE}/exhibitor/portal/payments`,
-          weekNumber,
+          weekNumber: effectiveWeek,
         }),
       })
       out.emailSent = emailRes.ok
 
-      // WhatsApp template: Meta-approved body, params: firstName, amount, dueDate
+      // WhatsApp: free-form body via festival_announcement ("Hi {{1}}! {{2}}").
+      // Overdue-aware, extension-aware, pushes to the portal, names no payment
+      // method, no double-R. Replaces the fixed vendor_payment_reminder that
+      // sent "RR6 400 due on <past date>".
+      const waBody = reminderWaBody({
+        amount,
+        due: dueDate,
+        daysRemaining,
+        seg: segFromWeek(effectiveWeek),
+        arrangementUntil: arrangement?.until ?? null,
+      })
+      out.waBody = waBody
       const phone = (app.phone as string) || ''
       if (phone) {
         try {
-          // Template body opens "Hi {{1}}," so param 1 is the person's first
-          // name, not the business name (matches the email's greeting).
           const waRes = await sendTemplate(
             toE164(phone),
-            'vendor_payment_reminder',
-            [firstName, formatRand(amount), dueDateStr],
+            'festival_announcement',
+            [firstName, waBody],
             { category: 'utility' }
           )
           out.waSent = !waRes.skipped
@@ -188,6 +238,7 @@ export async function GET(req: NextRequest) {
     dryRun,
     scanned: apps?.length ?? 0,
     remindersSent: results.length,
+    laneExcluded,
     results,
   })
 }

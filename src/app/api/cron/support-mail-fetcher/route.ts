@@ -19,6 +19,7 @@ import { NextResponse } from 'next/server'
 import { ImapFlow, type FetchMessageObject } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { captureAttachments } from '@/lib/email/attachments'
 
@@ -36,7 +37,15 @@ interface FetcherReport {
   durationMs: number
 }
 
-interface VendorMatch { id: string }
+interface VendorMatch {
+  id: string
+  business_name?: string | null
+  contact_name?: string | null
+  email?: string | null
+  phone?: string | null
+  admin_notes?: string | null
+  paid_at?: string | null
+}
 
 async function findVendorByEmail(
   supabase: ReturnType<typeof createAdminClient>,
@@ -45,7 +54,7 @@ async function findVendorByEmail(
   if (!email) return null
   const { data, error } = await supabase
     .from('vendor_applications')
-    .select('id')
+    .select('id, business_name, contact_name, email, phone, admin_notes, paid_at')
     .eq('email', email)
     .limit(1)
   if (error || !data || data.length === 0) return null
@@ -167,9 +176,11 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
       // Falls back to a sliced raw on parse error so we never lose the row.
       let body = ''
       let bodyHtml: string | null = null
+      let parsedAttachments: import('@/lib/payments/email-proof-detect').ProofAttachment[] = []
       if (msg.source instanceof Buffer) {
         try {
           const parsed = await simpleParser(msg.source)
+          parsedAttachments = (parsed.attachments || []) as import('@/lib/payments/email-proof-detect').ProofAttachment[]
           const txt = (parsed.text || '').trim()
           body = txt.slice(0, 4000)
           // Capture HTML alternative so the support-inbox renderer can
@@ -211,6 +222,57 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
 
       const vendor = await findVendorByEmail(supabase, fromAddress)
       const buyer = vendor ? null : await findBuyerByEmail(supabase, fromAddress)
+
+      // EMAILED PROOF OF PAYMENT -> master lane, automatically (Taona 2026-08-02:
+      // "if vendor emails proof of payment or via whatsapp, it should
+      // autopopulate on masterlane if it isnt acknowledged"). Same flow as the
+      // WhatsApp path: lane them first (recordEftProof refuses non-lane vendors),
+      // then record the proof — which stamps eft_submitted_at, puts them on
+      // /admin/eft, alerts the master with a copy, and acks the vendor.
+      // Best-effort: a failure here must never block the inbox ingest.
+      if (vendor && !vendor.paid_at && parsedAttachments.length) {
+        try {
+          const { looksLikeProofEmail, pickProofAttachment } = await import('@/lib/payments/email-proof-detect')
+          const { vendorInEftLane, getEftMode, getPaymentRail, markVendorToldEft } = await import('@/lib/eft')
+          const alreadyLane = vendorInEftLane(vendor.admin_notes || '', await getEftMode(), vendor.paid_at, { email: vendor.email, phone: vendor.phone })
+          if (looksLikeProofEmail({ subject, body, attachments: parsedAttachments, alreadyLane })) {
+            const att = pickProofAttachment(parsedAttachments)
+            if (att?.content) {
+              // RAIL-AWARE covert laning, identical to the WhatsApp path
+              // (handle-eft-proof-media). Only lane ⟦EFT⟧ (hide from Samreen) on the
+              // MASTER rail. On samreen_eft/yoco the emailed proof is captured
+              // (captureRegardless) but NOT laned, so eftProofVisibleToOwner can
+              // surface it on HER page. Previously this laned unconditionally, which
+              // buried emailed proofs on Samreen's own rail (inconsistent with
+              // WhatsApp). The capture-time rail is what decides covert-vs-owner.
+              if ((await getPaymentRail()) === 'master' && !alreadyLane) {
+                await markVendorToldEft({ email: vendor.email, phone: vendor.phone })
+              }
+              const { recordEftProof } = await import('@/lib/payments/eft-proof-shared')
+              const fresh = await findVendorByEmail(supabase, fromAddress)
+              const result = await recordEftProof({
+                applicationId: vendor.id,
+                admin_notes: fresh?.admin_notes ?? vendor.admin_notes ?? null,
+                paid_at: vendor.paid_at ?? null,
+                email: vendor.email ?? null,
+                phone: vendor.phone ?? null,
+                business_name: vendor.business_name ?? null,
+                contact_name: vendor.contact_name ?? null,
+                file: { bytes: att.content, name: att.filename || 'proof-of-payment', type: att.contentType },
+                note: `emailed proof of payment (subject: "${subject.slice(0, 120)}")`,
+                source: 'email',
+                // Capture even a card-only ⟦NOEFT⟧ vendor's emailed proof rather
+                // than 403 + drop it. Storage only; no lane marker, Samreen wall
+                // untouched. Matches the WhatsApp path.
+                captureRegardless: true,
+              })
+              if (!result.ok) errors.push(`eft-proof ${fromAddress}: ${result.error}`)
+            }
+          }
+        } catch (e) {
+          errors.push(`eft-proof ${fromAddress}: ${(e as Error).message}`)
+        }
+      }
 
       // Upsert thread keyed on peer_email.
       let threadId: string | null = null
@@ -330,6 +392,13 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
       metadata: { fetched, written, skipped, errors_count: errors.length, host, durationMs },
     })
   } catch { /* swallow */ }
+
+  // Live-update the open inboxes. Until 2026-07-26 the ONLY caller of this was
+  // the WhatsApp webhook, so WhatsApp felt instant while email sat behind a 30s
+  // client poll on top of this 2-minute cron — the same inbox behaving two
+  // different ways, which is most of what "feels out of sync" meant. Only ping
+  // when something actually landed. Best-effort, never throws.
+  if (written > 0) await broadcastInboxRefresh('email').catch(() => {})
 
   return NextResponse.json({ ok: errors.length === 0, fetched, written, skipped, errors, host, durationMs })
 }

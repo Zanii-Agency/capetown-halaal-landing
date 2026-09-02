@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { CreditCard, CheckCircle2, Clock, Loader2, Info, RefreshCw, MessageSquare } from 'lucide-react'
 
 export default function PaymentPanel({
-  enabled, status, amount, outstanding, reference, dueDate, attemptedAt, failedAttempts,
+  enabled, status, amount, outstanding, reference, dueDate, attemptedAt, failedAttempts, topUpNote, accessories,
 }: {
   enabled: boolean
   status: string
@@ -16,6 +16,13 @@ export default function PaymentPanel({
   dueDate: string
   attemptedAt?: string | null
   failedAttempts?: number
+  /** Sub-line shown when a paid vendor has a balance due. Defaults to the
+   *  operator-added-charges wording; the accessories split bill passes its own. */
+  topUpNote?: string
+  /** Accessory portion (electricity + furniture) contained in this charge. When
+   *  > 0 the fee box names it so the vendor never reads their accessory-inclusive
+   *  total as a bare stall fee. Only the full stall-payment call passes it. */
+  accessories?: number | null
 }) {
   const params = useSearchParams()
   const justPaid = params.get('paid') === '1'
@@ -42,6 +49,12 @@ export default function PaymentPanel({
   const isStalePending = !isPaidStatus && status === 'pending' && attemptAgeMs >= PENDING_TTL_MIN * 60_000
   const tooManyFails = (failedAttempts || 0) >= 3
   const showPayBlock = !fullyPaid && (topUpDue || !isFreshPending || retrying || cancelled || failed || isStalePending)
+  // Accessory portion inside a full stall payment: name it so the headline
+  // amount is never read as a bare stall fee. Skipped for top-ups (the topUpNote
+  // already frames those) and when the split does not add up cleanly.
+  const accAmt = accessories && accessories > 0 ? accessories : 0
+  const stallAmt = (payAmount || 0) - accAmt
+  const showAccBreakdown = !fullyPaid && !topUpDue && accAmt > 0 && stallAmt >= 0
 
   async function payByCard() {
     setPaying(true); setError(null)
@@ -60,17 +73,20 @@ export default function PaymentPanel({
       {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
 
       {/* fee status */}
-      <div className={`rounded-2xl p-6 border ${fullyPaid ? 'bg-green-50 border-green-200' : 'bg-[#1a1416] border-[#1a1416] text-white'}`}>
+      <div className={`rounded-2xl p-4 sm:p-6 border ${fullyPaid ? 'bg-green-50 border-green-200' : 'bg-[#1a1416] border-[#1a1416] text-white'}`}>
         <div className="flex items-center gap-3">
-          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${fullyPaid ? 'bg-green-100 text-green-600' : 'bg-white/10 text-[#ff7a9c]'}`}>
+          <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center shrink-0 ${fullyPaid ? 'bg-green-100 text-green-600' : 'bg-white/10 text-[#ff7a9c]'}`}>
             {fullyPaid ? <CheckCircle2 className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
           </div>
-          <div>
-            <p className={`text-sm ${fullyPaid ? 'text-green-700' : 'text-white/60'}`}>{topUpDue ? 'Additional payment due' : 'Stall fee'}</p>
-            <p className={`text-2xl font-bold ${fullyPaid ? 'text-green-900' : 'text-white'}`}>
+          <div className="min-w-0">
+            <p className={`text-sm ${fullyPaid ? 'text-green-700' : 'text-white/60'}`}>{topUpDue ? 'Additional payment due' : showAccBreakdown ? 'Stall fee + accessories' : 'Stall fee'}</p>
+            <p className={`text-xl sm:text-2xl font-bold truncate ${fullyPaid ? 'text-green-900' : 'text-white'}`}>
               {fullyPaid ? 'Paid' : payAmount ? `R${payAmount.toFixed(2)} due` : 'Amount pending'}
             </p>
-            {!fullyPaid && <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {topUpDue ? 'Extra charges were added to your stall' : `Payable by ${dueDate}`}{reference ? ` · ref ${reference}` : ''}</p>}
+            {showAccBreakdown && (
+              <p className="text-sm text-white/60 mt-0.5">Stall R{stallAmt.toFixed(2)} + accessories R{accAmt.toFixed(2)} (electricity, furniture)</p>
+            )}
+            {!fullyPaid && <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 shrink-0" /> {topUpDue ? (topUpNote || 'Extra charges were added to your stall') : `Payable by ${dueDate}`}{reference ? ` · ref ${reference}` : ''}</p>}
           </div>
         </div>
       </div>
@@ -148,13 +164,13 @@ export default function PaymentPanel({
       {showPayBlock && (
         <>
           {/* card payment */}
-          <div className="bg-white border border-neutral-200 rounded-2xl p-6">
+          <div className="bg-white border border-neutral-200 rounded-2xl p-4 sm:p-6">
             <p className="font-semibold text-neutral-900 mb-1">Pay by card</p>
             {enabled ? (
               <>
                 <p className="text-sm text-neutral-500 mb-4">Secure card payment in South African Rand (ZAR), processed on FNB&rsquo;s 3D-Secure page. We never see or store your card number.</p>
                 <button onClick={payByCard} disabled={paying || !payAmount}
-                  className="bg-[#cd2653] hover:bg-[#b01f45] text-white font-semibold rounded-lg px-5 py-3 text-sm flex items-center gap-2 disabled:opacity-60">
+                  className="w-full sm:w-auto bg-[#cd2653] hover:bg-[#b01f45] text-white font-semibold rounded-lg px-5 py-3 text-sm flex items-center justify-center gap-2 disabled:opacity-60">
                   {paying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
                   {payAmount ? `Pay R${payAmount.toFixed(2)} now` : 'Amount pending'}
                 </button>
@@ -166,7 +182,7 @@ export default function PaymentPanel({
           </div>
 
           {/* Card trouble? Route to support, organisers reconcile manually. */}
-          <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5">
+          <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-4 sm:p-5">
             <p className="text-sm text-neutral-700 mb-3 flex items-start gap-2">
               <Info className="w-4 h-4 text-[#cd2653] mt-0.5 shrink-0" />
               Card not going through, or paying another way? Message the organisers and we&apos;ll sort it out with you.

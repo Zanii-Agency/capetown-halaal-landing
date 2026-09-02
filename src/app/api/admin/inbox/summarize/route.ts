@@ -26,6 +26,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { wrapUntrusted, UNTRUSTED_CONTENT_RULE } from '@/lib/ai/prompt-safety'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -47,7 +48,9 @@ Never refer to yourself as an AI, a model, or a vendor. Never mention Claude, An
 
 ${UNTRUSTED_CONTENT_RULE}`
 
-async function requireAdmin(): Promise<{ userId: string } | null> {
+// Carries the viewer's email: the EFT lane check below needs to know WHO is
+// summarising (only the EFT admin may summarise a lane vendor's thread).
+async function requireAdmin(): Promise<{ userId: string; email: string | null } | null> {
   const supabase = await createClient()
   const {
     data: { user },
@@ -56,7 +59,7 @@ async function requireAdmin(): Promise<{ userId: string } | null> {
   const admin = createAdminClient()
   const { data } = await admin.from('admin_users').select('id').eq('id', user.id).limit(1)
   if (!data || data.length === 0) return null
-  return { userId: user.id }
+  return { userId: user.id, email: user.email ?? null }
 }
 
 interface ThreadRow {
@@ -90,13 +93,13 @@ async function loadMessages(
   }
   const { data } = (await supabase
     .from('mail_messages')
-    .select('direction, body, received_at')
+    .select('direction, body, subject, received_at')
     .eq('thread_id', thread.id)
     .order('received_at', { ascending: true })
-    .limit(40)) as unknown as { data: Array<{ direction: string; body: string | null; received_at: string }> | null }
+    .limit(40)) as unknown as { data: Array<{ direction: string; body: string | null; subject: string | null; received_at: string }> | null }
   return (data ?? []).map((m) => ({
     direction: m.direction === 'outbound' ? 'out' : 'in',
-    body: m.body ?? '',
+    body: `${m.subject || ''}\n${m.body ?? ''}`.trim(),
     created_at: m.received_at,
   }))
 }
@@ -145,7 +148,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'thread not found' }, { status: 404 })
   }
   const thread = threadRows[0]
-  const cacheKey = `${thread.channel}:${thread.id}`
+
+  // CONTENT-level (2026-07-26): any admin may summarise any vendor's thread, but
+  // the EFT messages are stripped from the transcript BEFORE it reaches the model
+  // — a summary is generated FROM the bodies, so filtering after the fact would
+  // be too late. The cache key carries the flag: a summary built from the full
+  // transcript must never be served to someone who may not see all of it.
+  const scope = await laneScopeFor(session.email)
+  const outOfScope = thread.channel === 'wa'
+    ? scope.blocksPhone(thread.thread_key)
+    : scope.blocksEmail(thread.thread_key)
+  if (outOfScope) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  const hide = hidesEftContent(session.email)
+  const cacheKey = `${thread.channel}:${thread.id}${hide ? ':redacted' : ''}`
 
   if (!body.force) {
     const hit = cache.get(cacheKey)
@@ -154,7 +169,12 @@ export async function POST(req: Request) {
     }
   }
 
-  const msgs = await loadMessages(supabase, thread)
+  const identity = thread.channel === 'wa' ? { phone: thread.thread_key } : { email: thread.thread_key }
+  const msgs = stripEftMessages(await loadMessages(supabase, thread), (m) => m.body, hide, {
+    scope,
+    identity,
+    at: (m) => m.created_at,
+  })
   if (msgs.length === 0) {
     const payload = {
       summary: 'No messages yet on this thread.',

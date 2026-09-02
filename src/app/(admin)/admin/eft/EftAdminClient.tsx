@@ -1,0 +1,550 @@
+'use client'
+
+// TEMPORARY EFT lane management (dev@cthalaal.co.za only). Global on/off, per
+// vendor add/remove, proof review, and reconcile-to-paid. All actions hit the
+// EFT admin routes (each re-checks operator + EFT admin email server-side).
+
+import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Loader2, Check, X, Search, ExternalLink, CheckCircle2, ChevronDown } from 'lucide-react'
+// Imported, not declared below: as a local const it sat under the sort that
+// calls it and every render threw a temporal-dead-zone ReferenceError. See
+// src/lib/eft-rows.ts.
+import { isDemoRow } from '@/lib/eft-rows'
+import { SwipeToConfirm } from '@/components/admin/SwipeToConfirm'
+import type { PaymentRail } from '@/lib/eft'
+
+interface Bank { accountName: string; bank: string; accountNumber: string; branchCode: string; accountType?: string }
+interface Row {
+  id: string
+  business_name: string | null
+  contact_name: string | null
+  email: string | null
+  phone: string | null
+  reference: string
+  amount: number | null
+  outstanding: number | null
+  submitted: boolean
+  submitted_at: string | null
+  marked: boolean
+  collected: boolean       // EFT money marked collected (interim); awaiting Yoco settlement
+  reconciled: boolean
+  presented: boolean       // shown to the festival owner as paid-Yoco (presented_eft set)
+  ownerReconciled: boolean // operator marked their own EFT reconciliation done
+  accOwing: number         // accessory balance still owing on the split bill
+  accSubmitted: boolean    // vendor uploaded an accessory (-ACC) EFT proof
+  accCollected: boolean    // operator confirmed the accessory EFT landed (interim)
+  accSettled: boolean      // accessory amount folded into payment.amount via Yoco
+  proofs: Array<{ url: string; uploaded_at: string; note?: string; accessory?: boolean }>
+  added_at?: string | null
+  added_by?: string | null
+}
+interface Candidate { id: string; business_name: string | null; contact_name: string | null; email: string | null; phone: string | null; reference: string }
+
+
+/** The date this row last MOVED: proof upload if there is one, else the recorded
+ *  submission time. Drives both the Date column and the sort, so the lane reads
+ *  newest-activity-first instead of in whatever order the query returned. */
+function laneDate(r: { submitted_at?: string | null; proofs: Array<{ uploaded_at: string }> }): string | null {
+  const newestProof = r.proofs.map((p) => p.uploaded_at).sort().at(-1) ?? null
+  return newestProof || r.submitted_at || null
+}
+const rand = (n: number | null) =>
+  n === null ? 'TBC' : `R${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const fmtTime = (s: string | null) => (s ? new Date(s).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false }) : '')
+const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
+
+// The three positions of the global payment rail, in display order. Colours track
+// the surfaces: emerald = card, gold = Samreen's visible EFT, crimson = the covert
+// master lane (the crimson already used for the lane throughout this page).
+const RAILS: ReadonlyArray<{ mode: PaymentRail; label: string; activeClass: string; blurb: string }> = [
+  { mode: 'yoco', label: 'Yoco', activeClass: 'bg-emerald-600', blurb: 'Card only. Vendors pay by Yoco, except anyone you added or who opened EFT in the last 48h.' },
+  { mode: 'samreen_eft', label: 'Samreen EFT', activeClass: 'bg-[#B8924A]', blurb: 'Everyone pays EFT into Samreen\'s account. She sees the proofs and reconciles them.' },
+  { mode: 'master', label: 'Master lane', activeClass: 'bg-[#cd2653]', blurb: 'Everyone pays EFT into YOUR account. Nothing about it, and no vendor on it, ever reaches Samreen.' },
+]
+
+function BankCard({ title, bank, active, note }: { title: string; bank: Bank; active: boolean; note: string }) {
+  return (
+    <div className={`rounded-xl border px-4 py-3 ${active ? 'border-[#cd2653]/40 bg-[#FBF7ED]' : 'border-[#E5DCC4] bg-white'}`}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-semibold text-[#1B1A17]">{title}</span>
+        {active && <span className="text-[10px] font-bold uppercase tracking-wide text-[#cd2653]">Active</span>}
+      </div>
+      <div className="text-[13px] text-[#1B1A17] flex flex-wrap gap-x-4 gap-y-0.5">
+        <span>{bank.accountName}</span>
+        <span className="text-[#1B1A17]/60">{bank.bank}</span>
+        <span className="font-mono">{bank.accountNumber}</span>
+        <span className="text-[#1B1A17]/60">br {bank.branchCode}</span>
+      </div>
+      <p className="text-[11px] text-[#1B1A17]/50 mt-1">{note}</p>
+    </div>
+  )
+}
+
+export default function EftAdminClient({ rail, masterBank, samreenBank, rows, candidates, excluded }: {
+  rail: PaymentRail
+  masterBank: Bank   // the covert master-lane account (...191)
+  samreenBank: Bank  // the owner-reconciled Samreen-EFT account (...629)
+  rows: Row[]
+  candidates: Candidate[]
+  excluded: Candidate[]
+}) {
+  const router = useRouter()
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [exQuery, setExQuery] = useState('')
+  const [excludedOpen, setExcludedOpen] = useState(false)
+
+  // Newest activity first. The lane arrived in query order, so a proof uploaded
+  // this morning could sit below one from three weeks ago.
+  const sortedRows = [...rows].sort((a, b) => {
+    // Rows that do not count toward the money sink to the bottom, so the top of
+    // the table is only real vendors.
+    if (isDemoRow(a) !== isDemoRow(b)) return isDemoRow(a) ? 1 : -1
+    const da = laneDate(a), dbb = laneDate(b)
+    if (!da && !dbb) return (a.business_name || '').localeCompare(b.business_name || '')
+    if (!da) return 1          // nothing has happened on this one yet: bottom
+    if (!dbb) return -1
+    return new Date(dbb).getTime() - new Date(da).getTime()
+  })
+
+  // Owed per state. `outstanding ?? amount` is the same value the row renders,
+  // so the totals can never disagree with the column above them. Demo rows are
+  // excluded from every total (see isDemoRow).
+  const owed = (r: Row) => r.outstanding ?? r.amount ?? 0
+  const totals = rows.filter((r) => !isDemoRow(r)).reduce(
+    (acc, r) => {
+      const v = owed(r)
+      acc.total += v
+      if (r.reconciled) acc.reconciled += v
+      else if (r.collected) acc.collected += v
+      else if (r.submitted) acc.submitted += v
+      else acc.awaiting += v
+      return acc
+    },
+    { total: 0, collected: 0, submitted: 0, awaiting: 0, reconciled: 0 },
+  )
+
+  async function post(url: string, body: unknown, key: string) {
+    setBusy(key); setErr(null)
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || 'Action failed')
+      router.refresh()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Action failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Settle a collected vendor through Yoco: create a checkout, then open it so the
+  // operator can pay it with their card. Status flips to real paid via the webhook.
+  async function settle(id: string) {
+    setBusy(`set-${id}`); setErr(null)
+    try {
+      const res = await fetch('/api/admin/eft/settle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ applicationId: id }) })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j.url) throw new Error(j.error || 'Could not start settlement')
+      window.open(j.url as string, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not start settlement')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const filterCandidates = (q: string) => {
+    const term = q.trim().toLowerCase()
+    if (!term) return [] as Candidate[]
+    const normaliseRef = (s: string) => s.replace(/[^a-z0-9]/gi, '').toLowerCase()
+    const normalisedTerm = normaliseRef(term)
+    return candidates
+      .filter((c) => {
+        const haystack = `${c.business_name || ''} ${c.contact_name || ''} ${c.email || ''} ${c.phone || ''}`.toLowerCase()
+        if (haystack.includes(term)) return true
+        // Reference search: accept "YAH-ABCDEF12" or just "ABCDEF12".
+        if (normalisedTerm && normaliseRef(c.reference).includes(normalisedTerm)) return true
+        return false
+      })
+      .slice(0, 8)
+  }
+  const matches = useMemo(() => filterCandidates(query), [query, candidates]) // eslint-disable-line react-hooks/exhaustive-deps
+  const exMatches = useMemo(() => filterCandidates(exQuery), [exQuery, candidates]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="space-y-6">
+      {err && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
+
+      {/* Global payment rail (yours only) + the two receiving accounts */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
+          <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Global payment rail</p>
+          {/* Three positions, yours to choose (Samreen has no switch). Selecting
+              one persists it for the whole unpaid population. */}
+          <div className="grid grid-cols-3 gap-2">
+            {RAILS.map((r) => {
+              const active = rail === r.mode
+              return (
+                <button
+                  key={r.mode}
+                  onClick={() => { if (!active) post('/api/admin/eft/mode', { mode: r.mode }, 'mode') }}
+                  disabled={busy === 'mode' || active}
+                  className={`rounded-xl border px-3 py-3 text-center transition disabled:cursor-default ${active ? `${r.activeClass} text-white border-transparent` : 'bg-white border-[#E5DCC4] text-[#1B1A17] hover:border-[#cd2653]/40'}`}
+                >
+                  <div className="flex items-center justify-center gap-1.5 text-sm font-semibold">
+                    {busy === 'mode' && !active ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : active ? <Check className="w-3.5 h-3.5" /> : null}
+                    {r.label}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+          <p className="text-sm text-[#1B1A17] mt-3">{RAILS.find((r) => r.mode === rail)?.blurb}</p>
+          <p className="text-xs text-[#1B1A17]/50 mt-1">
+            Only you can change this. On the master lane, no vendor and no payment is ever visible to Samreen.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
+          <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Receiving accounts</p>
+          <div className="space-y-3">
+            <BankCard
+              title="Master lane (yours, hidden)"
+              bank={masterBank}
+              active={rail === 'master'}
+              note={rail === 'master' ? 'Every unpaid vendor pays here now.' : 'Covert cohort (⟦EFT⟧ + frozen set) always pays here.'}
+            />
+            <BankCard
+              title="Samreen EFT (she reconciles)"
+              bank={samreenBank}
+              active={rail === 'samreen_eft'}
+              note={rail === 'samreen_eft' ? 'General vendors pay here now.' : rail === 'yoco' ? 'Card only right now, nobody on this account.' : 'Not in use while the master lane is active.'}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Add a specific vendor */}
+      <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
+        <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Add a vendor to the EFT lane</p>
+        <div className="relative">
+          <Search className="w-4 h-4 text-[#1B1A17]/40 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by reference, business, contact, email or phone"
+            className="w-full text-sm rounded-lg border border-neutral-200 pl-9 pr-3 py-2.5 focus:border-[#cd2653] focus:outline-none"
+          />
+          {matches.length > 0 && (
+            <div className="absolute z-10 mt-1 w-full rounded-lg border border-neutral-200 bg-white shadow-lg overflow-hidden">
+              {matches.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => { setQuery(''); post('/api/admin/eft/lane', { applicationId: c.id, action: 'add' }, `add-${c.id}`) }}
+                  disabled={busy === `add-${c.id}`}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-[#F2EBD8]/60 flex items-center justify-between gap-2"
+                >
+                  <span className="min-w-0">
+                    <span className="font-medium text-[#1B1A17]">{c.business_name || 'Unnamed'}</span>
+                    <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}{c.phone ? ` · ${c.phone}` : ''}</span>
+                    <span className="ml-1.5 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#1B1A17]/60">{c.reference}</span>
+                  </span>
+                  {busy === `add-${c.id}` && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Exclude a vendor from EFT (handle manually) */}
+      <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
+        <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-1">Exclude a vendor from EFT</p>
+        <p className="text-xs text-[#1B1A17]/50 mb-3">They never see EFT (even with global mode on) and stay on the main inbox for a person to handle. Use for NPOs and vendors you deal with directly.</p>
+        <div className="relative">
+          <Search className="w-4 h-4 text-[#1B1A17]/40 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            value={exQuery}
+            onChange={(e) => setExQuery(e.target.value)}
+            placeholder="Search by reference, business, contact, email or phone"
+            className="w-full text-sm rounded-lg border border-neutral-200 pl-9 pr-3 py-2.5 focus:border-[#cd2653] focus:outline-none"
+          />
+          {exMatches.length > 0 && (
+            <div className="absolute z-10 mt-1 w-full rounded-lg border border-neutral-200 bg-white shadow-lg overflow-hidden">
+              {exMatches.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => { setExQuery(''); post('/api/admin/eft/lane', { applicationId: c.id, action: 'exclude' }, `ex-${c.id}`) }}
+                  disabled={busy === `ex-${c.id}`}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-[#F2EBD8]/60 flex items-center justify-between gap-2"
+                >
+                  <span className="min-w-0">
+                    <span className="font-medium text-[#1B1A17]">{c.business_name || 'Unnamed'}</span>
+                    <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}{c.phone ? ` · ${c.phone}` : ''}</span>
+                    <span className="ml-1.5 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#1B1A17]/60">{c.reference}</span>
+                  </span>
+                  {busy === `ex-${c.id}` && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {/* Collapsed by default. Eleven permanently-excluded vendors is reference
+            data you set once and rarely revisit, and stacked open it pushed the
+            lane table itself off the screen. */}
+        {excluded.length > 0 && (
+          <div className="mt-4">
+            <button
+              onClick={() => setExcludedOpen((o) => !o)}
+              aria-expanded={excludedOpen}
+              className="w-full flex items-center gap-2 rounded-lg border border-[#F2EBD8] bg-[#FBF8F0] px-3 py-2.5 text-left hover:bg-[#F7F1E3] transition-colors"
+            >
+              <ChevronDown className={`w-4 h-4 shrink-0 text-[#1B1A17]/40 transition-transform ${excludedOpen ? 'rotate-180' : ''}`} />
+              <span className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold">
+                Excluded from EFT ({excluded.length})
+              </span>
+              <span className="ml-auto text-xs text-[#1B1A17]/40">
+                {excludedOpen ? 'Hide' : 'Show'}
+              </span>
+            </button>
+          </div>
+        )}
+        {excluded.length > 0 && excludedOpen && (
+          <div className="mt-2 space-y-2 max-h-72 overflow-y-auto pr-1">
+            {excluded.map((c) => (
+              <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#F2EBD8] px-3 py-2 text-sm">
+                <span className="min-w-0">
+                  <span className="font-medium text-[#1B1A17]">{c.business_name || 'Unnamed'}</span>
+                  <span className="text-[#1B1A17]/50"> · {c.email || c.contact_name || ''}</span>
+                </span>
+                <button
+                  onClick={() => post('/api/admin/eft/lane', { applicationId: c.id, action: 'unexclude' }, `unex-${c.id}`)}
+                  disabled={busy === `unex-${c.id}`}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 hover:border-[#cd2653] hover:text-[#cd2653] px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                >
+                  {busy === `unex-${c.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />} Un-exclude
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Lane table */}
+      <div className="rounded-2xl border border-[#E5DCC4] bg-white overflow-hidden">
+        <div className="px-5 py-3 border-b border-[#E5DCC4] flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold">In the EFT lane ({rows.length})</p>
+          {/* Money at a glance. The table listed seven amounts and left the
+              operator adding them up by eye, which is the one thing a payment
+              screen must never ask (Taona 2026-07-27: "we should have total to
+              easily keep track"). Split three ways, because the states mean very
+              different things: collected is money we HAVE but have not settled
+              through Yoco, awaiting is money still outside. */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs tabular-nums">
+            <span className="text-[#1B1A17]/55">Collected <span className="font-semibold text-amber-700">{rand(totals.collected)}</span></span>
+            <span className="text-[#1B1A17]/55">Proof in <span className="font-semibold text-[#1B1A17]">{rand(totals.submitted)}</span></span>
+            <span className="text-[#1B1A17]/55">Awaiting <span className="font-semibold text-[#1B1A17]/70">{rand(totals.awaiting)}</span></span>
+            <span className="text-[#1B1A17]/70 border-l border-[#E5DCC4] pl-5">Total owed <span className="font-bold text-[#1B1A17]">{rand(totals.total)}</span></span>
+          </div>
+        </div>
+        {rows.length === 0 ? (
+          <p className="p-5 text-sm text-[#1B1A17]/55">No vendors in the lane yet. Turn on global mode, or add vendors above.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[#1B1A17]/50 border-b border-[#E5DCC4]">
+                  <th className="px-5 py-2 font-medium">Vendor</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Reference</th>
+                  <th className="px-3 py-2 font-medium text-right">Owed</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Added to lane</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Date</th>
+                  <th className="px-3 py-2 font-medium">Proof</th>
+                  <th className="px-5 py-2 font-medium text-right w-[240px]">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map((r) => (
+                  <tr key={r.id} className="border-b border-[#F2EBD8] last:border-0 align-top">
+                    <td className="px-5 py-3">
+                      <p className="font-medium text-[#1B1A17]">
+                        {r.business_name || 'Unnamed'}
+                        {isDemoRow(r) && <span className="ml-2 align-middle rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-neutral-100 text-[#1B1A17]/45">demo, not counted</span>}
+                      </p>
+                      <p className="text-xs text-[#1B1A17]/50">{r.contact_name || ''}{r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}</p>
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <span className="font-mono text-xs text-[#1B1A17]/80 select-all">{r.reference}</span>
+                    </td>
+                    <td className={`px-3 py-3 whitespace-nowrap text-right tabular-nums ${isDemoRow(r) ? 'text-[#1B1A17]/35 line-through' : 'font-medium'}`}>{rand(r.outstanding ?? r.amount)}</td>
+                    <td className="px-3 py-3">
+                      {r.presented ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Shown to Samreen (paid · Yoco){r.ownerReconciled ? ' · reconciled ✓' : ' · reconcile pending'}
+                        </span>
+                      ) : r.reconciled && r.accCollected && !r.accSettled ? (
+                        <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1.5" />Accessories collected, settle via Yoco</span>
+                      ) : r.reconciled && r.accSubmitted && !r.accCollected ? (
+                        <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5" />Accessory proof uploaded</span>
+                      ) : r.reconciled && r.accOwing > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-[#1B1A17]"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> Stall paid, accessories owing</span>
+                      ) : r.reconciled ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Reconciled</span>
+                      ) : r.collected ? (
+                        <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1.5" />Collected (EFT), settle via Yoco</span>
+                      ) : r.submitted ? (
+                        <span className="text-[#1B1A17]"><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5" />Proof uploaded {r.submitted_at ? fmtDate(r.submitted_at) : ''}</span>
+                      ) : (
+                        <span className="text-[#1B1A17]/50"><span className="inline-block w-2 h-2 rounded-full bg-neutral-300 mr-1.5" />Awaiting proof</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {r.added_at ? (
+                        <>
+                          <span className="text-[#1B1A17]/70">{fmtDate(r.added_at)}</span>
+                          <span className="block text-xs text-[#1B1A17]/45">
+                            {fmtTime(r.added_at)}{r.added_by ? ` · ${r.added_by.split('@')[0]}` : ''}
+                          </span>
+                        </>
+                      ) : (
+                        // Honest gap: the audit that should have recorded this
+                        // was writing to a non-existent column inside a silent
+                        // catch, so nothing before 2026-07-27 exists to show.
+                        <span className="text-[#1B1A17]/40" title="Added before lane changes were being recorded">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap text-[#1B1A17]/70">
+                      {laneDate(r) ? fmtDate(laneDate(r) as string) : <span className="text-[#1B1A17]/40">—</span>}
+                    </td>
+                    <td className="px-3 py-3">
+                      {r.proofs.length === 0 ? (
+                        <span className="text-[#1B1A17]/40">None</span>
+                      ) : (
+                        <div className="space-y-1">
+                          {r.proofs.map((p, i) => (
+                            <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#cd2653] hover:underline">
+                              <ExternalLink className="w-3 h-3" /> {p.accessory ? 'Accessory' : 'View'}{r.proofs.length > 1 ? ` ${i + 1}` : ''}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 align-middle">
+                      {/* Two fixed-width slots, never a flow row: Remove is absent on
+                          most rows, and in a justify-end flow that pulled the primary
+                          button right by Remove's width, so the primary buttons never
+                          formed a straight column down the table. Both slots keep their
+                          width whether or not they hold a button. */}
+                      <div className="flex items-center justify-end gap-2 flex-nowrap whitespace-nowrap">
+                        <div className="w-[152px] shrink-0">
+                          {/* Not yet collected + not paid: mark the EFT money collected
+                              (interim). Vendor sees paid + acknowledged; NOT counted in
+                              finance until settled via Yoco. */}
+                          {!r.reconciled && !r.collected && (
+                            <button
+                              onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as EFT COLLECTED for ${rand(r.outstanding ?? r.amount)}? They will see PAID and be acknowledged, but this is NOT final until you settle it via Yoco. Do this only after the EFT money has landed.`)) post('/api/admin/eft/reconcile', { applicationId: r.id }, `rec-${r.id}`) }}
+                              disabled={busy === `rec-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark collected
+                            </button>
+                          )}
+                          {/* ACCESSORY collect (split-bill): stall already settled, the
+                              vendor's -ACC EFT proof is in. Confirms the money landed:
+                              vendor sees accessories PAID + gets acknowledged, finance
+                              does not count it until the accessory Yoco settlement. */}
+                          {r.reconciled && r.accSubmitted && !r.accCollected && (
+                            <button
+                              onClick={() => { if (confirm(`Collect ACCESSORY EFT for ${r.business_name || 'this vendor'} (${rand(r.accOwing)})? Their bill shows accessories PAID and they are acknowledged, but it is NOT counted until you settle it via Yoco. Do this only after the -ACC deposit has landed.`)) post('/api/admin/eft/reconcile', { applicationId: r.id, accessories: true }, `rec-${r.id}`) }}
+                              disabled={busy === `rec-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Collect accessories
+                            </button>
+                          )}
+                          {/* Accessory collected, not settled: same settle flow; the route
+                              detects the paid+acc state and charges only the accessory
+                              amount. Webhook folds it into the cumulative paid total. */}
+                          {r.reconciled && r.accCollected && !r.accSettled && (
+                            <button
+                              onClick={() => { if (confirm(`Settle ${r.business_name || 'this vendor'}'s ACCESSORY amount through Yoco? This opens a Yoco checkout you pay on your card, funded by the -ACC EFT cash. It records the additional payment and notifies Samreen as an ordinary top-up.`)) settle(r.id) }}
+                              disabled={busy === `set-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `set-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Settle via Yoco
+                            </button>
+                          )}
+                          {/* Collected but not yet settled: the operator can either SHOW
+                              the owner a clean paid-Yoco entry now (present), or run the
+                              real Yoco settlement (a checkout they pay). */}
+                          {!r.reconciled && r.collected && (
+                            <div className="flex flex-col gap-1.5">
+                              <button
+                                onClick={() => { if (confirm(`Show ${r.business_name || 'this vendor'} to Samreen as PAID via Yoco (${rand(r.outstanding ?? r.amount)})? She will see them paid with a Yoco reference; the EFT details stay hidden from her. The money counts once. You can mark it reconciled on your side later. Do this only after the EFT money has landed.`)) post('/api/admin/eft/present', { applicationId: r.id }, `present-${r.id}`) }}
+                                disabled={busy === `present-${r.id}`}
+                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#cd2653] hover:bg-[#b01f45] text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                              >
+                                {busy === `present-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Show to Samreen
+                              </button>
+                              <button
+                                onClick={() => { if (confirm(`Settle ${r.business_name || 'this vendor'} through Yoco for ${rand(r.outstanding ?? r.amount)}? This opens a Yoco checkout you pay on your card (Yoco fee applies), funded by the EFT cash. It records the real payment and notifies Samreen.`)) settle(r.id) }}
+                                disabled={busy === `set-${r.id}`}
+                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                              >
+                                {busy === `set-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Settle via Yoco
+                              </button>
+                            </div>
+                          )}
+                          {/* Presented to the owner as paid: the only remaining action is
+                              the operator's own "settle later" reconciliation flag — it
+                              does NOTHING to Samreen (she already sees paid). */}
+                          {r.presented && !r.ownerReconciled && (
+                            <button
+                              onClick={() => { if (confirm(`Mark ${r.business_name || 'this vendor'} as reconciled on your side? Samreen already sees them paid. This only records that you have squared the actual EFT money on your side. Nothing changes for her.`)) post('/api/admin/eft/present', { applicationId: r.id, reconcile: true }, `rec-${r.id}`) }}
+                              disabled={busy === `rec-${r.id}`}
+                              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-600 hover:bg-slate-700 text-white px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                            >
+                              {busy === `rec-${r.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Mark reconciled
+                            </button>
+                          )}
+                        </div>
+                        {/* Swipe, not a click: this moves a vendor out of the
+                            payment lane, so the gesture is the confirmation and
+                            there is no dialog on top of it. Fixed width, so the
+                            column above stays a straight edge whether or not a
+                            row has this action. */}
+                        <div className="w-[132px] shrink-0">
+                          {r.marked && (
+                            <SwipeToConfirm
+                              onConfirm={() => post('/api/admin/eft/lane', { applicationId: r.id, action: 'remove' }, `rm-${r.id}`)}
+                              busy={busy === `rm-${r.id}`}
+                              ariaLabel={`Remove ${r.business_name || 'this vendor'} from the EFT lane`}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-[#E5DCC4] bg-[#FBF8F0]">
+                  <td className="px-5 py-3 font-semibold text-[#1B1A17]" colSpan={2}>
+                    {sortedRows.filter((r) => !isDemoRow(r)).length} vendor{sortedRows.filter((r) => !isDemoRow(r)).length === 1 ? '' : 's'}
+                    {sortedRows.some(isDemoRow) && <span className="ml-1 font-normal text-[#1B1A17]/40">+ demo</span>}
+                  </td>
+                  <td className="px-3 py-3 font-bold text-[#1B1A17] whitespace-nowrap text-right tabular-nums">{rand(totals.total)}</td>
+                  <td className="px-3 py-3" colSpan={5} />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -14,6 +14,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { ResolvedIdentity } from '@/lib/bot/identity'
+import { guardBankingTalk } from '@/lib/bot/banking-guard'
 
 // E.164 SA + international shapes + local SA dialing.
 const PHONE_PATTERNS: RegExp[] = [
@@ -68,6 +69,18 @@ function callerAllowlist(opts: ReplyGuardOpts): { phones: Set<string>; emails: S
 
 export function guardReply(reply: string, opts: ReplyGuardOpts): GuardedReply {
   if (!reply) return { reply: '', redactionCount: 0, reasons: [] }
+
+  // BANKING: the bot does not discuss it with a vendor, at all. Handled here
+  // because this is the single chokepoint every bot reply already passes
+  // through, so there is no second path to remember. Admins are exempt: the
+  // master brain answering Taona about the account is a different conversation
+  // from the bot answering a vendor, and only the second one is the risk.
+  if (opts.identity.role !== 'admin') {
+    const banking = guardBankingTalk(reply)
+    if (banking.replaced) {
+      return { reply: banking.reply, redactionCount: 1, reasons: ['banking_talk_replaced'] }
+    }
+  }
   const { phones, emails } = callerAllowlist(opts)
   let count = 0
   const reasons: string[] = []
@@ -82,7 +95,7 @@ export function guardReply(reply: string, opts: ReplyGuardOpts): GuardedReply {
   })
 
   // SA ID
-  out = out.replace(SA_ID_PATTERN, (m) => {
+  out = out.replace(SA_ID_PATTERN, () => {
     count++
     reasons.push('sa_id')
     return '[id redacted]'

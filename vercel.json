@@ -1,23 +1,18 @@
 {
   "functions": {
     "src/app/api/exhibitor/portal/marketing/**/route.ts": {
-      "memory": 3009,
       "maxDuration": 60
     },
     "src/app/api/exhibitor/staff/route.ts": {
-      "memory": 3009,
       "maxDuration": 60
     },
     "src/app/api/exhibitor/staff/resend/route.ts": {
-      "memory": 3009,
       "maxDuration": 60
     },
     "src/app/api/exhibitor/portal/invoice/**/route.ts": {
-      "memory": 3009,
       "maxDuration": 60
     },
     "src/app/api/cron/badge-repair/route.ts": {
-      "memory": 3009,
       "maxDuration": 120
     }
   },
@@ -57,6 +52,14 @@
     {
       "path": "/api/cron/reconcile-yoco",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/outbound-sync",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/daily-ops-digest",
+      "schedule": "0 18 * * *"
     }
   ]
 }

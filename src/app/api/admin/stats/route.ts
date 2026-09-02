@@ -69,11 +69,11 @@ export async function GET() {
     }
 
     // 2. Revenue + categories need row payloads, but only for non-rejected
-    //    applications. Pull a narrow projection (no business_description,
-    //    no admin_notes) so the response size stays small even at 25K rows.
+    //    applications. admin_notes + paid_at are needed to scope the rows to
+    //    the viewer; master-lane vendors must not inflate the owner's dashboard.
     const { data: nonRejectedApps } = await admin
       .from('vendor_applications')
-      .select('preferred_booth_tier, special_requirements, product_categories')
+      .select('preferred_booth_tier, special_requirements, product_categories, admin_notes, paid_at')
       .neq('status', 'rejected')
 
     let estimatedRevenue = 0

@@ -9,6 +9,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { laneScopeFor } from '@/lib/inbox-lane'
+import { hiddenFromOwner } from '@/lib/audit-scope'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -35,6 +37,11 @@ export async function GET(request: NextRequest) {
     const rawLimit = Number(searchParams.get('limit') ?? '50')
     const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 50, 1), 200)
 
+    const scope = await laneScopeFor(user.email)
+    if (scope.blocksApplicationId(applicationId)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const { data, error } = await admin
       .from('vendor_application_events')
       .select('id, application_id, event_type, before_value, after_value, actor_email, actor_role, note, created_at')
@@ -47,7 +54,24 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch events' }, { status: 500 })
     }
 
-    return NextResponse.json({ events: data ?? [] })
+    const events = ((data ?? []) as Array<{
+      id: string
+      application_id: string
+      event_type: string
+      before_value: unknown
+      after_value: unknown
+      actor_email: string | null
+      actor_role: string | null
+      note: string | null
+      created_at: string
+    }>).filter((e) =>
+      !hiddenFromOwner(
+        { event_type: e.event_type, note: e.note, before_value: e.before_value, after_value: e.after_value },
+        true,
+      ),
+    )
+
+    return NextResponse.json({ events })
   } catch (err) {
     console.error('[events] error:', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

@@ -7,6 +7,26 @@ import { createClient } from '@/lib/supabase/client'
 import { Logo } from '@/components/logo'
 import { Mail, Lock, AlertCircle, Loader2 } from 'lucide-react'
 
+// Never surface a raw Supabase/browser error to the operator. Map the common
+// cases to plain language. A backend/auth outage rejects with "Failed to fetch"
+// (a browser TypeError) or an AuthRetryableFetchError; that must read as a
+// try-again, not a cryptic bug (Samreen hit this when the auth service was down).
+function friendlyAuthError(err: unknown): string {
+  const raw = err && typeof err === 'object' && 'message' in err
+    ? String((err as { message: unknown }).message)
+    : String(err ?? '')
+  const msg = raw.toLowerCase()
+  if (msg.includes('fetch') || msg.includes('network') || msg.includes('timeout') || msg.includes('econn') || msg.includes('load failed')) {
+    return "Can't reach the server right now. It may be briefly restarting, please wait a moment and try again."
+  }
+  if (msg.includes('invalid login') || msg.includes('invalid credentials') || msg.includes('email or password')) {
+    return 'Incorrect email or password.'
+  }
+  if (msg.includes('email not confirmed')) return 'Please confirm your email address before signing in.'
+  if (msg.includes('rate') && msg.includes('limit')) return 'Too many attempts. Please wait a minute and try again.'
+  return 'Sign in did not work. Please try again, or contact the organizer if it keeps happening.'
+}
+
 export default function AdminLoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -22,22 +42,34 @@ export default function AdminLoginPage() {
     setError('')
     setLoading(true)
 
-    const supabase = createClient()
+    try {
+      const supabase = createClient()
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+      if (authError) {
+        setError(friendlyAuthError(authError))
+        setLoading(false)
+        return
+      }
 
-    if (authError) {
-      setError(authError.message)
+      // Record where this sign-in came from. Sends no body: the route reads the
+      // identity from the cookie just set and the IP from the edge headers, so
+      // nothing here is client-controlled. Fire and forget, never awaited and
+      // never surfaced: a logging failure must not hold up or fail a login.
+      fetch('/api/admin/login-log', { method: 'POST' }).catch(() => {})
+
+      // Redirect to dashboard (layout will verify admin status)
+      router.push('/admin')
+      router.refresh()
+    } catch (err) {
+      // A network / auth-service outage rejects here (not via authError), e.g.
+      // "Failed to fetch". Degrade gracefully instead of leaving the form stuck.
+      setError(friendlyAuthError(err))
       setLoading(false)
-      return
     }
-
-    // Redirect to dashboard (layout will verify admin status)
-    router.push('/admin')
-    router.refresh()
   }
 
   return (

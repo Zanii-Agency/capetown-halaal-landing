@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { toE164 } from '@/lib/whatsapp'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const runtime = 'nodejs'
 
@@ -21,6 +22,13 @@ export async function GET(req: NextRequest) {
   const e164 = toE164(phone)
   const waPhone = e164.replace(/^\+/, '')
 
+  // TWO layers (2026-07-26). Vendor: the festival owner may only open threads of
+  // vendors she owns (paid via Yoco/cash/waived). Content: within those, any
+  // message that talks about EFT is still stripped.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksPhone(e164)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const hide = hidesEftContent(user.email)
+
   const { data, error } = await admin
     .from('wa_messages')
     .select('id, direction, wa_phone, template_name, category, body, status, error, provider_message_id, created_at')
@@ -29,5 +37,8 @@ export async function GET(req: NextRequest) {
     .limit(500)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ phone: waPhone, count: (data || []).length, messages: data || [] })
+  const messages = stripEftMessages(data, (m) => m.body, hide, {
+    scope, identity: { phone }, at: (m) => (m as { at?: string; created_at?: string }).at || (m as { created_at?: string }).created_at,
+  })
+  return NextResponse.json({ phone: waPhone, count: messages.length, messages })
 }

@@ -17,30 +17,80 @@ export function stripAllHtml(input: string): string {
   })
 }
 
+// Widened 2026-07-26 for the "clean reading view" (Taona: emails should read
+// natively, like Gmail). The old allowlist was a, p, br, strong, em, ul, ol, li,
+// blockquote, hr — no div, span or table, which is what real mail is built from.
+// A structured email collapsed into bare text, which is a large part of why the
+// inbox read as "wrongly formatted and hard to read".
+//
+// The shape of the fix is LAYOUT IN, TYPOGRAPHY OUT: allow the tags and the
+// styles that carry structure, drop the ones that carry the sender's type
+// choices, and restyle everything to our own scale in the .email-body block in
+// globals.css. That is what makes a hundred senders' mail read as one inbox.
+const EMAIL_ALLOWED_TAGS = [
+  'a', 'p', 'br', 'div', 'span', 'hr', 'pre', 'code', 'blockquote',
+  'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'sub', 'sup', 'small', 'mark',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup', 'col',
+]
+
+const HEX_OR_RGB = [/^#[0-9a-fA-F]{3,8}$/, /^rgba?\(\s*[\d\s,.%]+\)$/]
+const LEN = /^[\d.]+(px|em|rem|%)$/
+const BOX = /^[\d.]+(px|em|rem|%)( +[\d.]+(px|em|rem|%)){0,3}$/
+
 /**
- * Sanitize inbound email HTML bodies for the operator-only Support Inbox.
+ * Sanitize inbound email HTML for the operator-only inbox.
  *
- * Allowlist is tight: only structural + inline-text tags, hyperlinks (http(s)
- * + mailto), and a small set of list/quote tags. Everything else is stripped.
+ * Still explicitly disallowed: script, iframe, style, link, meta, form, input,
+ * object, embed, video, audio, svg, base — and **img**.
  *
- * Explicitly disallowed: script, iframe, style, img, form, link, meta, object,
- * embed, video, audio, svg. No images until we have a CSP-safe pattern; until
- * then a missing image is better than a tracker pixel firing.
+ * `img` stays off the list deliberately, and it is the whole answer to remote
+ * images and tracking pixels: no proxy, no CSP work, no broken-image icons, and
+ * none of the 1x1 pixels marketing mail is full of. Genuine attachments (and
+ * inline cid: images, which mailparser hands us as attachments) already reach
+ * the operator through the `media[]` array on the same origin.
+ *
+ * Styles are filtered to layout + emphasis only. NOT allowed: font-family and
+ * font-size (we restyle to our own typography — this is the single biggest fix
+ * for "wrongly formatted"), and position/display/float/z-index, which can paint
+ * over our own chrome.
  *
  * Example: `<script>alert(1)</script><p>hello <a href="http://x">link</a></p>`
  *   becomes `<p>hello <a href="http://x" target="_blank" rel="noopener noreferrer">link</a></p>`.
- *   No script tag. No alert. The <p> + <a> survive because they are on the
- *   allowlist. The added target/rel come from sanitize-html's transformTags.
  */
 export function sanitizeEmailHtml(input: string): string {
   if (!input) return ''
   return sanitizeHtml(input, {
-    allowedTags: ['a', 'p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'blockquote', 'hr'],
+    allowedTags: EMAIL_ALLOWED_TAGS,
     allowedAttributes: {
-      a: ['href', 'target', 'rel'],
+      a: ['href', 'target', 'rel', 'title'],
+      td: ['colspan', 'rowspan', 'align', 'valign'],
+      th: ['colspan', 'rowspan', 'align', 'valign', 'scope'],
+      table: ['align'],
+      col: ['span'],
+      '*': ['style', 'align', 'dir'],
     },
-    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedStyles: {
+      '*': {
+        'text-align': [/^(left|right|center|justify)$/],
+        'font-weight': [/^(normal|bold|[1-9]00)$/],
+        'font-style': [/^(normal|italic)$/],
+        'text-decoration': [/^(none|underline|line-through)$/],
+        color: HEX_OR_RGB,
+        'background-color': HEX_OR_RGB,
+        padding: [BOX], 'padding-left': [LEN], 'padding-top': [LEN],
+        'padding-right': [LEN], 'padding-bottom': [LEN],
+        margin: [BOX], 'margin-left': [LEN], 'margin-top': [LEN],
+        'margin-right': [LEN], 'margin-bottom': [LEN],
+        'border-collapse': [/^(collapse|separate)$/],
+        width: [/^(auto|[\d.]+(px|%|em|rem))$/],
+        'vertical-align': [/^(top|middle|bottom|baseline)$/],
+      },
+    },
+    allowedSchemes: ['http', 'https', 'mailto', 'tel'],
     allowedSchemesAppliedToAttributes: ['href'],
+    allowProtocolRelative: false,
     disallowedTagsMode: 'discard',
     transformTags: {
       // Force every anchor to open in a new tab with noopener noreferrer. This

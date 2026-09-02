@@ -29,11 +29,23 @@ function deriveState(
   const isRejected = /reject|declin|unsuccess|not approv/.test(s)
   const isApproved = /approv|confirm|accept/.test(s)
   const isPaid = payment === 'paid' || payment === 'waived'
+  // 'collected' is the EFT interim state: the money has landed but has not been
+  // settled through Yoco, so it is deliberately not counted in finance. It used
+  // to fall through to "Payment pending", which sat directly above an amount
+  // block reading "R4 800 collected" — the profile contradicted itself twice on
+  // one screen. It is not "Paid" either; that would imply a settlement that has
+  // not happened. It is its own state.
+  //
+  // Only the EFT admin ever reaches this branch: visiblePaymentStatus() collapses
+  // 'collected' to 'none' for every other viewer BEFORE it gets here, so the
+  // festival owner still sees "Payment pending" (Taona 2026-07-28: "for
+  // dev@cthalaal.co.za this is correct, for samreen it shouldnt be").
+  const isCollected = payment === 'collected'
 
   const chips: ChipState[] = [
     { label: isApproved ? 'Approved' : isRejected ? 'Not approved' : 'In review', done: isApproved },
     { label: contractSigned ? 'Contract signed' : 'Contract not signed', done: contractSigned },
-    { label: isPaid ? 'Paid' : 'Payment pending', done: isPaid },
+    { label: isPaid ? 'Paid' : isCollected ? 'Payment received' : 'Payment pending', done: isPaid || isCollected },
     { label: stallCode ? `Stall ${stallCode}` : 'Stall not allocated', done: !!stallCode },
   ]
 
@@ -45,6 +57,8 @@ function deriveState(
     next = 'Application in review. Approved within a few working days, vendor gets a WhatsApp and email on approval.'
   } else if (!contractSigned) {
     next = 'Vendor to sign the contract in the portal.'
+  } else if (isCollected) {
+    next = 'EFT received. Settle it through Yoco to record the payment.'
   } else if (!isPaid) {
     next = 'Awaiting payment of the stall fee.'
   } else if (!stallCode) {

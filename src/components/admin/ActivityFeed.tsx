@@ -5,10 +5,10 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import {
   Activity, CheckCircle2, XCircle, MessageSquare, FileText,
-  CreditCard, Send, Loader2, RefreshCw
+  CreditCard, Send, Loader2, RefreshCw, LogIn
 } from 'lucide-react'
 
-type FilterKey = 'all' | 'approvals' | 'messages' | 'documents' | 'payments' | 'mass_send'
+type FilterKey = 'all' | 'approvals' | 'messages' | 'documents' | 'payments' | 'mass_send' | 'logins'
 
 interface ActivityItem {
   id: string
@@ -29,6 +29,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'documents', label: 'Documents' },
   { key: 'payments', label: 'Payments' },
   { key: 'mass_send', label: 'Mass send' },
+  { key: 'logins', label: 'Logins' },
 ]
 
 const EVENT_VISUALS: Record<string, { icon: typeof Activity; color: string; bg: string; verb: string }> = {
@@ -49,6 +50,7 @@ const EVENT_VISUALS: Record<string, { icon: typeof Activity; color: string; bg: 
   mass_email_sent:             { icon: Send,           color: 'text-[#cd2653]',   bg: 'bg-[#cd2653]/10', verb: 'sent mass email' },
   mass_whatsapp_sent:          { icon: Send,           color: 'text-green-600',   bg: 'bg-green-50',   verb: 'sent WhatsApp blast' },
   verification_blast:          { icon: Send,           color: 'text-[#cd2653]',   bg: 'bg-[#cd2653]/10', verb: 'sent verification blast' },
+  admin_login:                 { icon: LogIn,          color: 'text-neutral-600', bg: 'bg-neutral-100',verb: 'signed in from' },
 }
 
 const FALLBACK_VISUAL = { icon: Activity, color: 'text-neutral-500', bg: 'bg-neutral-100', verb: '' }
@@ -156,7 +158,12 @@ export function ActivityFeed() {
             const v = EVENT_VISUALS[ev.event_type] ?? FALLBACK_VISUAL
             const Icon = v.icon
             const verb = v.verb || humanizeEventType(ev.event_type)
-            const displayName = ev.vendor_name || ev.contact_name
+            // A sign-in has no vendor, so its "where" rides the name slot:
+            // "capetownhalaal@gmail.com signed in from Cape Town, ZA".
+            const place = ev.event_type === 'admin_login'
+              ? (ev.metadata?.place as string | undefined) || null
+              : null
+            const displayName = place || ev.vendor_name || ev.contact_name
             return (
               <li key={ev.id} className="px-4 sm:px-5 py-3 flex items-start gap-3 min-h-[56px]">
                 <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0', v.bg)}>
@@ -182,7 +189,12 @@ export function ActivityFeed() {
                   </p>
                   <p className="text-[11px] text-neutral-400 mt-0.5">
                     {formatRelative(ev.created_at)}
-                    {ev.path ? <> · <span className="font-mono">{ev.path}</span></> : null}
+                    {place && ev.metadata?.ip ? (
+                      <> · <span className="font-mono">{String(ev.metadata.ip)}</span></>
+                    ) : ev.path ? <> · <span className="font-mono">{ev.path}</span></> : null}
+                    {place && ev.metadata?.expected === false ? (
+                      <> · <span className="text-amber-600 font-medium">unusual location</span></>
+                    ) : null}
                   </p>
                 </div>
               </li>

@@ -173,9 +173,9 @@ export function VendorPaymentConfirmation({
       )}
 
       <Paragraph>
-        <strong>Payment method:</strong> Yoco (debit/credit card)
-        <br />
-        <strong>Yoco reference:</strong> <span style={{ fontFamily: 'monospace' }}>{providerRef}</span>
+        {/* No payment method shown to the vendor: acknowledge the payment only.
+            Method (Yoco / EFT) is internal reconciliation detail (Taona 2026-07-25). */}
+        <strong>Reference:</strong> <span style={{ fontFamily: 'monospace' }}>{invoiceNum}</span>
         <br />
         <strong>Status:</strong> <span style={{ color: '#1f7050', fontWeight: 700 }}>PAID, {issued}</span>
       </Paragraph>

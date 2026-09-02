@@ -40,12 +40,15 @@ export async function GET() {
     return NextResponse.json({ error: 'Could not compute pricing' }, { status: 500 })
   }
 
-  const status = state.payment?.status || 'none'
+  const rawStatus = state.payment?.status || 'none'
+  // Vendor sees 'collected' (EFT interim) as PAID on their printable invoice.
+  const status = rawStatus === 'collected' ? 'paid' : rawStatus
   const amount = state.payment?.amount ?? pricing.total
   const reference = state.payment?.reference || paymentReference(app.id as string)
   const providerRef = state.payment?.provider_ref || ''
-  const paidAt = state.payment?.paid_at
-    ? new Date(state.payment.paid_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
+  const paidStamp = state.payment?.paid_at || state.payment?.eft_collected_at
+  const paidAt = paidStamp
+    ? new Date(paidStamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
     : undefined
 
   const pdf = await renderInvoicePdf({
@@ -59,7 +62,10 @@ export async function GET() {
     reference,
     providerRef,
     paidAt,
-    method: state.payment?.method,
+    // Vendor-facing invoice is methodless: acknowledge payment, never name the
+    // method (Yoco/EFT is internal reconciliation detail). Admin PDF callers still
+    // pass method. (Taona 2026-07-25.)
+    method: undefined,
     preferredBoothTier: (app.preferred_booth_tier as string) || '',
     specialRequirements: app.special_requirements,
   })

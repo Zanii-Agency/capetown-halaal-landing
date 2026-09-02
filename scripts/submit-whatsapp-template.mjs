@@ -37,6 +37,18 @@ const body = m[1].trim()
 const VAR_SAMPLES = {
   vendor_application_approved: ['Samreen', 'Samreen Test Stall', '1 September 2026'],
   vendor_payment_confirmation: ['Samreen', 'R6 500', 'MARQUEE Full Space 3x3m'],
+  // Paid-cohort message suite: {{1}} = first name, {{2}} = the operator's message.
+  paid_vendor_update: ['Samreen', 'Setup opens Thursday 10 December from 09:00. Please bring your vehicle pass and stall confirmation.'],
+  paid_vendor_action_required: ['Samreen', 'Upload your logo so you appear in the public listings.'],
+  paid_vendor_question: ['Samreen', 'What time will your team arrive on setup day?'],
+  paid_vendor_setup_details: ['Samreen', 'Setup opens Thursday 10 December from 09:00 at Youngsfield Military Base.'],
+  paid_vendor_schedule_update: ['Samreen', 'Trading now starts at 10:00 on the Saturday, not 09:00.'],
+  paid_vendor_reminder: ['Samreen', 'Please confirm your final stall layout by 1 December.'],
+  paid_vendor_good_news: ['Samreen', 'Your stall is now live in the public vendor listings.'],
+  master_lane_update: ['Samreen', 'We have received your EFT, thank you.'],
+  payment_check: ['Samreen', 'Your stall fee of R3,500 is still outstanding.'],
+  payment_proof_request: ['Samreen', 'We do not yet see your payment on our side.'],
+  payment_arrangement_check: ['Samreen', 'Your agreed instalment was due on 15 November.'],
 }
 const examples = VAR_SAMPLES[NAME] || []
 

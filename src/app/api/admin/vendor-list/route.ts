@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, STALL_LIST } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 
 export const runtime = 'nodejs'
@@ -61,16 +62,18 @@ async function isAuthorized(req: NextRequest): Promise<boolean> {
   }
 }
 
-async function loadRows(): Promise<VendorRow[]> {
+async function loadRows(viewerEmail?: string | null): Promise<VendorRow[]> {
   const admin = createAdminClient()
   const { data: apps } = await admin
     .from('vendor_applications')
     .select('id, business_name, contact_name, email, phone, product_categories, paid_at, status, admin_notes')
     .eq('status', 'approved')
 
+  const restrict = !!viewerEmail && !isEftAdmin(viewerEmail)
   const rows: VendorRow[] = []
   for (const a of apps || []) {
     const notes = (a.admin_notes as string) || ''
+    if (restrict && !vendorInOwnerScope(notes, (a.paid_at as string | null) || null)) continue
     const { stall } = parseAllocation(notes)
     const portalState = parsePortalState(notes)
     const stallMeta = stall ? STALL_LIST.find((s) => s.code === stall) : null
@@ -244,8 +247,18 @@ export async function GET(request: NextRequest) {
   if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // Distinguish an admin session from cron-auth so the master admin still gets
+  // the full allocation list while the festival owner sees only her vendors.
+  let viewerEmail: string | null = null
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    viewerEmail = user?.email ?? null
+  } catch { /* cron auth has no session */ }
+
   const format = (new URL(request.url).searchParams.get('format') || 'csv').toLowerCase()
-  const rows = await loadRows()
+  const rows = await loadRows(viewerEmail)
   const stamp = new Date().toISOString().slice(0, 10)
 
   if (format === 'pdf') {

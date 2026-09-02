@@ -1,11 +1,16 @@
 import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
+import { after } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { getRole } from '@/lib/admin-rbac'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { pingVendorActivity } from '@/lib/vendor-activity-ping'
 import PortalNav from '@/components/exhibitor/PortalNav'
-import { parsePortalState } from '@/lib/portal-state'
+import { parsePortalState, hasPaid } from '@/lib/portal-state'
 import { WaOptInBanner } from '@/components/exhibitor/WaOptInBanner'
 import { LogoReminderBanner } from '@/components/exhibitor/LogoReminderBanner'
 import { hasUnreadAdminReply } from '@/components/exhibitor/InboxCard'
+import { ZaniiCredit } from '@/components/zanii-credit'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,29 +32,60 @@ export default async function PortalLayout({ children }: { children: React.React
   // layout-level redirect either silently fails or infinite-loops on /contract
   // itself. See KT #248.
 
+  // "Vendor is on the portal right now" ping for the master: an existing
+  // session never re-announces a login, so the first page load in a 12h window
+  // records + alerts instead. After the response, never blocks the page.
+  {
+    const h = await headers()
+    const snapshot = new Map<string, string>()
+    for (const k of ['x-forwarded-for', 'x-real-ip', 'x-vercel-ip-city', 'x-vercel-ip-country-region', 'x-vercel-ip-country', 'cf-ipcountry']) {
+      const v = h.get(k)
+      if (v) snapshot.set(k, v)
+    }
+    const shim = { get: (k: string) => snapshot.get(k) ?? null }
+    const app = ctx.application
+    after(() => pingVendorActivity(createAdminClient(), shim, app as never))
+  }
+
   const businessName = (ctx.application?.business_name as string) || ctx.email
   const state = parsePortalState((ctx.application?.admin_notes as string) || null)
   const showWaBanner = !state.wa?.opted_in_at
   // Persistent logo nudge: paid but no logo uploaded. Stays on every page until
   // the vendor uploads one (then state.profile.logo_path flips this false).
-  const needsLogo = state.payment?.status === 'paid' && !state.profile?.logo_path
+  const needsLogo = hasPaid(state) && !state.profile?.logo_path
   const contactName = (ctx.application?.contact_name as string) || ctx.email
   const firstName = (contactName || '').trim().split(/\s+/)[0] || ''
   const prefillPhone = (ctx.application?.phone as string) || ''
   const inboxUnread = await hasUnreadAdminReply({ vendorPhone: prefillPhone })
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col bg-[#F6F2E8] text-[#1B1A17]">
+    // Responsive app shell. DESKTOP (lg+): fixed-height shell with an inner
+    // scrolling <main>, for the dashboard feel. MOBILE: natural document scroll
+    // (min-h-[100dvh], no overflow-hidden) so the sticky nav scrolls away, the
+    // full viewport is used, and iOS's 100vh address-bar clipping + the nested
+    // scroll-hijack (both hurt vendors, most of whom are on phones) are avoided.
+    <div className="min-h-[100dvh] lg:h-screen lg:overflow-hidden flex flex-col bg-[#F6F2E8] text-[#1B1A17]">
       {/* Override PageShell min-h-screen inside the vendor portal so short
           pages don't force the main area to scroll. The layout constrains
           height; PageShell's 100vh minimum would exceed available space. */}
-      <style>{'main > div:first-child { min-height: fit-content !important; }'}</style>
+      {/* min-height override for short pages; plus a mobile-only 16px floor on
+          form controls so iOS Safari does not auto-zoom on focus (fires below
+          16px). Scoped to <=640px so desktop keeps its denser 14px inputs. */}
+      <style>{'main > div:first-child { min-height: fit-content !important; } @media (max-width:640px){ input:not([type=checkbox]):not([type=radio]), textarea, select { font-size: 16px !important; } }'}</style>
       <div className="flex-shrink-0">
         <PortalNav businessName={businessName} inboxUnread={inboxUnread} />
         {showWaBanner && <WaOptInBanner prefillPhone={prefillPhone} firstName={firstName} />}
         {needsLogo && <LogoReminderBanner firstName={firstName} />}
       </div>
-      <main className="flex-1 overflow-y-auto min-h-0 pb-8">{children}</main>
+      <main className="flex-1 pb-8 lg:overflow-y-auto lg:min-h-0">
+        {children}
+        {/* Attribution sits INSIDE the scrolling main, not under it: on desktop
+            this shell is a fixed-height app frame, so anything placed outside
+            <main> would be pinned to the viewport bottom like a status bar. */}
+        <div className="mt-10 border-t border-[#E5DCC4] pt-5 text-center">
+          <ZaniiCredit surface="portal" />
+        </div>
+      </main>
     </div>
   )
 }

@@ -17,6 +17,7 @@ import {
   APPROVED_NOTIFIED_RE,
 } from '@/lib/applications/decision-notify'
 import { notifyOwners } from '@/lib/bot/notify'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 // Cap synchronous vendor-facing sends per bulk call. Keeps us under the Resend
@@ -240,6 +241,12 @@ export async function POST(request: NextRequest) {
 
     const okCount = results.filter((r) => r.ok).length
 
+    await recordAdminAction({
+      actor: { email: actorEmail, role: gate.role },
+      action: 'bulk_action',
+      payload: { action, count: ids.length, ok: okCount, failed: results.length - okCount },
+    })
+
     // One owner digest for the batch (Taona + Samreen) instead of per-vendor.
     const notifiedNow = results.filter((r) => r.notified).length
     if (notifiedNow > 0) {
@@ -247,6 +254,8 @@ export async function POST(request: NextRequest) {
       await notifyOwners({
         event: 'application_approved',
         body: `Bulk ${action.replace('_', ' ')}: ${notifiedNow} vendor${notifiedNow === 1 ? '' : 's'} notified by email + WhatsApp${deferred ? ` (${deferred} deferred — run remediation)` : ''}.`,
+        // CARVE-OUT: no vendorId. A batch digest spans many vendors, so any one
+        // row would be wrong for the rest. Counts only, no vendor identity.
       }).catch((e) => console.error('[bulk] notifyOwners failed:', (e as Error).message))
     }
 

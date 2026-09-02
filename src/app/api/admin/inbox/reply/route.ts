@@ -106,6 +106,11 @@ export async function POST(req: Request) {
     error: { message: string } | null
   }
 
+  // No EFT lane gate here (2026-07-26). Replying to a vendor is ordinary support
+  // work, and both admins now see the alerts that prompt it — blocking the reply
+  // would leave the festival owner notified of a question she cannot answer.
+  // PAYMENT actions are a different matter and stay walled: see admin/chase.
+
   if (threadErr || !threadRows || threadRows.length === 0) {
     return NextResponse.json({ error: 'thread not found' }, { status: 404 })
   }

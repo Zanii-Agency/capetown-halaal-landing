@@ -231,3 +231,54 @@ body {
   --radius-md: 8px;
   --radius-lg: 12px;
 }
+
+/* ── Email bodies in the admin inbox ────────────────────────────────────────
+   Sanitised HTML from real mail (see lib/sanitize.ts sanitizeEmailHtml) lands
+   in `.email-body`. The sanitiser keeps LAYOUT and drops the sender's TYPE
+   choices; this block supplies ours. That pairing is what makes a hundred
+   different senders read as one inbox instead of a hundred designs.
+
+   Deliberately plain CSS, not @tailwindcss/typography: `prose` is tuned for
+   articles and fights email tables (it sets its own td/th borders and margins
+   we would then have to unset). The old inbox carried `prose prose-sm` classes
+   with the plugin never installed — they were no-ops for months and nobody
+   noticed, which is the evidence they were carrying no weight. */
+@layer components {
+  .email-body { font-size: 14px; line-height: 1.6; color: #262626; overflow-wrap: anywhere; }
+  /* The line that fixes "wrongly formatted": neutralise every sender's Arial
+     13px, Times, and 32px headings so nothing shouts over our own chrome. */
+  .email-body * {
+    font-family: inherit !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+    max-width: 100% !important;
+  }
+  .email-body p { margin: 0 0 0.7em; }
+  .email-body a { color: #cd2653; text-decoration: underline; }
+  .email-body table { width: auto !important; max-width: 100%; border-collapse: collapse; }
+  .email-body td, .email-body th { padding: 0.25rem 0.5rem; vertical-align: top; }
+  .email-body blockquote {
+    border-left: 2px solid #e5e5e5; padding-left: 0.75rem;
+    color: #737373; margin: 0.5em 0;
+  }
+  .email-body ul { list-style: disc; padding-left: 1.25rem; }
+  .email-body ol { list-style: decimal; padding-left: 1.25rem; }
+  .email-body h1, .email-body h2, .email-body h3,
+  .email-body h4, .email-body h5, .email-body h6 { font-weight: 600; margin: 1em 0 0.4em; }
+  .email-body pre { white-space: pre-wrap; }
+  .email-body hr { border: 0; border-top: 1px solid #e5e5e5; margin: 1em 0; }
+}
+
+/* WhatsApp chat wallpaper.
+   Our OWN doodle pattern, drawn here as an inline SVG — Meta's wallpaper asset
+   is theirs and is not copied. The point is the FEEL: a warm tiled backdrop so
+   the bubbles sit on something, instead of the flat beige panel that read as
+   unfinished. Tiles at 240px; the doodles are deliberately low-contrast so
+   message text stays the thing you actually see. */
+@layer components {
+  .wa-wallpaper {
+    background-color: #efeae2;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%23d9d2c7' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 30h26a4 4 0 0 1 4 4v14a4 4 0 0 1-4 4H32l-6 6v-6h-4a4 4 0 0 1-4-4V34a4 4 0 0 1 4-4z'/%3E%3Ccircle cx='168' cy='36' r='11'/%3E%3Cpath d='M168 29v7l5 3'/%3E%3Cpath d='M96 74l7 7 14-15'/%3E%3Cpath d='M188 96c0 7-6 12-13 12s-13-5-13-12 6-12 13-12 13 5 13 12z'/%3E%3Cpath d='M44 118h22M44 126h14'/%3E%3Cpath d='M112 150c-6 0-11 5-11 11v10h22v-10c0-6-5-11-11-11zM112 150v-6'/%3E%3Cpath d='M28 176l10 10 10-10'/%3E%3Cpath d='M196 154h-24a3 3 0 0 0-3 3v16a3 3 0 0 0 3 3h18l6 6v-6h0a3 3 0 0 0 3-3v-16a3 3 0 0 0-3-3z'/%3E%3Cpath d='M74 206h30M74 214h18'/%3E%3Ccircle cx='176' cy='210' r='9'/%3E%3Cpath d='M150 62l6 6 6-6'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: repeat;
+  }
+}

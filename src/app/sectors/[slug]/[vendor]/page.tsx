@@ -9,6 +9,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { vendorSlug } from '@/lib/slugify'
 import { parsePortalState, type VendorProfile } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
+import { isPublicVendor } from '@/lib/public-vendor'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +30,7 @@ async function fetchVendor(sectorSlug: string, vendorSlugParam: string) {
   const db = createAdminClient()
   const { data } = await db
     .from('vendor_applications')
-    .select('id, business_name, business_description, website, instagram, facebook, admin_notes')
+    .select('id, business_name, business_description, website, instagram, facebook, admin_notes, paid_at')
     .eq('status', 'approved')
     .contains('product_categories', [sector.name])
   type Row = {
@@ -40,8 +41,11 @@ async function fetchVendor(sectorSlug: string, vendorSlugParam: string) {
     instagram: string | null
     facebook: string | null
     admin_notes: string | null
+    paid_at: string | null
   }
-  const match = ((data || []) as Row[]).find((v) => vendorSlug(v.business_name) === vendorSlugParam)
+  const match = ((data || []) as Row[])
+    .filter((v) => isPublicVendor({ admin_notes: v.admin_notes, paid_at: v.paid_at }))
+    .find((v) => vendorSlug(v.business_name) === vendorSlugParam)
   if (!match) return null
   const portal = parsePortalState(match.admin_notes || '')
   const alloc = parseAllocation(match.admin_notes || '')

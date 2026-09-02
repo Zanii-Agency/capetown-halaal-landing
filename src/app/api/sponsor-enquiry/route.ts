@@ -103,6 +103,8 @@ export async function POST(request: NextRequest) {
         event: 'system_alert',
         body: `New sponsorship enquiry: ${validated.company} (${validated.email}) for ${validated.tier}.`,
         audience: 'all',
+        // CARVE-OUT: no vendorId. A sponsorship lead has no vendor_applications
+        // row and the EFT lane does not apply to sponsors.
       })
     } catch (notifyError) {
       console.error('[sponsor-enquiry] notify owner failed:', notifyError)

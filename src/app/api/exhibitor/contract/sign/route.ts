@@ -4,6 +4,7 @@ import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { CONTRACT_VERSION } from '@/lib/contract/copy'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -108,6 +109,14 @@ export async function POST(req: NextRequest) {
   // Best-effort audit event (winning call only). Canonical site_events shape:
   // { session_id, event_type, path, metadata }. contract_signed is in the
   // activity-feed union, so it surfaces in the admin feed + vendor Activity tab.
+  await recordVendorAction({
+    applicationId: app.id,
+    eventType: 'contract_signed',
+    actorEmail: ctx.email,
+    note: `mode: ${body.signatureMode}`,
+    afterValue: path,
+  })
+
   try {
     await admin.from('site_events').insert({
       session_id: `contract-${app.id}`,
@@ -136,6 +145,19 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `Contract signed: ${String(app.business_name || 'Vendor')}.`,
       audience: 'all',
+      // CARVE-OUT: deliberately NO vendorId (Taona 2026-07-26: "as long as Samreen
+      // gets notified when contracts get signed, new vendors sign up, yoco paid
+      // vendors ask questions then it's fine").
+      //
+      // The paygate sequence is Approved -> Sign Contract -> Pay, so a vendor is
+      // ALWAYS still unpaid when they sign. Under global EFT mode that puts nearly
+      // every signing vendor on the lane, and gating this alert blinded the
+      // festival owner to the entire contract stage of her own pipeline.
+      //
+      // Safe because the body carries no payment information: "Contract signed:
+      // <business>." says nothing about how they are paying. The lane hides
+      // PAYMENT POSTURE, not the existence of a vendor progressing through the
+      // funnel — same reasoning as the new-application carve-out.
     })
   } catch (e) {
     console.error('[contract-sign] notifyOwners failed:', (e as Error).message)

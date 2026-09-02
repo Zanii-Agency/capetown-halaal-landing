@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizePhone } from '@/lib/phone/normalize'
+import { laneScopeFor } from '@/lib/inbox-lane'
 import { getOrders, type WCOrder } from '@/lib/woocommerce'
 
 export const runtime = 'nodejs'
@@ -77,6 +78,7 @@ function ilikeEscape(s: string): string {
 }
 
 const UUID_FRAGMENT_RE = /^[0-9a-f]{8,}$/i
+const REFERENCE_RE = /^(?:YAH[-_])?([0-9a-f]{8,})$/i
 
 export async function GET(req: NextRequest) {
   try {
@@ -92,6 +94,8 @@ export async function GET(req: NextRequest) {
       .eq('id', user.id)
       .single()
     if (!adminUser) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+    const scope = await laneScopeFor(user.email)
 
     const q = (new URL(req.url).searchParams.get('q') ?? '').trim()
     if (q.length < 2) {
@@ -124,7 +128,7 @@ export async function GET(req: NextRequest) {
     const vendorsP = (async (): Promise<VendorHit[]> => {
       let qry = admin
         .from('vendor_applications')
-        .select('id, business_name, contact_name, phone, status, sector, created_at, admin_notes')
+        .select('id, business_name, contact_name, phone, email, status, sector, created_at, admin_notes')
 
       if (last9Str) {
         // Functional-index match: digits-only suffix.
@@ -146,6 +150,12 @@ export async function GET(req: NextRequest) {
         if (UUID_FRAGMENT_RE.test(safe)) {
           orParts.push(`id.ilike.${pattern}`)
         }
+        // Payment reference search: "YAH-ABCDEF12" or "ABCDEF12" → match the
+        // application id prefix that the reference is derived from.
+        const refMatch = q.match(REFERENCE_RE)
+        if (refMatch) {
+          orParts.push(`id.ilike.${refMatch[1]}%`)
+        }
         qry = qry.or(orParts.join(','))
       }
 
@@ -164,15 +174,18 @@ export async function GET(req: NextRequest) {
         business_name: string | null
         contact_name: string | null
         phone: string | null
+        email: string | null
         status: string | null
         sector: string | null
         admin_notes: string | null
       }>
 
-      // Approved-first sort.
+      // Approved-first sort, then lane-scope so EFT-lane vendors don't surface.
       const approved = rows.filter((r) => r.status === 'approved')
       const others = rows.filter((r) => r.status !== 'approved')
-      const sorted = [...approved, ...others].slice(0, PER_GROUP)
+      const sorted = [...approved, ...others]
+        .filter((r) => !scope.blocks({ applicationId: r.id, email: r.email, phone: r.phone }))
+        .slice(0, PER_GROUP)
 
       return sorted.map((r) => ({
         id: r.id,
@@ -245,13 +258,19 @@ export async function GET(req: NextRequest) {
         console.error('[admin/search] wa_threads error:', error)
         return []
       }
-      return (data ?? []).map((r) => ({
-        id: r.id as string,
-        thread_key: r.thread_key as string,
-        channel: r.channel as 'wa' | 'mail',
-        last_inbound_at: (r.last_inbound_at as string | null) ?? null,
-        link: `/admin/customer-inbox`,
-      }))
+      return (data ?? [])
+        .filter((r) => {
+          const channel = r.channel as 'wa' | 'mail'
+          const key = r.thread_key as string
+          return channel === 'wa' ? !scope.blocksPhone(key) : !scope.blocksEmail(key)
+        })
+        .map((r) => ({
+          id: r.id as string,
+          thread_key: r.thread_key as string,
+          channel: r.channel as 'wa' | 'mail',
+          last_inbound_at: (r.last_inbound_at as string | null) ?? null,
+          link: `/admin/inbox/whatsapp`,
+        }))
     })()
 
     // ------------------------------------------------------------------
@@ -276,16 +295,18 @@ export async function GET(req: NextRequest) {
         console.error('[admin/search] support_threads error:', error)
         return []
       }
-      return (data ?? []).map((r) => ({
-        id: r.id as string,
-        peer_email: (r.peer_email as string | null) ?? null,
-        peer_name: (r.peer_name as string | null) ?? null,
-        subject: (r.subject as string | null) ?? null,
-        last_inbound_at: (r.last_inbound_at as string | null) ?? null,
-        // Support inbox is a single SPA, no per-thread route. Land there
-        // with ?thread=<id> so the client can deep-link to the row.
-        link: `/admin/support-inbox?thread=${r.id}`,
-      }))
+      return (data ?? [])
+        .filter((r) => !scope.blocksEmail(r.peer_email as string | null))
+        .map((r) => ({
+          id: r.id as string,
+          peer_email: (r.peer_email as string | null) ?? null,
+          peer_name: (r.peer_name as string | null) ?? null,
+          subject: (r.subject as string | null) ?? null,
+          last_inbound_at: (r.last_inbound_at as string | null) ?? null,
+          // Support inbox is a single SPA, no per-thread route. Land there
+          // with ?thread=<id> so the client can deep-link to the row.
+          link: `/admin/inbox/support`,
+        }))
     })()
 
     const [vendors, buyers, wa_threads, support_threads] = await Promise.all([

@@ -5,5 +5,5 @@ import { redirect } from 'next/navigation'
 // unified inbox aggregates). Kept as a redirect so old links/bookmarks land
 // in the right place. The old BotInboxClient + APIs remain in the repo.
 export default function BotInboxRedirect() {
-  redirect('/admin/customer-inbox')
+  redirect('/admin/inbox/whatsapp')
 }

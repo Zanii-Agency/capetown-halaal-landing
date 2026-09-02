@@ -213,6 +213,9 @@ export async function POST(req: NextRequest) {
       event: 'system_alert',
       body: `WA opt-in: ${contactName} (${app.business_name}) subscribed at ${e164}.`,
       audience: 'all',
+      // Owner sees this only for a vendor SHE owns (paid via Yoco/cash/waived).
+      // Taona 2026-07-26: "never have access to unpaid vendors".
+      vendorId: applicationId,
     })
   } catch (e) {
     console.error('[wa-optin] notify owners failed:', (e as Error).message)

@@ -14,8 +14,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
+import { rosterPaid } from '@/lib/eft'
+import { parsePortalState } from '@/lib/portal-state'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
   const CSV_MAX_ROWS = 1000
   let q = db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, contract_signed_at')
+    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, paid_at, contract_signed_at, is_duplicate')
     .order('business_name', { ascending: true })
     .limit(CSV_MAX_ROWS)
   if (ids && ids.length) q = q.in('id', ids)
@@ -61,6 +62,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Could not read vendors: ${error.message}` }, { status: 500 })
   }
 
+  const rawRows = ((data || []) as Array<{
+    id: string
+    business_name: string | null
+    contact_name: string | null
+    email: string | null
+    phone: string | null
+    product_categories: string[] | null
+    business_description: string | null
+    status: string | null
+    admin_notes: string | null
+    paid_at: string | null
+    contract_signed_at: string | null
+    is_duplicate: boolean | null
+  }>)
+
+  // NO row-scoping. The lane hides payment POSTURE, not the pipeline: every
+  // vendor appears, and only payment_status is normalised — a master-lane vendor
+  // (EFT, manual_card, capture 'manual', collected) reads 'unpaid' until Yoco
+  // reconciles them (reconciledPaid). This route used to drop those rows via
+  // buildLaneScope (Taona 2026-08-10: "all vendors show, EFT shows as unpaid,
+  // they only show paid once yoco reconciled").
+  // Approved + participating only (Taona 2026-08-25): drop merged duplicates,
+  // rejected, and withdrawn (status 'rejected' + ⟦PORTAL⟧ withdrawn marker).
+  const rows = rawRows.filter(
+    (r) => !r.is_duplicate && r.status === 'approved' && !parsePortalState(r.admin_notes).withdrawn,
+  )
+
   // H5: audit log every export so we can trace PII flows. We anchor the
   // event on the first exported vendor's application_id (the audit table FK
   // requires a non-null application_id), and stash the full id list +
@@ -68,7 +96,7 @@ export async function GET(req: NextRequest) {
   // operator-facing audit UI reads vendor_application_events only.
   try {
     const actorEmail = ((adminUser as { email?: string | null }).email) ?? user.email ?? null
-    const rowIds = ((data as Array<{ id: string }> | null) || []).map((r) => r.id).slice(0, CSV_MAX_ROWS)
+    const rowIds = rows.map((r) => r.id).slice(0, CSV_MAX_ROWS)
     if (rowIds.length > 0) {
       await db.from('vendor_application_events').insert({
         application_id: rowIds[0],
@@ -94,21 +122,10 @@ export async function GET(req: NextRequest) {
     'status', 'stall_code', 'payment_status', 'contract_signed_at',
   ]
   const lines: string[] = [headers.join(',')]
-  for (const row of (data || []) as Array<{
-    business_name: string | null
-    contact_name: string | null
-    email: string | null
-    phone: string | null
-    product_categories: string[] | null
-    business_description: string | null
-    status: string | null
-    admin_notes: string | null
-    contract_signed_at: string | null
-  }>) {
-    const portal = parsePortalState(row.admin_notes || '')
+  for (const row of rows) {
     const { stall } = parseAllocation(row.admin_notes || '')
     const sector = row.product_categories?.[0] || ''
-    const paymentStatus = portal.payment?.status || 'none'
+    const paymentStatus = rosterPaid(row.admin_notes, row.paid_at) ? 'paid' : 'unpaid'
     lines.push([
       escapeCsv(row.business_name),
       escapeCsv(row.contact_name),

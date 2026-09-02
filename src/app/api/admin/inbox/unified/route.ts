@@ -13,6 +13,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { withoutMerged } from '@/lib/merge'
+import { vendorCommsInEftLane, isEftAdmin, getEftMode, revealsPaymentArrangement, isOperatorPreviewAddress } from '@/lib/eft'
+import { BOT_ADMINS } from '@/lib/bot/admins'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -40,6 +43,14 @@ interface Contact {
 }
 
 const norm = (p: string) => p.replace(/^\+/, '')
+// Canonical key for matching a WhatsApp thread's E.164 number to a vendor row.
+// vendor_applications.phone is stored in mixed formats (local "0760712578" vs
+// E.164 "+27760712578"), so stripping only "+" fails to match (0-prefix vs
+// 27-prefix). Match on the last 9 digits (the ZA subscriber number), the same
+// canonical used by isInternalAccount and the webhook. Without this, an unpaid/
+// collected vendor's thread fails to resolve to their application, is never
+// EFT-classified, and LEAKS onto the festival owner's main inbox (Taona 2026-07-25).
+const phoneKey = (p: string) => (p || '').replace(/\D/g, '').slice(-9)
 
 // Marketing / automated / newsletter senders that should NEVER count as "a human
 // is waiting" (they filled the Needs You queue with Smart Points travel deals,
@@ -93,17 +104,52 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const channelFilter = (url.searchParams.get('channel') || 'all') as 'all' | 'whatsapp' | 'email'
   const q = (url.searchParams.get('q') || '').trim().toLowerCase()
+  // TEMPORARY EFT lane: only vendors ACTIVELY handled for EFT (individually added,
+  // or who uploaded a proof) are pulled OUT of the main inbox onto the dev /admin/eft
+  // tab. INDEPENDENT of global mode: turning global on shows all unpaid vendors the
+  // EFT bank details but does NOT move their conversations off the main inbox.
+  const eftOnly = url.searchParams.get('eftOnly') === '1'
+  // The EFT tab feed (eftOnly=1) is DEV-ONLY. A non-EFT admin (e.g. Samreen) must
+  // never retrieve the EFT cohort's conversations, even by crafting this request
+  // directly. The main inbox (no eftOnly) already excludes them from every other
+  // admin's list; this seals the direct-API path too.
+  if (eftOnly && !isEftAdmin(user.email)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   // ---- Resolution maps: phone -> vendor, email -> vendor ----
-  const { data: apps } = await db
+  const { data: appRows } = await db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, phone, email')
+    .select('id, business_name, contact_name, phone, email, admin_notes, paid_at')
     .limit(2000)
+  // Merged duplicates must not build resolution entries: a subordinate row can
+  // otherwise win the byEmail/byPhone map and point a whole conversation at the
+  // wrong application (the rejected twin rather than the approved, paid one).
+  const apps = withoutMerged(appRows as Array<{ admin_notes?: string | null }>) as typeof appRows
   const byPhone = new Map<string, { id: string; business_name: string | null; contact_name: string | null; email: string | null }>()
   const byEmail = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
-  for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null }>) {
-    if (a.phone) byPhone.set(norm(a.phone), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
+  const byId = new Map<string, { id: string; business_name: string | null; contact_name: string | null; phone: string | null }>()
+  const eftAppIds = new Set<string>()
+  // Which vendors leave the festival owner's inbox. Gated on vendorCommsInEftLane,
+  // which ALSO holds a PRESENTED-but-not-reconciled vendor (see eft.ts), so a
+  // presented thread stays on the master lane here exactly as it does on the
+  // channel-native inbox (buildLaneScope) and the owner alerts
+  // (vendorCommsInOwnerScope): all three comms surfaces agree on the presented hold.
+  //
+  // NOTE, corrected 2026-07-25: an earlier comment here claimed global mode "does
+  // NOT sweep ordinary unpaid vendors". That was never what the code did —
+  // vendorCommsInEftLane returns `hasEftMarker || eft_submitted_at || globalOn`,
+  // so while global mode is ON every unpaid, non-excluded vendor IS on the lane
+  // (69 of 121 approved vendors at the time of writing). ⟦NOEFT⟧, internal
+  // accounts and any vendor with paid_at set are the exclusions. Do not "fix" the
+  // code to match the old comment; the sweep is intended and self-reverts when
+  // global mode goes off.
+  const globalOn = await getEftMode()
+  for (const a of (apps || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; phone: string | null; email: string | null; admin_notes: string | null; paid_at: string | null }>) {
+    if (phoneKey(a.phone || '')) byPhone.set(phoneKey(a.phone || ''), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, email: a.email })
     if (a.email) byEmail.set(a.email.toLowerCase(), { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
+    byId.set(a.id, { id: a.id, business_name: a.business_name, contact_name: a.contact_name, phone: a.phone })
+    if (vendorCommsInEftLane(a.admin_notes, a.paid_at, globalOn, { email: a.email, phone: a.phone })) eftAppIds.add(a.id)
   }
 
   // ---- Conversation state from vendor_tickets (status/star/assignee/unread) ----
@@ -253,7 +299,7 @@ export async function GET(req: NextRequest) {
         const stripped = raw.replace(/^\s*\[[a-z0-9_]+\]\s*/, '')
         const mediaLabel = mediaPreviewLabel(m.metadata?.media?.kind)
         const body = (stripped || mediaLabel || '[no text]')
-        const vendor = byPhone.get(phone)
+        const vendor = byPhone.get(phoneKey(m.wa_phone || ''))
         const appId = vendor?.id || null
         const st = appId ? tByApp.get(appId) : undefined
         const isFirst = !seenPhone.has(phone)
@@ -297,17 +343,32 @@ export async function GET(req: NextRequest) {
   // channels apart, so all THREE client channels (WhatsApp / YAH email / Gmail)
   // are visible in the queue. One query; latest wins because we scan DESC.
   const mailboxByPeer = new Map<string, 'gmail' | 'youngatheart'>()
+  const lastMsgByThread = new Map<string, { direction: 'in' | 'out'; at: string; preview: string }>()
   {
+    // One pass, two maps. Ordered by created_at (ROW INSERT) descending, not
+    // received_at: received_at is the sender's own Date header, which is skewed
+    // often enough that "latest" by that column is not actually the latest thing
+    // we learned about. First row seen per key is therefore the newest.
     const { data: msgs } = await db
       .from('support_inbox_messages')
-      .select('from_address, mailbox, received_at')
-      .eq('direction', 'in')
-      .order('received_at', { ascending: false })
+      .select('thread_id, from_address, mailbox, direction, body_text, subject, received_at, created_at')
+      .order('created_at', { ascending: false })
       .limit(4000)
-    for (const m of (msgs || []) as Array<{ from_address: string | null; mailbox: string | null; received_at: string }>) {
+    for (const m of (msgs || []) as Array<{ thread_id: string | null; from_address: string | null; mailbox: string | null; direction: string | null; body_text: string | null; subject: string | null; received_at: string | null; created_at: string }>) {
       const from = (m.from_address || '').toLowerCase().trim()
-      if (!from || mailboxByPeer.has(from)) continue
-      mailboxByPeer.set(from, m.mailbox === 'gmail' ? 'gmail' : 'youngatheart')
+      if (from && m.direction === 'in' && !mailboxByPeer.has(from)) {
+        mailboxByPeer.set(from, m.mailbox === 'gmail' ? 'gmail' : 'youngatheart')
+      }
+      // The REAL last message per thread — direction and arrival time both come
+      // from a message row, never from thread bookkeeping columns. See the two
+      // bugs this closes at the call site below.
+      if (m.thread_id && !lastMsgByThread.has(m.thread_id)) {
+        lastMsgByThread.set(m.thread_id, {
+          direction: m.direction === 'in' ? 'in' : 'out',
+          at: m.created_at,
+          preview: (m.body_text || m.subject || '').trim(),
+        })
+      }
     }
   }
 
@@ -316,16 +377,38 @@ export async function GET(req: NextRequest) {
   {
     const { data: threads } = await db
       .from('support_inbox_threads')
-      .select('peer_email, peer_name, subject, status, tag, assignee_id, last_handled_at, last_inbound_at, unread_count, created_at')
-      .order('last_handled_at', { ascending: false, nullsFirst: false })
+      .select('id, peer_email, peer_name, subject, status, tag, assignee_id, last_handled_at, last_inbound_at, unread_count, created_at, vendor_application_id')
+      // Ordered by last_inbound_at, not last_handled_at: this only decides WHICH
+      // 1500 rows we fetch, and a thread waiting on us matters more than one we
+      // already answered. The list's real order is the code-side sort on
+      // last_message_at further down, which now uses a real message timestamp.
+      .order('last_inbound_at', { ascending: false, nullsFirst: false })
       .limit(1500)
-    for (const t of (threads || []) as Array<{ peer_email: string; peer_name: string | null; subject: string | null; status: string | null; tag: string | null; assignee_id: string | null; last_handled_at: string | null; last_inbound_at: string | null; unread_count: number | null; created_at: string }>) {
+    for (const t of (threads || []) as Array<{ id: string; peer_email: string; peer_name: string | null; subject: string | null; status: string | null; tag: string | null; assignee_id: string | null; last_handled_at: string | null; last_inbound_at: string | null; unread_count: number | null; created_at: string; vendor_application_id: string | null }>) {
       const email = (t.peer_email || '').toLowerCase()
       if (!email) continue
-      const vendor = byEmail.get(email)
+      // Resolve the vendor by the sender's registered email OR, when that misses
+      // (the vendor wrote from a secondary address), by the thread's linked
+      // vendor_application_id. This lets a vendor emailing from an unknown address
+      // still be recognised and, in global EFT mode, swept off this inbox.
+      const vendor = byEmail.get(email) || (t.vendor_application_id ? byId.get(t.vendor_application_id) : null)
       const appId = vendor?.id || null
       const st = appId ? tByApp.get(appId) : tByEmail.get(email)
-      const at = t.last_handled_at || t.last_inbound_at || t.created_at
+      // FIXED 2026-07-26. This was `t.last_handled_at || t.last_inbound_at ||
+      // t.created_at` — thread BOOKKEEPING columns, not message times, and it
+      // produced two of the operator's three "out of sync" symptoms:
+      //   · last_handled_at is when WE last touched the thread, and the mail
+      //     fetchers never clear it. So a vendor's reply to any thread we had
+      //     ever answered could not move the row up the list, and the row kept
+      //     showing our own reply time. The message was in the DB and visible
+      //     inside the thread while the list said nothing had happened.
+      //   · support-mirror.ts sets last_handled_at on every outbound
+      //     transactional email, so a reminder blast shuffled unrelated vendors
+      //     to the top of the inbox with no new conversation.
+      // The real last message wins; the bookkeeping columns are only a fallback
+      // for threads whose messages fell outside the 4000-row scan above.
+      const lastMsg = lastMsgByThread.get(t.id)
+      const at = lastMsg?.at || t.last_inbound_at || t.last_handled_at || t.created_at
       touch(
         {
           email,
@@ -340,9 +423,21 @@ export async function GET(req: NextRequest) {
           assignee_id: st?.assignee || t.assignee_id || null,
         },
         at,
-        t.subject || '[email]',
-        // threads don't carry per-message direction here; treat unread_count as the signal
-        (t.unread_count || 0) > 0 ? 'in' : 'out',
+        lastMsg?.preview?.slice(0, 120) || t.subject || '[email]',
+        // FIXED 2026-07-26 — this was a WORK-LOSS bug, not a cosmetic one. It read
+        // `(t.unread_count || 0) > 0 ? 'in' : 'out'`, i.e. for email, direction WAS
+        // read-state. Opening a thread zeroes unread_count (status/route.ts), which
+        // flipped last_direction to 'out', which made needs_response false — so
+        // merely OPENING an email marked it answered and evicted it from Needs You
+        // with the customer still waiting. NeedsYouClient auto-selects the top item,
+        // so landing on the queue did this to the first email every time.
+        //
+        // It also contradicted this route's own stated invariant further down:
+        // "Keyed on last_direction === 'in', NOT read state — so merely OPENING a
+        // conversation does not clear it". True for WhatsApp, false for email.
+        //
+        // Now the direction comes from the real latest message row, like WhatsApp.
+        lastMsg?.direction || ((t.unread_count || 0) > 0 ? 'in' : 'out'),
         'email',
       )
     }
@@ -428,18 +523,49 @@ export async function GET(req: NextRequest) {
   })
   list.sort((a, b) => +new Date(b.last_message_at || 0) - +new Date(a.last_message_at || 0))
 
-  // Counts are ALWAYS computed from the full cross-channel list (never the
-  // channel-filtered display list below), so the tab badges stay true no
-  // matter which tab is currently selected.
+  // TEMPORARY EFT lane partition. A contact is EFT iff it resolves to a vendor in
+  // the lane; non-vendor ticket buyers are never EFT and always stay on the main
+  // inbox. eftOnly=1 keeps ONLY EFT contacts (the /admin/eft feed); the main inbox
+  // drops them. Counts derive from the SAME partition so the tab badges stay true.
+  // Drop the MASTER line (Taona) from every inbox: its bot thread carries the
+  // master-brain's cross-vendor replies (names, phones, amounts), so leaving it
+  // visible would let another operator open it and read cross-vendor PII out of
+  // the transcript (the residue leak past the tool wall). We exclude ONLY the
+  // master, NOT the festival owner: a real vendor (GLOBAL CUISINE) shares the
+  // owner's exact number, so blanket-excluding operator lines would wrongly hide
+  // that vendor's thread. The owner seeing her own thread is not a leak; the
+  // master's cross-vendor thread reaching her is, and this seals exactly that.
+  const masterPhoneDigits = new Set(BOT_ADMINS.filter((a) => a.role === 'master').map((a) => norm(a.phone)))
+  const isMasterThread = (c: { phone: string | null }) => !!c.phone && masterPhoneDigits.has(norm(c.phone))
+  const visible = list.filter((c) => !isMasterThread(c))
+  // A contact is EFT (confined to the dev-only EFT feed, dropped from every other
+  // inbox) when it resolves to an EFT-lane vendor, OR it is the EFT admin's own
+  // address (dev@) whose thread carries the master-brain alert backstop with
+  // cross-vendor PII. Those alerts must live only on the EFT tab, never the general
+  // inbox where the festival owner could open them (Taona 2026-07-24).
+  const isEftContact = (c: { application_id: string | null; email: string | null }) =>
+    (!!c.application_id && eftAppIds.has(c.application_id)) || isEftAdmin(c.email) ||
+    isOperatorPreviewAddress(c.email) // operator preview threads (e.g. taonac96@) stay off the owner's inbox
+  // EFT-content guard: a non-EFT admin (Samreen) never sees a thread whose latest
+  // message mentions EFT, even if the contact carries no lane marker (Taona
+  // 2026-07-24: "any email or whatsapp that mentions eft must be auto excluded
+  // from samreen"). The durable per-vendor seal remains the ⟦EFT⟧ marker
+  // (eftAppIds, above); this is the display-layer net for the visible message.
+  const viewerIsEftAdmin = isEftAdmin(user.email)
+  const eftMention = (c: { last_preview: string | null }) => !viewerIsEftAdmin && revealsPaymentArrangement(c.last_preview)
+  const scoped = eftOnly
+    ? visible.filter(isEftContact)
+    : visible.filter((c) => !isEftContact(c) && !eftMention(c))
+
   const counts = {
-    all: list.length,
-    whatsapp: list.filter((c) => c.channels.includes('whatsapp')).length,
-    email: list.filter((c) => c.channels.includes('email')).length,
-    unread: list.filter((c) => c.unread).length,
-    needs_response: list.filter((c) => c.needs_response).length,
+    all: scoped.length,
+    whatsapp: scoped.filter((c) => c.channels.includes('whatsapp')).length,
+    email: scoped.filter((c) => c.channels.includes('email')).length,
+    unread: scoped.filter((c) => c.unread).length,
+    needs_response: scoped.filter((c) => c.needs_response).length,
   }
 
-  const displayList = channelFilter === 'all' ? list : list.filter((c) => c.channels.includes(channelFilter))
+  const displayList = channelFilter === 'all' ? scoped : scoped.filter((c) => c.channels.includes(channelFilter))
 
   return NextResponse.json({ contacts: displayList.slice(0, 500), counts })
 }

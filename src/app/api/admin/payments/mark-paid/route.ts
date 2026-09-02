@@ -9,6 +9,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { syncPortalState } from '@/lib/portal-state'
 import { assertRole } from '@/lib/admin-rbac'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,8 +23,9 @@ export async function POST(req: NextRequest) {
 
   // Role gate (B7). Marking a payment paid is a money-state mutation —
   // viewer must not be able to do this. Only owner/operator.
+  let actorRole: string | null = null
   try {
-    await assertRole(user.id, ['owner', 'operator'])
+    actorRole = await assertRole(user.id, ['owner', 'operator'])
   } catch {
     return NextResponse.json({ ok: false, error: 'insufficient_role' }, { status: 403 })
   }
@@ -67,6 +69,22 @@ export async function POST(req: NextRequest) {
   await syncPortalState(applicationId, db).catch((e) =>
     console.error('[mark-paid] syncPortalState failed:', (e as Error).message)
   )
+
+  // Zanii Proof: per-admin receipt of the manual payment confirmation. Distinct
+  // from the automated cth.pay.confirmed receipt (confirmPayment) — this one
+  // attributes the DECISION to the human who marked it paid.
+  await recordAdminAction({
+    actor: { email: user.email, role: actorRole },
+    action: 'mark_paid',
+    applicationId,
+    payload: {
+      method,
+      amount: result.amount ?? amount ?? null,
+      providerRef: providerRef || null,
+      alreadyPaid: result.alreadyPaid ?? false,
+      reason: reason || null,
+    },
+  })
 
   return NextResponse.json({ ok: true, alreadyPaid: result.alreadyPaid, amount: result.amount })
 }

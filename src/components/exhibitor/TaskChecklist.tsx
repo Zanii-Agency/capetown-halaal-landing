@@ -83,7 +83,7 @@ export async function loadTasks(): Promise<{ tasks: TaskRow[]; firstName: string
         ? 'Received, thank you.'
         : paymentPartial
         ? 'Awaiting clearance, we will confirm once the bank posts it.'
-        : 'Pay by card via Yoco, or request EFT details from support.',
+        : 'Pay securely by card via Yoco.',
       href: '/exhibitor/portal/payments',
       status: paymentDone ? 'done' : paymentPartial ? 'in-progress' : 'todo',
     },

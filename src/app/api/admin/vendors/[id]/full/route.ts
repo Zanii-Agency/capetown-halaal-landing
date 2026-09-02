@@ -3,6 +3,9 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
+import { viewerSafePayment } from '@/lib/eft'
+import { hiddenFromOwner } from '@/lib/audit-scope'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -37,6 +40,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .eq('id', id)
     .single()
   if (!app) return NextResponse.json({ error: 'not found' }, { status: 404 })
+
+  // EFT lane: returns the full vendor row plus every WhatsApp and email body, keyed
+  // by a path param anyone can type. The richest single payload of the lot.
+  // TWO layers (2026-07-26): vendor, then content. This returns the FULL vendor
+  // row including payment state, so the vendor gate matters most here.
+  // NO whole-page vendor gate. Like the profile page, the owner reaches every
+  // vendor; payment POSTURE is masked field-by-field (viewerSafePayment on the
+  // returned portal, stripEftMessages on comms, hiddenFromOwner on events).
+  const scope = await laneScopeFor(user.email)
+  const hide = hidesEftContent(user.email)
 
   const a = app as Record<string, unknown>
   const phoneRaw = ((a.phone as string) || '').trim()
@@ -112,6 +125,31 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   communications.sort((a, b) => +new Date(b.at) - +new Date(a.at))
+  const visibleComms = stripEftMessages(communications, (m) => m.body, hide, {
+    scope,
+    identity: { phone: phoneRaw, email: emailRaw },
+    at: (m) => m.at,
+  })
+
+  // The raw admin_notes string carries lane markers and internal state tokens.
+  // The client already receives portal + stall; strip the internal string.
+  const { admin_notes: _adminNotes, ...vendorSafe } = a as Record<string, unknown>
+
+  const auditRows = ((eventsRes.data || []) as Array<{
+    id: string
+    event_type: string
+    note: string | null
+    before_value?: unknown
+    after_value?: unknown
+    actor_email?: string | null
+    actor_role?: string | null
+    created_at: string
+  }>).filter((e) => !hiddenFromOwner({
+    event_type: e.event_type,
+    note: e.note,
+    before_value: e.before_value,
+    after_value: e.after_value,
+  }, true))
 
   const approvedAt = a.approved_at as string | null | undefined
   const daysSinceApproval = approvedAt
@@ -126,11 +164,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   return NextResponse.json({
-    vendor: a,
+    vendor: vendorSafe,
     stall,
-    portal,
-    communications,
-    events: (eventsRes.data || []),
+    portal: { ...portal, payment: viewerSafePayment(portal.payment, a.admin_notes as string | null, a.paid_at as string | null, user.email) },
+    communications: visibleComms,
+    events: auditRows,
     stats,
   })
 }

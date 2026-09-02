@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState, updatePortalState } from '@/lib/portal-state'
+import { parsePortalState, updatePortalState, hasPaid } from '@/lib/portal-state'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 
@@ -36,7 +36,9 @@ export async function GET(req: NextRequest) {
   const results: Array<Record<string, unknown>> = []
   for (const app of apps || []) {
     const state = parsePortalState(app.admin_notes as string)
-    if (state.payment?.status !== 'paid') continue
+    // hasPaid covers 'collected': an EFT-collected vendor has paid and must get
+    // their load-in/setup reminder like everyone else.
+    if (!hasPaid(state)) continue
     const alreadySent = (state as unknown as { setup_reminder_sent_at?: string }).setup_reminder_sent_at
     if (alreadySent) continue
     if (!app.phone) continue

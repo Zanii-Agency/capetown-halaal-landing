@@ -16,12 +16,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parsePortalState } from '@/lib/portal-state'
+import { rosterPaymentStatus } from '@/lib/eft'
 import { tierLabel } from '@/lib/stalls'
 import {
   OUTSIDE_ZONES, zoneForTier, parseZoneAssignment, withZoneAssignment,
   withZoneCheckIn, isOutsideZone, type OutsideZoneKey,
 } from '@/lib/zones'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 import { z } from 'zod'
 
 export const runtime = 'nodejs'
@@ -67,10 +68,10 @@ interface OutsideVendorRow {
 
 // Pull every outside-tier vendor once, return rows + a code->occupant map keyed
 // by `${zone}:${slot}` so the slot over-confirm guard is a single lookup.
-async function loadRoster(admin: ReturnType<typeof createAdminClient>) {
+async function loadRoster(admin: ReturnType<typeof createAdminClient>, viewerEmail?: string | null) {
   const { data: apps } = await admin
     .from('vendor_applications')
-    .select('id, business_name, contact_name, phone, email, preferred_booth_tier, status, admin_notes')
+    .select('id, business_name, contact_name, phone, email, preferred_booth_tier, status, admin_notes, paid_at')
 
   const vendors: OutsideVendorRow[] = []
   const bySlot = new Map<string, OutsideVendorRow>() // `${zone}:${slot}` -> vendor
@@ -83,8 +84,7 @@ async function loadRoster(admin: ReturnType<typeof createAdminClient>) {
     if (!['approved', 'pending', 'info_requested'].includes((a.status as string) || '')) continue
 
     const za = parseZoneAssignment(a.admin_notes as string)
-    const portal = parsePortalState(a.admin_notes as string)
-    const paymentStatus = (portal.payment?.status || 'none') as string
+    const paymentStatus = rosterPaymentStatus(a.admin_notes as string, a.paid_at as string | null, viewerEmail)
     const paid = paymentStatus === 'paid' || paymentStatus === 'waived'
     const status = (a.status as string) || ''
     const committed = status === 'approved' // fills a spot; pending/info_requested wait
@@ -117,7 +117,7 @@ export async function GET() {
     const auth = await requireOperator()
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
-    const { vendors } = await loadRoster(auth.admin)
+    const { vendors } = await loadRoster(auth.admin, auth.adminUser.email || auth.userEmail)
 
     const zones = OUTSIDE_ZONES.map((z) => {
       const zoneVendors = vendors
@@ -220,6 +220,13 @@ export async function POST(req: NextRequest) {
         console.error('[admin/outside] checkin audit failed:', (e as Error).message)
       }
 
+      await recordAdminAction({
+        actor: { email: auth.adminUser.email || auth.userEmail, role: auth.adminUser.role ?? null },
+        action: 'toggle_outside',
+        vendorId: body.applicationId,
+        payload: { on: body.checkedIn, zone: vendorZone },
+      })
+
       return NextResponse.json({
         ok: true,
         applicationId: body.applicationId,
@@ -278,6 +285,13 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error('[admin/outside] assign audit failed:', (e as Error).message)
     }
+
+    await recordAdminAction({
+      actor: { email: auth.adminUser.email || auth.userEmail, role: auth.adminUser.role ?? null },
+      action: 'assign_slot',
+      vendorId: body.applicationId,
+      payload: { zone: body.zone, slot: body.slot },
+    })
 
     return NextResponse.json({
       ok: true,

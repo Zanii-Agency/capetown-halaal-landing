@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,6 +58,13 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
     phone = (b?.phone as string | null) || null
   }
 
+  // EFT lane: the ticket id resolves to a phone/email, so checking after
+  // resolution covers both shapes regardless of which one the ticket carried.
+  // TWO layers (2026-07-26): vendor, then content.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocks({ phone, email })) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const hide = hidesEftContent(user.email)
+
   const comms: CommItem[] = []
 
   // ---- WhatsApp (by phone, both +27… and 27… forms) ----
@@ -65,7 +73,7 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
     const { data: msgs } = await admin
       .from('wa_messages')
       .select('id, direction, body, created_at, wa_phone, template_name')
-      .or(`wa_phone.eq.${phone},wa_phone.eq.${noPlus}`)
+      .in('wa_phone', [phone, noPlus])
       .order('created_at', { ascending: true })
       .limit(300)
 
@@ -75,8 +83,8 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
     }>) {
       const body = m.body || (m.template_name ? `[template: ${m.template_name}]` : '')
       if (!body) continue
-      // Skip internal handover markers ([HUMAN_HANDOVER_*]) — not chat content.
-      if (/^\[[A-Z_]+\]/.test(body)) continue
+      // Skip internal markers ([HUMAN_HANDOVER_*], [PENDING_ACTION:...]) — not chat content.
+      if (/^\s*\[[A-Z_]+[:\]]/.test(body) || /HUMAN_HANDOVER/.test(body) || /^\s*🛎/u.test(body)) continue
       comms.push({
         id: `wa:${m.id}`,
         channel: 'whatsapp',
@@ -128,5 +136,9 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
   // Oldest first so the conversation reads top-to-bottom (newest at the bottom).
   comms.sort((a, b) => +new Date(a.at) - +new Date(b.at))
 
-  return NextResponse.json({ messages: comms })
+  return NextResponse.json({ messages: stripEftMessages(comms, (m) => m.body, hide, {
+    scope,
+    identity: { phone, email },
+    at: (m) => m.at,
+  }) })
 }

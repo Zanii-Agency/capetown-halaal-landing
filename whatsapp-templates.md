@@ -132,3 +132,10 @@ Your stall is only secured once payment is received in full. Please reply here i
 | `TICKET` | Look up order by phone, re-send QR |
 | `STOP` | Set `whatsapp_opt_out`, confirm unsubscribe |
 | anything else | AI concierge answers (parking, schedule, accommodation, directions) |
+
+---
+
+## `admin_alert` (UTILITY, en) — internal, admins only
+**Body:** "Hi {{1}}, an item on the Young at Heart Festival admin desk needs your attention:\n\n{{2}}\n\nOpen the admin inbox to action it."
+**Variables:** 1=admin first name, 2=the alert, flattened to one line (`flattenForTemplate`, max 1000 chars).
+**Sent by:** `sendToAdmin` in `src/lib/bot/notify.ts` whenever an admin's 24h service window is shut: owner/master alerts (`notifyOwners`), the email-concierge bubbles, and the master mirror. Replaces `festival_announcement` (MARKETING) on that path: Meta's per-user marketing cap (error 131049) rejected ~100% of master alerts in Aug 2026. Created 2026-09-02, Meta id 1596202538520810.

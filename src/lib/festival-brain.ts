@@ -17,7 +17,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import { classifyIntent, intentFaqKeys, Intent, IntentResult } from './festival-brain/intents'
+import { classifyIntent, intentFaqKeys, IntentResult } from './festival-brain/intents'
 import { matchFaq, buildGroundingContext, FaqEntry, FAQ, FaqKey } from './festival-brain/faq'
 import {
   buildSystemPrompt,

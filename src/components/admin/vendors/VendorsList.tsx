@@ -29,9 +29,10 @@ export interface VendorRow {
   contract_signed_at: string | null
   blockers: string[]
   created_at: string
+  withdrawn?: boolean
 }
 
-type Filter = 'all' | 'has_blockers' | 'ready' | 'unallocated'
+type Filter = 'all' | 'has_blockers' | 'ready' | 'unallocated' | 'withdrawn'
 
 const PAYMENT_PILL: Record<string, string> = {
   paid: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -120,6 +121,7 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
       if (filter === 'has_blockers' && r.blockers.length === 0) return false
       if (filter === 'ready' && r.blockers.length > 0) return false
       if (filter === 'unallocated' && r.stall) return false
+      if (filter === 'withdrawn' && !r.withdrawn) return false
       if (!q) return true
       const hay = `${r.business_name} ${r.contact_name || ''} ${r.email || ''} ${r.phone || ''}`.toLowerCase()
       return hay.includes(q)
@@ -131,6 +133,7 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
     has_blockers: rows.filter((r) => r.blockers.length > 0).length,
     ready: rows.filter((r) => r.blockers.length === 0).length,
     unallocated: rows.filter((r) => !r.stall).length,
+    withdrawn: rows.filter((r) => r.withdrawn).length,
   }), [rows])
 
   return (
@@ -140,7 +143,9 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
           <p className="text-xs font-semibold text-[#cd2653] uppercase tracking-[0.2em]">VENDORS</p>
           <h1 className="text-2xl font-bold text-neutral-900">Approved vendors</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {rows.length} approved, {filtered.length} shown.
+            {rows.filter((r) => !r.withdrawn).length} approved
+            {rows.some((r) => r.withdrawn) ? ` · ${rows.filter((r) => r.withdrawn).length} withdrawn` : ''}
+            , {filtered.length} shown.
           </p>
         </div>
         <div className="relative w-72">
@@ -217,6 +222,7 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
           { k: 'has_blockers', label: 'Has blockers' },
           { k: 'ready', label: 'Ready' },
           { k: 'unallocated', label: 'No stall yet' },
+          { k: 'withdrawn', label: 'Withdrawn' },
         ] as const).map((opt) => (
           <button
             key={opt.k}
@@ -410,10 +416,15 @@ export function VendorsList({ rows }: { rows: VendorRow[] }) {
 }
 
 const PIPELINE_STAGES = [
-  { key: 'approved', label: 'Approved', filter: (r: VendorRow) => !r.contract_signed_at },
-  { key: 'contract', label: 'Contract', filter: (r: VendorRow) => r.contract_signed_at && r.payment_status !== 'paid' && r.payment_status !== 'deferred' },
-  { key: 'paid', label: 'Paid', filter: (r: VendorRow) => r.payment_status === 'paid' || r.payment_status === 'deferred' },
-  { key: 'ready', label: 'Show-ready', filter: (r: VendorRow) => r.payment_status === 'paid' && r.docs_complete_at },
+  // The funnel. Withdrawn vendors never enter it, and "signed" uses the same
+  // field as the table's CONTRACT column (contract_signed_at OR pdf on file) so
+  // a signed vendor cannot land in the unsigned column. The first stage is
+  // labelled for what it holds: approved vendors awaiting a contract, so its
+  // count never reads as contradicting the page header's approved total.
+  { key: 'awaiting_contract', label: 'Awaiting contract', filter: (r: VendorRow) => !r.withdrawn && !r.contract_signed },
+  { key: 'contract', label: 'Contract', filter: (r: VendorRow) => !r.withdrawn && r.contract_signed && r.payment_status !== 'paid' && r.payment_status !== 'deferred' },
+  { key: 'paid', label: 'Paid', filter: (r: VendorRow) => !r.withdrawn && (r.payment_status === 'paid' || r.payment_status === 'deferred') },
+  { key: 'ready', label: 'Show-ready', filter: (r: VendorRow) => !r.withdrawn && r.payment_status === 'paid' && r.docs_complete_at },
 ]
 
 function PipelineView({ rows }: { rows: VendorRow[] }) {

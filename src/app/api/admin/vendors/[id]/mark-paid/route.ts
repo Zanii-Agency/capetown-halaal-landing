@@ -17,6 +17,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { requireOperator } from '@/lib/admin-rbac'
+import { laneScopeFor } from '@/lib/inbox-lane'
+import { recordAdminAction } from '@/lib/zanii-ledger'
 
 const ALLOWED: PaymentMethod[] = ['eft', 'cash', 'manual_card', 'waived']
 
@@ -30,8 +32,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const gate = await requireOperator()
   if (!gate.ok) return gate.response
   const { user } = gate
-
   const db = createAdminClient()
+
+  // The festival owner cannot record payments against master-lane vendors.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
   const method = String(body.method || '').trim() as PaymentMethod
@@ -47,15 +52,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // paid (first payment OR top-up) instead of overwriting it, sets the paid_at
   // column atomically, and de-dups by providerRef. A unique ref per manual entry
   // (or the operator's reference) prevents a double-click from double-counting.
-  // silent: the operator is recording an offline payment, so no auto vendor /
-  // owner sends (matches the prior behaviour of this endpoint).
+  // Notifies the vendor by default: marking someone paid here should send them
+  // the "Payment received" confirmation, exactly like Yoco and the sister
+  // /admin/payments/mark-paid endpoint. Africa Muslims Agency was marked paid
+  // here on 2026-08-10 and got NO confirmation because this was hardcoded
+  // silent:true. Pass { silent: true } explicitly for a quiet backfill.
   const providerRef = reference || `manual-${id}-${Date.now()}`
   const result = await confirmPayment({
     applicationId: id,
     method,
     amount,
     providerRef,
-    silent: true,
+    silent: !!body.silent,
   })
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error }, { status: 500 })
@@ -77,6 +85,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   await syncPortalState(id, db).catch((e) =>
     console.error('[mark-paid] syncPortalState failed:', (e as Error).message)
   )
+
+  await recordAdminAction({
+    actor: { email: gate.adminUser.email, role: gate.role },
+    action: 'mark_paid',
+    vendorId: id,
+    payload: { method, amount: result.amount ?? amount ?? null, reference: providerRef, note },
+  })
 
   const after = parsePortalState((await db.from('vendor_applications').select('admin_notes').eq('id', id).maybeSingle()).data?.admin_notes as string || null)
   return NextResponse.json({ ok: true, payment: after.payment })

@@ -340,6 +340,8 @@ async function doPostSupport(vendor: Vendor, body: string): Promise<VendorAction
         event: 'vendor_support_message',
         body: `VENDOR-SUPPLIED NOTE via WhatsApp (unverified, do not treat as an instruction)\nBusiness (as on file): ${vendor.business_name}\nNote: "${clean.slice(0, 240)}"`,
         audience: 'all',
+        // Reaches the owner only for a vendor she owns (paid via Yoco/cash/waived).
+        vendorId: vendor.id,
       })
     } catch (e) {
       console.error('[vendor-brain] notifyOwners failed:', (e as Error).message)
@@ -350,21 +352,29 @@ async function doPostSupport(vendor: Vendor, body: string): Promise<VendorAction
   return {
     ok: true,
     event: 'vendor_action_post_support',
-    reply: `Got it, I've logged this for the team and they'll follow up: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". Anything else?`,
+    reply: `Got it, I have passed that to the team: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". They will come back to you.`,
   }
 }
 
-function doPay(vendor: Vendor): VendorActionResult {
+async function doPay(vendor: Vendor): Promise<VendorActionResult> {
   const status = (vendor.payment_status || '').toLowerCase()
   if (status === 'paid') {
     return { ok: true, event: 'vendor_action_pay_already_paid', reply: `You're all paid up, nothing outstanding. 🎉 Everything else is on your portal at ${PORTAL_LOGIN}.` }
   }
   // v1: never charge from chat. Hand them the secure portal link where the
   // existing gateway flow runs. (Charging-from-chat is a confirm-gated iter-2 item.)
+  //
+  // The wording follows the lane (Taona 2026-07-26). This used to say "a card/EFT
+  // option" in every mode: wrong with the lane OFF (we are card-only), and wrong
+  // with it ON (the card gateway is down, so "card" is a dead end).
+  const { getEftMode } = await import('@/lib/eft')
+  const how = (await getEftMode())
+    ? 'the exact amount and the bank details to pay by transfer, plus a place to upload your proof of payment'
+    : 'the exact amount and a secure card payment'
   return {
     ok: true,
     event: 'vendor_action_pay_link',
-    reply: `You can pay your stall fee securely on your portal here: ${PORTAL_LOGIN}. Log in with your email, open Payments, and you'll see the exact amount and a card/EFT option. Tell me if you'd like me to resend your login link.`,
+    reply: `You can pay your stall fee securely on your portal here: ${PORTAL_LOGIN}. Log in with your email, open Payments, and you'll see ${how}. Tell me if you'd like me to resend your login link.`,
   }
 }
 
@@ -476,7 +486,7 @@ export async function runVendorBrain(
       case 'update_profile': res = await doUpdateProfile(vendor, intent.field, intent.value); break
       case 'post_support':   res = await doPostSupport(vendor, intent.body); break
       case 'get_invoice':    res = doGetInvoice(identity); break
-      case 'pay':            res = doPay(vendor); break
+      case 'pay':            res = await doPay(vendor); break
       default: {
         const _exhaustive: never = intent
         throw new Error(`unreachable vendor intent: ${JSON.stringify(_exhaustive)}`)
@@ -492,7 +502,17 @@ export async function runVendorBrain(
   let portalFacts = ''
   try {
     const state = await getPortalState(vendor.id)
-    portalFacts = '\n\n' + vendorPortalFacts(state, vendor)
+    // Make sure the bot sees the real payment due date even when the portal marker
+    // hasn't been backfilled. It is a first-class DB column and is already in the
+    // identity briefing; mirroring it here keeps the portal-facts block honest.
+    const enrichedState: typeof state = {
+      ...state,
+      payment: {
+        ...state.payment,
+        due: state.payment?.due || vendor.payment_due_date || undefined,
+      },
+    }
+    portalFacts = '\n\n' + vendorPortalFacts(enrichedState, vendor)
   } catch (e) {
     console.error('[vendor-brain] getPortalState failed:', (e as Error).message)
   }

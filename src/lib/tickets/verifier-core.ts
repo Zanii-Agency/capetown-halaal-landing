@@ -10,7 +10,7 @@
  * Law 6: Every WC call goes through getOrders/getOrder, which carries `after=`.
  */
 
-import { getOrders, type WCOrder } from '@/lib/woocommerce'
+import { getOrders } from '@/lib/woocommerce'
 import {
   parseTicketsFromOrder,
   validateTicket,

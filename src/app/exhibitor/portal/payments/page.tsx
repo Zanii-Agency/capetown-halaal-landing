@@ -3,9 +3,12 @@ import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { paymentsEnabled, paymentReference } from '@/lib/payments'
-import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
+import { formatRand } from '@/lib/payments/pricing'
+import { vendorBill, accEftReference } from '@/lib/payments/vendor-bill'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
+import EftPanel from '@/components/exhibitor/EftPanel'
+import { eftBankFor, eftReference, getPaymentRail, getFullEftMode, onCovertMasterLane, resolveInEftLane, hasEftMarker } from '@/lib/eft'
 import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
   PageShell, PageHeader, Card
@@ -20,13 +23,52 @@ export default async function PaymentsPage() {
   const ctx = await getExhibitorContext()
   const app = ctx?.application
   const state = parsePortalState(app?.admin_notes as string)
-  const status = state.payment?.status || 'none'
+  const rawStatus = state.payment?.status || 'none'
+  // 'collected' (EFT interim) renders exactly like 'paid' for the VENDOR: paid
+  // banner, invoice link, no countdown, no EFT pay panel. The real 'paid'
+  // transition happens later at Yoco settlement; this is display-only.
+  const status = rawStatus === 'collected' ? 'paid' : rawStatus
   const dueDate = app ? computePaymentDue(app as { payment_due_date?: string | null; reviewed_at?: string | null }) : null
   const due = dueDate ? fmtDate(dueDate) : (app?.payment_due_date as string) || 'TBC'
   const daysLeft = dueDate ? daysUntil(dueDate) : null
   const reference = state.payment?.reference || (app ? paymentReference(app.id as string) : null)
   const attemptedAt = state.payment?.attempted_at as string | undefined
   const failedAttempts = (state.payment?.failed_attempts as number | undefined) || 0
+
+  // TEMPORARY EFT lane: a vendor pays by EFT while Yoco is down when global EFT
+  // mode is ON, or when an operator selected them individually (⟦EFT⟧). They see
+  // EftPanel (bank details + proof upload) instead of the Yoco panel; once a proof
+  // is on file the portal reads a provisional "received, pending" state.
+  // THE GLOBAL RAIL (yoco | samreen_eft | master). eftModeOn keeps the existing
+  // binary meaning ("is EFT the active rail") for the routing below; the covert
+  // split (which account) is decided separately from the rail + frozen set.
+  const rail = await getPaymentRail()
+  const eftModeOn = rail !== 'yoco'
+  const fullEft = await getFullEftMode()
+  // Which account this vendor pays into: the covert master lane (...191) when they
+  // are on it, else Samreen's reconciled account (...629). onCovertMasterLane keys
+  // on the rail + the frozen protected set, so a master-mode sweep, a hand-picked
+  // ⟦EFT⟧ vendor, and a frozen-66 member all correctly land on ...191.
+  const eftBank = eftBankFor(
+    app ? onCovertMasterLane(app.id as string, app.admin_notes as string, rail, fullEft) : false,
+  )
+  // Paid vendors are excluded from the lane (they keep their normal paid view even
+  // under global mode); only unpaid lane vendors see the EFT panel.
+  // Per-tier rotation (2 Yoco:1 EFT on small tiers, 2 EFT:1 Yoco on the rest),
+  // advanced by payments received since the activation start line. Overrides
+  // (paid / ⟦NOEFT⟧ / ⟦EFT⟧ / committed-method) still win inside the resolver;
+  // before activation it behaves exactly like the old global-mode routing.
+  const inEftLane = await resolveInEftLane(
+    { admin_notes: app?.admin_notes as string, paid_at: app?.paid_at as string | null, preferred_booth_tier: app?.preferred_booth_tier as string },
+    eftModeOn,
+    { email: app?.email as string | null, phone: app?.phone as string | null },
+  )
+  const eftSubmitted = !!state.payment?.eft_submitted_at
+  const eftPending = eftSubmitted && status !== 'paid'
+  const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : 'CTH'
+  // Individual ⟦EFT⟧ marker: keeps the accessory EFT panel available to a
+  // hand-picked vendor even after global EFT mode is switched off.
+  const vendorHasMarker = app ? hasEftMarker(app.admin_notes as string) : false
 
   // EFT payment receipts / refund proofs an organiser uploaded for this vendor.
   // Each proof's file lives in the private vendor-docs bucket; we mint a short
@@ -59,29 +101,41 @@ export default async function PaymentsPage() {
       )).filter((p): p is NonNullable<typeof p> => p !== null)
     : []
 
-  // Compute the itemised breakdown from the application data so the vendor sees
-  // exactly what they're paying for. An organiser-set state.payment.amount
-  // overrides only the total (e.g. for special-case quotes).
-  const pricing = app
-    ? computeVendorPricing({
+  // The SPLIT BILL (2026-08-04): stall fee and accessories are two separate
+  // charges, money allocates stall-first. Settled vendors whose accessories
+  // were under-billed by the old pricing bug see the accessory balance OWING
+  // here, payable through Yoco (card payers) or the EFT rail with a -ACC
+  // reference (EFT payers). Unpaid vendors keep one combined balance.
+  const bill = app
+    ? vendorBill({
+        id: app.id as string,
         preferred_booth_tier: app.preferred_booth_tier as string,
         special_requirements: app.special_requirements,
+        admin_notes: app.admin_notes as string,
+        paid_at: (app as { paid_at?: string | null }).paid_at ?? null,
       })
     : null
-  // Balance model: state.payment.amount = cumulative amount PAID; owed = the live
-  // computed total; outstanding = what is still due. A top-up is when the operator
-  // added charges after the vendor paid, leaving an outstanding balance.
+  const pricing = bill?.pricing ?? null
   const owed = pricing?.total ?? null
-  const paidSoFar = Number(state.payment?.amount) || 0
-  const outstanding = owed !== null ? Math.max(0, owed - paidSoFar) : null
-  const fullyPaid = status === 'paid' && (outstanding === null || outstanding <= 0)
-  const topUpDue = paidSoFar > 0 && (outstanding || 0) > 0
+  const paidSoFar = bill?.paidTotal ?? 0
+  const outstanding = bill ? bill.owing : null
+  const settled = !!bill?.settled
+  const accState = bill?.accessories.state ?? 'none'
+  const accOwing = bill?.accessories.owing ?? 0
+  // Accessory EFT proof uploaded, awaiting the operator's confirmation.
+  const accPending = settled && accState === 'pending'
+  const fullyPaid = settled && (outstanding === null || outstanding <= 0) && !accPending
+  const topUpDue = !settled && paidSoFar > 0 && (outstanding || 0) > 0
+  // Settled vendor still owing accessories (the split-bill case).
+  const accDue = settled && accState === 'owing' && accOwing > 0
   const amount = owed
 
   // Countdown banner. Until the vendor pays, the rest of the portal is locked
   // (requirePaid on every other route redirects them here). The banner makes
   // the 30-day window obvious and the consequence concrete.
-  const showCountdown = status !== 'paid' && daysLeft !== null
+  // Suppress the card-centric countdown (it mentions WhatsApp reminders) for any
+  // EFT-lane vendor and once EFT proof is in.
+  const showCountdown = status !== 'paid' && !eftPending && !inEftLane && daysLeft !== null
   const countdownTone =
     daysLeft === null ? 'neutral'
     : daysLeft < 0 ? 'overdue'
@@ -101,18 +155,31 @@ export default async function PaymentsPage() {
       <MiniTaskStrip activeKey="payment" />
       <PageHeader
         kicker="Payments"
-        title={fullyPaid ? 'You are paid in full' : topUpDue ? 'Additional payment due' : 'Pay your stall fee'}
-        subtitle={fullyPaid
+        title={accPending ? 'Accessory proof received'
+          : accDue ? 'Accessories balance due'
+          : eftPending ? 'Proof received'
+          : fullyPaid ? 'You are paid in full'
+          : topUpDue ? 'Additional payment due'
+          : 'Pay your stall fee'}
+        subtitle={accPending
+          ? 'We have your accessory EFT proof. Please allow up to 24 hours for us to confirm it. Your stall fee is settled and your portal stays unlocked.'
+          : accDue
+          ? 'Your stall fee is paid and your booth is confirmed. The electricity for the appliances you booked is billed separately and is still due, see below.'
+          : eftPending
+          ? 'We have your EFT proof. Please allow up to 24 hours for us to confirm your payment and update you. Once confirmed, your full portal unlocks and you can continue.'
+          : fullyPaid
           ? 'Thank you. Your booth is confirmed. The full festival portal is unlocked for you below.'
           : topUpDue
           ? 'Extra charges were added to your stall. Please settle the balance below to stay confirmed.'
-          : 'Your portal unlocks the moment your stall fee clears. Pay by card via Yoco, EFT details on request via support.'}
+          : inEftLane
+          ? 'Please pay your stall fee by EFT using the details below, then upload your proof of payment.'
+          : 'Your portal unlocks the moment your stall fee clears. Pay securely by card via Yoco below.'}
       />
 
       {/* Wrong size? Let the vendor change stall size before paying so the fee
           matches the booth they want. Reachable pre-payment (stall-request page
           gates on approval, not payment). */}
-      {!fullyPaid && (
+      {!fullyPaid && !eftPending && !settled && (
         <div className="rounded-2xl border border-[#cd2653]/20 bg-[#cd2653]/5 p-4 mb-6 text-sm text-[#1B1A17]">
           Need a bigger or smaller booth? Change your stall size or request a different position{' '}
           <Link href="/exhibitor/portal/stand/change" className="font-semibold text-[#cd2653] underline underline-offset-2">
@@ -153,6 +220,18 @@ export default async function PaymentsPage() {
         </div>
       )}
 
+      {accDue && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 mb-6 flex items-start gap-4 text-amber-800">
+          <AlertCircle className="w-6 h-6 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Accessories electricity due: {formatRand(accOwing)}</p>
+            <p className="text-sm mt-1 opacity-90">
+              Your stall fee of {formatRand(bill?.stall.price || 0)} is paid and your booth is confirmed. The electricity for the appliances you selected on your application is a separate charge, and {formatRand(accOwing)} is still due for it. You can settle it below.
+            </p>
+          </div>
+        </div>
+      )}
+
       {topUpDue && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 mb-6 flex items-start gap-4 text-amber-800">
           <AlertCircle className="w-6 h-6 shrink-0 mt-0.5" />
@@ -180,30 +259,60 @@ export default async function PaymentsPage() {
               )}
             </div>
             <div className="space-y-2 text-sm">
+              {/* STALL FEE section */}
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wider text-[#1B1A17]/45 font-semibold">Stall fee</span>
+                {settled && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">PAID</span>
+                )}
+              </div>
               <div className="flex justify-between">
                 <span className="text-[#1B1A17]/70">{pricing.stallLabel}</span>
                 <span className="text-[#1B1A17] font-medium">{formatRand(pricing.stallPrice)}</span>
               </div>
-              {pricing.electricalItems.map((it, i) => (
-                <div key={i} className="flex justify-between">
-                  <span className="text-[#1B1A17]/70">
-                    {it.label}
-                    {it.qty && it.qty > 1 ? ` × ${it.qty}` : ''}
-                  </span>
-                  <span className="text-[#1B1A17] font-medium">{formatRand(it.amount)}</span>
-                </div>
-              ))}
-              {pricing.chairsQty > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-[#1B1A17]/70">Chairs hired × {pricing.chairsQty}</span>
-                  <span className="text-[#1B1A17] font-medium">{formatRand(pricing.chairsAmount)}</span>
-                </div>
-              )}
-              {pricing.tablesQty > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-[#1B1A17]/70">Tables hired × {pricing.tablesQty}</span>
-                  <span className="text-[#1B1A17] font-medium">{formatRand(pricing.tablesAmount)}</span>
-                </div>
+              {/* ACCESSORIES section: electricity for the appliances they chose,
+                  plus furniture hire. Billed separately from the stall fee. */}
+              {(bill?.accessories.total || 0) > 0 && (
+                <>
+                  <div className="flex items-center justify-between pt-3">
+                    <span className="text-[10px] uppercase tracking-wider text-[#1B1A17]/45 font-semibold">Accessories, billed separately</span>
+                    {settled && accState === 'paid' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">PAID</span>
+                    )}
+                    {accPending && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">PROOF RECEIVED</span>
+                    )}
+                    {accDue && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#cd2653]/5 border border-[#cd2653]/30 px-2 py-0.5 text-[10px] font-bold text-[#cd2653]">OWING</span>
+                    )}
+                  </div>
+                  {pricing.electricalItems.map((it, i) => (
+                    <div key={i} className="flex justify-between">
+                      <span className="text-[#1B1A17]/70">
+                        {it.label}
+                        {it.qty && it.qty > 1 ? ` × ${it.qty}` : ''}
+                      </span>
+                      <span className="text-[#1B1A17] font-medium">{formatRand(it.amount)}</span>
+                    </div>
+                  ))}
+                  {pricing.chairsQty > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-[#1B1A17]/70">Chairs hired × {pricing.chairsQty}</span>
+                      <span className="text-[#1B1A17] font-medium">{formatRand(pricing.chairsAmount)}</span>
+                    </div>
+                  )}
+                  {pricing.tablesQty > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-[#1B1A17]/70">Tables hired × {pricing.tablesQty}</span>
+                      <span className="text-[#1B1A17] font-medium">{formatRand(pricing.tablesAmount)}</span>
+                    </div>
+                  )}
+                  {settled && (
+                    <p className="text-xs text-[#1B1A17]/50 pt-1">
+                      Your stall fee and accessory electricity are two separate charges. The stall fee secures your booth; the accessory fee covers power for the appliances you bring.
+                    </p>
+                  )}
+                </>
               )}
             </div>
             <div className="border-t border-[#B8924A]/15 mt-4 pt-3 flex justify-between items-baseline">
@@ -229,16 +338,67 @@ export default async function PaymentsPage() {
           </Card>
         )}
 
-        <PaymentPanel
-          enabled={paymentsEnabled()}
-          status={status}
-          amount={amount}
-          outstanding={outstanding}
-          reference={reference}
-          dueDate={due}
-          attemptedAt={attemptedAt || null}
-          failedAttempts={failedAttempts}
-        />
+        {settled ? (
+          // Settled vendors: only the accessory balance can be payable here.
+          // The EFT accessory panel additionally requires the lane switch to be
+          // on (global EFT mode or an individual marker): when the lane is
+          // retired, EFT payers fall back to the card panel below, so one
+          // switch closes the whole EFT rail (doctrine review 2026-08-04).
+          // accPending always renders the EFT panel's submitted state: a proof
+          // can only exist because the vendor used the EFT rail.
+          (accPending || (accDue && bill?.payClass === 'eft' && (eftModeOn || vendorHasMarker))) ? (
+            // EFT payers settle accessories the same way they paid: EFT with a
+            // -ACC reference so the deposit is identifiable on the statement.
+            <EftPanel
+              purpose="accessories"
+              submitted={accPending}
+              bank={eftBank}
+              reference={app ? accEftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : 'CTH-ACC'}
+              amount={accOwing > 0 ? accOwing : null}
+              dueDate={due}
+              businessName={(app?.business_name as string) || 'your business'}
+            />
+          ) : accDue ? (
+            // Card payers settle accessories by card: the Pay flow charges
+            // exactly the outstanding balance (live total minus paid).
+            <PaymentPanel
+              enabled={paymentsEnabled()}
+              status={status}
+              amount={amount}
+              outstanding={accOwing}
+              reference={reference}
+              dueDate={due}
+              attemptedAt={attemptedAt || null}
+              failedAttempts={failedAttempts}
+              topUpNote="Accessory electricity, billed separately from your stall fee"
+            />
+          ) : null
+        ) : inEftLane && !fullyPaid ? (
+          <EftPanel
+            submitted={eftSubmitted}
+            bank={eftBank}
+            reference={eftRef}
+            amount={outstanding ?? amount}
+            dueDate={due}
+            businessName={(app?.business_name as string) || 'your business'}
+            // Fresh EFT-lane vendor (nothing paid): the total still holds the
+            // accessory portion, so name it. Once they have part-paid the split
+            // is ambiguous, so only pass it before any payment lands.
+            accessories={paidSoFar === 0 ? (bill?.accessories.total ?? 0) : 0}
+          />
+        ) : (
+          <PaymentPanel
+            enabled={paymentsEnabled()}
+            status={status}
+            amount={amount}
+            outstanding={outstanding}
+            reference={reference}
+            dueDate={due}
+            attemptedAt={attemptedAt || null}
+            failedAttempts={failedAttempts}
+            accessories={paidSoFar === 0 ? (bill?.accessories.total ?? 0) : 0}
+          />
+        )}
 
         {proofViews.length > 0 && (
           <Card>
@@ -253,7 +413,7 @@ export default async function PaymentsPage() {
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-[#1B1A17]">
-                      {p.kind === 'refund' ? 'Refund proof' : 'Payment receipt'}
+                      {p.kind === 'refund' ? 'Refund proof' : p.kind === 'eft_submission' ? 'Your EFT proof' : 'Payment receipt'}
                     </p>
                     {p.note && (
                       <p className="text-sm text-[#1B1A17]/70 mt-0.5 break-words">{p.note}</p>

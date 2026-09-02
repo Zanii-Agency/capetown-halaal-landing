@@ -31,6 +31,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalState } from '@/lib/portal-state'
+import { isTestVendor } from '@/lib/test-vendors'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
@@ -194,6 +195,7 @@ export async function GET(req: NextRequest) {
     id: string; business_name: string | null; contact_name: string | null;
     email: string | null; phone: string | null; admin_notes: string | null;
   }>) {
+    if (isTestVendor(v)) continue
     const state = parsePortalState(v.admin_notes || '')
     const sentMap = (state as unknown as { festival_reminders?: { sent?: Record<string, string> } }).festival_reminders?.sent || {}
     if (sentMap[String(active)]) {

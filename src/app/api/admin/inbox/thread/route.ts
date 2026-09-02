@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveContact } from '@/lib/contacts/resolve'
+import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -24,19 +25,22 @@ interface ThreadMessage {
   template_name?: string | null
 }
 
-async function requireAdmin(): Promise<boolean> {
+// Returns the viewer's email, not just a boolean: the EFT lane check below needs
+// to know WHO is reading (only the EFT admin may open a lane vendor's thread).
+async function requireAdmin(): Promise<{ ok: boolean; email: string | null }> {
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  if (!user) return false
+  if (!user) return { ok: false, email: null }
   const admin = createAdminClient()
   const { data } = await admin.from('admin_users').select('id').eq('id', user.id).limit(1)
-  return !!data && data.length > 0
+  return { ok: !!data && data.length > 0, email: user.email ?? null }
 }
 
 export async function GET(req: Request) {
-  if (!(await requireAdmin())) {
+  const viewer = await requireAdmin()
+  if (!viewer.ok) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
@@ -81,6 +85,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'thread not found' }, { status: 404 })
   }
   const thread = threadRows[0]
+
+  // TWO layers (2026-07-26): vendor, then content.
+  const scope = await laneScopeFor(viewer.email)
+  const outOfScope = thread.channel === 'wa'
+    ? scope.blocksPhone(thread.thread_key)
+    : scope.blocksEmail(thread.thread_key)
+  if (outOfScope) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  const hide = hidesEftContent(viewer.email)
 
   let messages: ThreadMessage[] = []
   if (thread.channel === 'wa') {
@@ -156,6 +168,12 @@ export async function GET(req: Request) {
       last_inbound_at: thread.last_inbound_at,
       last_handled_at: thread.last_handled_at,
     },
-    messages,
+    // Owner cutoff, same rule as everywhere else: a handed-over vendor's later
+    // conversation is master-first.
+    messages: stripEftMessages(messages, (m) => `${(m as { subject?: string | null }).subject || ''}\n${m.body}`, hide, {
+      scope,
+      identity: thread.channel === 'wa' ? { phone: thread.thread_key } : { email: thread.thread_key },
+      at: (m) => (m as { at?: string; created_at?: string }).at || (m as { created_at?: string }).created_at,
+    }),
   })
 }

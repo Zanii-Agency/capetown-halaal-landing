@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# zanii admin DID provisioning output (private keys — never commit)
+.zanii-cth-keys.json
+
 # vercel
 .vercel
 
@@ -60,3 +63,26 @@ scripts/.verification-blast.DONE
 .claude/worktrees/
 public/stalls.excel-extracted.json.bak
 .gstack/
+.migration-baseline.json
+
+# session scratch files: never part of a deploy (Law 1: the tree is the manifest)
+scratchpad/
+tmp-*
+
+# local session handoff state: regenerated each session, never tracked (git log
+# confirms it has never been committed). Kept out so it never dirties the tree
+# and never ships via vercel --prod.
+.claude-session.md
+
+# generated data exports: vendor spreadsheets written by ad-hoc export scripts.
+# They contain vendor PII, so they must NEVER be committed OR shipped to prod
+# (Law 2). Anchored to the repo root; the export scripts themselves stay tracked.
+/exports/
+
+# scratch lane for THROWAWAY one-off scripts. Everything under scripts/scratch/
+# is ignored so it never dirties the tree or trips the deploy review-gate (which
+# blocks vercel --prod on any untracked file); the README stays tracked so the
+# lane is self-documenting. A script worth keeping goes in scripts/ proper and is
+# committed like the other ~85. See scripts/CLAUDE.md.
+scripts/scratch/*
+!scripts/scratch/README.md

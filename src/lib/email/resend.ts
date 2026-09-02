@@ -1,7 +1,7 @@
 import { render } from '@react-email/components'
 import { Resend } from 'resend'
 import type { ReactElement } from 'react'
-import { mirrorOutboundToSupportInbox } from './support-mirror'
+import { logEmailOutbound } from '../outbound-log'
 
 // =============================================================================
 // CTH email — RESEND ONLY (2026-06-08).
@@ -155,8 +155,9 @@ export async function sendEmail({
     console.log(`Email sent via Resend to ${to}: ${subject}`)
 
     // Mirror into the Support Inbox as a threaded message (best-effort, never
-    // blocks the send). Makes the Sent tab a real two-way surface.
-    await mirrorOutboundToSupportInbox({ to, subject, html, text, providerMessageId })
+    // blocks the send). Makes the Sent tab a real two-way surface and refreshes
+    // any open admin inbox.
+    await logEmailOutbound({ to, subject, html, text, providerMessageId })
 
     if (confirmDelivery && providerMessageId) {
       const dead = await detectDeadDelivery(providerMessageId)
