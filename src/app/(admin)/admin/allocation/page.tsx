@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Loader2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { Loader2, PanelLeftClose, PanelLeftOpen, MapPin } from 'lucide-react'
 import { AdminPage } from '@/components/admin/AdminPage'
 import FloorCommand, { type FloorBooth, type FloorApp, type FloorStatus } from '@/components/floor/FloorCommand'
 import type { MapStall } from '@/components/admin/StallMap'
@@ -21,6 +21,9 @@ interface AppRow extends AppRowLite {
   stall_status: string | null
   payment_status?: string
   payment_amount?: number
+  // The vendor's stall POSITION preference (from their stallMoveRequest), so the
+  // allocator can honour it while placing them. Null when they never asked.
+  stall_pref?: { zone: string | null; details: string } | null
 }
 interface Avail { total: number; allocated: number; held: number; available: number }
 interface StallsResponse {
@@ -350,6 +353,15 @@ export default function AllocationPage() {
                           {v.app_status}
                         </span>
                       </div>
+                      {v.stall_pref && (
+                        <div className="mt-1 flex items-start gap-1 text-[11px] text-[#cd2653]" title="Vendor's requested spot preference">
+                          <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
+                          <span className="leading-snug">
+                            Wants {v.stall_pref.zone || 'a specific spot'}
+                            {v.stall_pref.details ? `: ${v.stall_pref.details}` : ''}
+                          </span>
+                        </div>
+                      )}
                     </button>
                   ))}
                 </div>
