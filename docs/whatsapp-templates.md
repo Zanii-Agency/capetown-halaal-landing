@@ -325,6 +325,28 @@ Reply here on WhatsApp to confirm or if anything has changed. The YAH Team.
 
 ---
 
+## 14. `vendor_application_declined_reason`
+
+Fires when an admin rejects a vendor application AND typed a reason. Carries the
+review reason on WhatsApp ({{2}}). Until this is approved, the code falls back to
+the plain `vendor_application_declined` (no reason); the email always carries the
+reason regardless. UTILITY.
+
+**Body:**
+
+```
+Hi {{1}}, thank you for applying to Young at Heart Festival 2026. After a careful review we are not able to offer a stall this year. Reason: {{2}}. Your details stay on file for future events. Reply here if you would like to discuss it.
+```
+
+**Parameters:**
+- {{1}} = vendor contact first name
+- {{2}} = the review reason (free text, e.g. "Duplicate application")
+
+**Sample (Samreen example):**
+> Hi Samreen, thank you for applying to Young at Heart Festival 2026. After a careful review we are not able to offer a stall this year. Reason: Duplicate application, you already applied under Rose Bakes. Your details stay on file for future events. Reply here if you would like to discuss it.
+
+---
+
 ## How to submit to Meta
 
 ### Option A: Auto-submit via Graph API (fastest)
