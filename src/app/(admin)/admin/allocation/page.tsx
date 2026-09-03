@@ -313,6 +313,9 @@ export default function AllocationPage() {
                 placeholder="Search vendors..."
                 className="w-full px-2 py-1.5 text-xs border border-neutral-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cd2653]"
               />
+              <p className="mt-2 text-[11px] leading-snug text-neutral-400">
+                Drag a vendor onto an available booth to allocate. Zoom in first if the booths are small.
+              </p>
             </div>
             <div className="overflow-y-auto flex-1">
               {unallocatedVendors.length === 0 ? (
@@ -323,8 +326,20 @@ export default function AllocationPage() {
                     <button
                       key={v.id}
                       type="button"
+                      draggable
+                      onDragStart={(e) => {
+                        // Payload the FloorCommand booth drop-handler reads. text/plain
+                        // is a fallback for browsers that strip the custom MIME type.
+                        e.dataTransfer.setData(
+                          'application/x-cth-vendor',
+                          JSON.stringify({ id: v.id, name: v.business_name }),
+                        )
+                        e.dataTransfer.setData('text/plain', v.business_name)
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
                       onClick={() => setSelectedVendor(v.id === selectedVendor ? null : v.id)}
-                      className={`w-full text-left px-3 py-2.5 hover:bg-neutral-50 transition-colors ${
+                      title="Drag onto an available booth to allocate"
+                      className={`w-full text-left px-3 py-2.5 hover:bg-neutral-50 transition-colors cursor-grab active:cursor-grabbing ${
                         selectedVendor === v.id ? 'bg-[#cd2653]/5 border-l-2 border-[#cd2653]' : ''
                       }`}
                     >
