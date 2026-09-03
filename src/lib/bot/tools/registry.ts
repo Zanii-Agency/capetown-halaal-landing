@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState, type DocRecord } from '@/lib/portal-state'
-import { parseAllocation, resolveTierSlug, tierLabel, TIER_META, TYPE_META, STALL_LIST } from '@/lib/stalls'
+import { parseAllocation, resolveTierSlug, tierLabel, TIER_META, TYPE_META, STALL_LIST, BEDOUIN_TIER, isBedouinEligible } from '@/lib/stalls'
 import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
@@ -269,11 +269,11 @@ async function ownRow(vendorId: string) {
     // blocked, Law 8) and selecting it failed this scoped fetch with 42703,
     // which silently broke EVERY vendor tool below (status, due date, stall).
     // The due date is computed from reviewed_at + 30 by computePaymentDue.
-    .select('business_name, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements, reviewed_at, created_at')
+    .select('business_name, business_description, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements, reviewed_at, created_at')
     .eq('id', vendorId)
     .single()
   return data as {
-    business_name: string; contact_name: string | null; email: string | null; status: string
+    business_name: string; business_description: string | null; contact_name: string | null; email: string | null; status: string
     admin_notes: string | null; contract_signed_at: string | null; contract_pdf_path: string | null
     preferred_booth_tier: string | null; special_requirements: unknown
     payment_due_date: string | null; reviewed_at: string | null; created_at: string | null
@@ -806,6 +806,17 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
       .map(([, m]) => `- ${m.label}, R${m.price.toLocaleString('en-ZA')}`)
       .join('\n')
     return `That is not one of our stall sizes, so I cannot log it. Here is everything we have:\n${menu}\n\nWhich one would you like? I will send it to the team for approval.`
+  }
+
+  // THE BEDOUIN RULE. The Outdoor Bedouin tent is reserved for arts / crafts /
+  // toy vendors. Refuse to log a Bedouin request from anyone else (a person can
+  // still override on the day if the vendor believes they qualify).
+  if (clean === BEDOUIN_TIER && !isBedouinEligible(row)) {
+    const menu = Object.entries(TIER_META)
+      .filter(([slug]) => slug !== BEDOUIN_TIER)
+      .map(([, m]) => `- ${m.label}, R${m.price.toLocaleString('en-ZA')}`)
+      .join('\n')
+    return `The Outdoor Bedouin tent is reserved for arts, crafts and toy vendors, so I cannot log that one for you. Here are the sizes you can choose from:\n${menu}\n\nWhich would you like? If you do sell arts, crafts or toys and think this is a mistake, tell me and I will pass it to the team.`
   }
 
   await updatePortalState(vendorId, (s) => ({

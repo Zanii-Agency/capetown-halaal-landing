@@ -69,6 +69,23 @@ export const TIER_META: Record<string, { label: string; suggestZone: StallType; 
 // the tier rotation in lib/eft.ts.
 export const SMALL_EFT_ROTATION_TIERS = new Set<string>(['marquee-table-2x2', 'outdoor-bedouin-2x3'])
 
+// The Outdoor Bedouin tent is reserved for arts / crafts / toy vendors
+// (operator rule, 2026-09-03). There is NO arts-and-craft product_category in
+// this data (checked across all 563 rows): the signal lives ONLY in free-text
+// business_name / business_description ("Calm Crafters", "Chantel Toys",
+// "Islamic books and toys", "Lucky Art and crafts", "Shifa henna art"). So the
+// eligibility test matches THERE.
+//
+// CONSERVATIVE on purpose: a hard block must never let a NON-craft vendor into
+// the tent, so we never match bare "art"/"arts" (that would catch every food
+// vendor's "artisanal"). A genuine craft vendor we miss is recoverable: the bot
+// tells them to ask the team. Tune the keyword list here, in one place.
+export const BEDOUIN_TIER = 'outdoor-bedouin-2x3'
+const CRAFT_TOY_RE = /\b(crafts?|crafters?|handmade|toys?|novelt(?:y|ies)|hobby|artworx?|arts?\s*(?:and|&)\s*crafts?|henna\s*art)\b/i
+export function isBedouinEligible(a: { business_name?: string | null; business_description?: string | null }): boolean {
+  return CRAFT_TOY_RE.test(`${a.business_name || ''} ${a.business_description || ''}`)
+}
+
 export function tierLabel(slug: string | null | undefined): string {
   if (!slug) return 'Not specified'
   return TIER_META[slug]?.label || slug
