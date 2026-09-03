@@ -18,7 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
+import { isEftAdmin, vendorInOwnerScope, redactNotesForViewer } from '@/lib/eft'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -100,13 +100,21 @@ export async function GET(request: NextRequest) {
     }
 
     const restrict = !isEftAdmin(user.email ?? null)
-    const applications = restrict
+    const rows = restrict
       ? (data ?? []).filter((a: {
           status?: string | null
           admin_notes?: string | null
           paid_at?: string | null
         }) => (a.status !== 'approved') || vendorInOwnerScope(a.admin_notes, a.paid_at))
       : (data ?? [])
+    // A row that passes the scope filter can still carry covert markers in its
+    // raw admin_notes (⟦OWNERVIS⟧, a reconciled ⟦PORTAL⟧ blob, a non-approved
+    // ⟦EFT⟧). Redact them for the non-EFT-admin so the payload matches the wall
+    // the UI already applies. ⟦STALL:..⟧ + prose survive; EFT admin reads raw.
+    const applications = (rows as Array<{ admin_notes?: string | null }>).map((a) => ({
+      ...a,
+      admin_notes: redactNotesForViewer(a.admin_notes, user.email ?? null),
+    }))
 
     // Separate canonical "pending counter" so the top-bar can show
     // "X to go" without re-querying when filters change.

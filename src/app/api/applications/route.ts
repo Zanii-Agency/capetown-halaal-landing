@@ -8,6 +8,7 @@ import { ApplicationConfirmation } from '@/lib/email/templates/ApplicationConfir
 import { recordConsent } from '@/lib/wa-consent'
 import { toE164 } from '@/lib/whatsapp'
 import { scoreCompleteness } from '@/lib/ai/completeness-scorer'
+import { redactNotesForViewer } from '@/lib/eft'
 import {
   checkHoneypot,
   checkEmail,
@@ -313,7 +314,16 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    return NextResponse.json({ applications: data })
+    // Wall (CTH Law 2): this whole-roster read returns raw admin_notes, which
+    // carries the covert ⟦EFT⟧ marker + base64 ⟦PORTAL⟧ payment state. Redact
+    // the covert markers for every non-EFT-admin caller (a filtered UI in front
+    // of an unfiltered route is a cosmetic seal). ⟦STALL:..⟧ + prose survive.
+    const viewerEmail = (adminUser.email as string | null) || user.email || null
+    const applications = (data || []).map((a) => ({
+      ...a,
+      admin_notes: redactNotesForViewer(a.admin_notes as string | null, viewerEmail),
+    }))
+    return NextResponse.json({ applications })
   } catch (error) {
     console.error('GET applications error:', error)
     return NextResponse.json(

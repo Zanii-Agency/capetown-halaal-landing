@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getTicketStats } from '@/lib/woocommerce'
+import { isEftAdmin, reconciledPaid, redactNotesForViewer } from '@/lib/eft'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,8 +43,20 @@ export async function GET() {
       .order('created_at', { ascending: false })
 
     const apps = applications || []
-    // Derive payment facts per row from the portal marker + real paid_at column.
-    const derived = apps.map(a => ({ app: a, pay: deriveVendorPayment(a) }))
+    // Wall (CTH Law 2): the owner counts only money reconciled through a channel
+    // she handles (Yoco/cash/waived, or an EFT presented-as-Yoco). Raw master-lane
+    // settlements (method eft/manual_card/manual) and the 'collected' interim must
+    // not inflate her revenue total. reconciledPaid is exactly that predicate —
+    // rosterPaid (the method-agnostic paid LABEL) would NOT exclude them and this
+    // total would be identical to the unwalled one. The EFT admin keeps the raw
+    // derivation. Same rule vendorInOwnerScope / finance use.
+    const viewerEmail = user.email || null
+    const eftAdmin = isEftAdmin(viewerEmail)
+    const derived = apps.map(a => {
+      const pay = deriveVendorPayment(a)
+      const paid = eftAdmin ? pay.paid : reconciledPaid(a.admin_notes as string | null, a.paid_at as string | null)
+      return { app: a, pay: { ...pay, paid } }
+    })
     const paidBooths = derived.filter(d => d.pay.paid)
     const boothRevenue = paidBooths.reduce((sum, d) => sum + Number(d.pay.amount || 0), 0)
     const deferredBooths = derived.filter(d => !d.pay.paid && d.pay.status === 'deferred')
@@ -74,7 +87,10 @@ export async function GET() {
         ticketRevenue,
         totalRevenue: boothRevenue + ticketRevenue,
       },
-      applications: apps,
+      applications: apps.map(a => ({
+        ...a,
+        admin_notes: redactNotesForViewer(a.admin_notes as string | null, viewerEmail),
+      })),
       ticketError,
     })
   } catch (error) {

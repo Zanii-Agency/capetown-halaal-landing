@@ -9,6 +9,7 @@ import { ApplicationInfoRequested } from '@/lib/email/templates/ApplicationInfoR
 import { provisionExhibitorAccount } from '@/lib/exhibitor-auth'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { assertRole } from '@/lib/admin-rbac'
+import { redactNotesForViewer, mergeNotesFromViewer } from '@/lib/eft'
 import { capJsonbSize } from '@/lib/audit/cap'
 import { findWaTemplate, renderWaTemplatePreview } from '@/lib/templates/wa-meta'
 import { parseAllocation } from '@/lib/stalls'
@@ -57,7 +58,14 @@ export async function GET(
       return NextResponse.json({ error: 'Application not found' }, { status: 404 })
     }
 
-    return NextResponse.json({ application: data })
+    // Wall (CTH Law 2): raw admin_notes carries the covert ⟦EFT⟧ lane marker and
+    // the base64 ⟦PORTAL⟧ payment blob. The owner edits human notes + stall
+    // allocation on the detail page, but must never see the EFT arrangement. The
+    // EFT admin reads the raw string; everyone else gets it redacted. The PATCH
+    // handler re-merges the covert markers so this redaction cannot drop them.
+    const viewerEmail = (adminUser.email as string | null) || user.email || null
+    const application = { ...data, admin_notes: redactNotesForViewer(data.admin_notes as string | null, viewerEmail) }
+    return NextResponse.json({ application })
   } catch (error) {
     console.error('GET application error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -138,6 +146,23 @@ export async function PATCH(
       .eq('id', user.id)
       .maybeSingle()
     const actorEmail = (actorRow?.email as string | null) || user.email || null
+
+    // A non-EFT-admin reads admin_notes redacted (GET above), so a save would
+    // otherwise overwrite the DB with the redacted string and silently drop the
+    // covert ⟦EFT⟧/⟦PORTAL⟧ lane state. Re-attach the stored markers before the
+    // write. The EFT admin (who read the raw string) passes through unchanged.
+    if (validated.admin_notes !== undefined) {
+      const { data: curRow } = await admin
+        .from('vendor_applications')
+        .select('admin_notes')
+        .eq('id', id)
+        .maybeSingle()
+      validated.admin_notes = mergeNotesFromViewer(
+        validated.admin_notes,
+        (curRow?.admin_notes as string | null) ?? null,
+        actorEmail,
+      )
+    }
 
     // Update application
     const updateData: Record<string, unknown> = { ...validated }
