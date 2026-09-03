@@ -11,6 +11,7 @@ import {
   Building2, Upload, Loader2, CheckCircle2, Info, Mail, Copy, Check, Eye, AlertTriangle, Clock,
 } from 'lucide-react'
 import { EFT_TERMS, EFT_TERMS_HEADING } from '@/lib/eft-terms'
+import { prepareUploadFile, FileTooLargeError, tooLargeMessage } from '@/lib/client/prepare-upload'
 import {
   Dialog,
   DialogContent,
@@ -108,16 +109,21 @@ export default function EftPanel({
     if (!file) { setError('Please choose your proof of payment first.'); return }
     setBusy(true); setError(null)
     try {
+      // Shrink oversized phone photos client-side so they clear Vercel's ~4.5MB
+      // request-body cap; a too-big PDF throws FileTooLargeError with real copy.
+      const toSend = await prepareUploadFile(file)
       const fd = new FormData()
-      fd.append('file', file)
+      fd.append('file', toSend)
       fd.append('purpose', purpose)
       if (note.trim()) fd.append('note', note.trim())
       const res = await fetch('/api/exhibitor/eft-proof', { method: 'POST', body: fd })
+      if (res.status === 413) throw new Error(tooLargeMessage(toSend.size))
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || 'Upload failed')
       setSuccess(true)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed')
+      if (e instanceof FileTooLargeError) setError(e.message)
+      else setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
       setBusy(false)
     }
