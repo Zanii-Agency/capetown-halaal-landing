@@ -37,6 +37,25 @@ export type DecisionStatus = 'approved' | 'rejected' | 'info_requested'
  *  so remediation / double-taps never re-send. Mirrors the ⟦STALL:..⟧ pattern. */
 export const APPROVED_NOTIFIED_RE = /⟦APPROVED_NOTIFIED:[^⟧]+⟧/
 
+/**
+ * The admin-typed rejection / info reason is free text and goes straight to a
+ * vendor, so it must obey CTH-DOCTRINE Law 7 (no em/en dashes vendor-facing).
+ * Convert any dash-as-break to a comma, collapse whitespace, trim. Returns ''
+ * for an empty/whitespace note so callers can treat it as "no reason given".
+ *
+ * Exported so the test-preview route sanitises byte-for-byte the same way as
+ * the real send (a second copy would silently drift if only one were tightened).
+ * Law 7 is absolute, so the class covers the whole dash family (em, en,
+ * horizontal bar, figure dash, minus) plus a double-hyphen used as a break; a
+ * lone ASCII hyphen (halaal-certified) is left alone.
+ */
+export function cleanReason(reason?: string | null): string {
+  return String(reason || '')
+    .replace(/\s*(?:--+|[‒–—―−])\s*/g, ', ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /** Minimal application shape the side-effects need. */
 export interface DecisionApp {
   email: string
@@ -73,16 +92,21 @@ export async function notifyApplicationDecision({
   id,
   app,
   status,
+  reason,
 }: {
   admin: AdminClient
   id: string
   app: DecisionApp
   status: DecisionStatus
+  /** Admin-typed reason for a reject / info_requested. Surfaced to the vendor
+   *  in the email (and on WhatsApp when the reason template is approved). */
+  reason?: string | null
 }): Promise<DecisionNotifyResult> {
   let emailSent = false
   let emailError: string | undefined
   let waSent = false
   let waSkipped: string | undefined
+  const cleanedReason = cleanReason(reason)
 
   try {
     let res: { ok: boolean; error?: string } | undefined
@@ -244,20 +268,49 @@ export async function notifyApplicationDecision({
         }
       }
     } else if (status === 'rejected') {
+      // With a typed reason we lead the body with that reason (the "we had an
+      // overwhelming number of applications" narrative is wrong for a duplicate,
+      // an incomplete, or an out-of-scope reject). Without one we keep the warm
+      // capacity template. Plain-text mirror follows the same fork.
+      const reasonText = cleanedReason
+        ? `Hi ${app.contact_name},\n\nThank you for applying to trade at Young at Heart Festival 2026 with ${app.business_name}, and for taking the time to submit your application.\n\nAfter a careful review, we are not able to offer ${app.business_name} a trading spot at this year's festival. The reason from our review team:\n\n${cleanedReason}\n\nYour details stay on file, and you are welcome to apply again for future events. If you would like to discuss this, simply reply to this email. Questions? support@youngatheart.co.za or +27 65 943 5012.\n\nWarm regards,\nThe Young at Heart Festival Team`
+        : `Hi ${app.contact_name},\n\nThank you for applying to trade at Young at Heart Festival 2026 with ${app.business_name}, and for your patience while our selection committee reviewed every submission.\n\nWe received an overwhelming number of vendor applications this year, far beyond the spaces we have available. After a careful and fair review, we are not able to offer ${app.business_name} a trading spot at this year's festival.\n\nPlease know this is not a reflection of your business. With limited stalls and so many strong applications, many wonderful vendors could not be accommodated this time. Your details stay on file, and we would warmly welcome a fresh application for future events.\n\nIf you'd like any feedback, simply reply to this email. Questions? support@youngatheart.co.za or +27 65 943 5012.\n\nWarm regards,\nThe Young at Heart Festival Team`
       res = await sendEmail({
         to: app.email,
         subject: 'An update on your Young at Heart Festival 2026 application',
         react: ApplicationRejected({
           contactName: app.contact_name,
           businessName: app.business_name,
+          reason: cleanedReason || undefined,
         }),
-        text: `Hi ${app.contact_name},\n\nThank you for applying to trade at Young at Heart Festival 2026 with ${app.business_name}, and for your patience while our selection committee reviewed every submission.\n\nWe received an overwhelming number of vendor applications this year, far beyond the spaces we have available. After a careful and fair review, we are not able to offer ${app.business_name} a trading spot at this year's festival.\n\nPlease know this is not a reflection of your business. With limited stalls and so many strong applications, many wonderful vendors could not be accommodated this time. Your details stay on file, and we would warmly welcome a fresh application for future events.\n\nIf you'd like any feedback, simply reply to this email. Questions? support@youngatheart.co.za or +27 65 943 5012.\n\nWarm regards,\nThe Young at Heart Festival Team`,
+        text: reasonText,
       })
       try {
         const phone = (app.phone || app.whatsapp_number) as string | null
         if (phone) {
           const firstName = String(app.contact_name || '').trim().split(/\s+/)[0] || 'there'
-          const wa = await sendTemplate(toE164(phone), 'vendor_application_declined', [firstName], { category: 'utility' })
+          const e164 = toE164(phone)
+          let wa: Awaited<ReturnType<typeof sendTemplate>> | undefined
+          if (cleanedReason) {
+            // Meta fixes a template's body at approval time, so the plain decline
+            // template has no slot for free text: vendor_application_declined_reason
+            // ({{2}}=reason) must be created + approved in Meta before it delivers.
+            // Until then Meta 400s on the unknown name and sendTemplate THROWS (or
+            // skips). Either way we fall back to the plain decline so the vendor
+            // still gets a WhatsApp (just without the reason). The email always
+            // carries the reason regardless.
+            try {
+              wa = await sendTemplate(e164, 'vendor_application_declined_reason', [firstName, cleanedReason], { category: 'utility' })
+            } catch (e) {
+              console.warn('[reject] reason WA template threw, falling back to plain decline:', (e as Error).message)
+            }
+            if (!wa || wa.skipped) {
+              if (wa?.skipped) console.warn('[reject] reason WA template skipped, falling back:', wa.skipped)
+              wa = await sendTemplate(e164, 'vendor_application_declined', [firstName], { category: 'utility' })
+            }
+          } else {
+            wa = await sendTemplate(e164, 'vendor_application_declined', [firstName], { category: 'utility' })
+          }
           waSent = !wa.skipped
           waSkipped = wa.skipped
           if (wa.skipped) console.warn('[reject] WA template skipped:', wa.skipped)
@@ -266,14 +319,18 @@ export async function notifyApplicationDecision({
         console.error('[reject] WA template send failed:', (e as Error).message)
       }
     } else if (status === 'info_requested') {
+      const infoAsk = cleanedReason
+        ? `What we need from you:\n${cleanedReason}`
+        : `What we need from you:\n- A clear description of what you plan to sell or showcase.\n- A few photos of your products, stall, or previous setups.\n- Your trading licence or relevant certification, if applicable.`
       res = await sendEmail({
         to: app.email,
         subject: 'A little more information needed, Young at Heart Festival 2026',
         react: ApplicationInfoRequested({
           contactName: app.contact_name,
           businessName: app.business_name,
+          reason: cleanedReason || undefined,
         }),
-        text: `Hi ${app.contact_name},\n\nThank you for applying to trade at Young at Heart Festival 2026 with ${app.business_name}. Your application is moving through review, and our committee just needs a little more detail before we can finalise a decision.\n\nWhat we need from you:\n- A clear description of what you plan to sell or showcase.\n- A few photos of your products, stall, or previous setups.\n- Your trading licence or relevant certification, if applicable.\n\nSimply reply to this email with the details above and we'll pick your application straight back up. Questions? support@youngatheart.co.za or +27 65 943 5012.\n\nWarm regards,\nThe Young at Heart Festival Team`,
+        text: `Hi ${app.contact_name},\n\nThank you for applying to trade at Young at Heart Festival 2026 with ${app.business_name}. Your application is moving through review, and our committee just needs a little more detail before we can finalise a decision.\n\n${infoAsk}\n\nSimply reply to this email with the details above and we'll pick your application straight back up. Questions? support@youngatheart.co.za or +27 65 943 5012.\n\nWarm regards,\nThe Young at Heart Festival Team`,
       })
     }
 

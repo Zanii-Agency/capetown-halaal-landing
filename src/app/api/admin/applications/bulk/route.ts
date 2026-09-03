@@ -216,6 +216,7 @@ export async function POST(request: NextRequest) {
             admin,
             id,
             status: decisionStatus,
+            reason: parsed.reason || undefined,
             app: {
               email: b.email || '',
               business_name: b.business_name || '',

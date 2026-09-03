@@ -191,6 +191,7 @@ async function executeVendorAction(action: VendorAction, admin: BotAdmin): Promi
       admin: db,
       id: action.vendorId,
       status,
+      reason: action.note || undefined,
       app: {
         email: before.email || '',
         business_name: before.business_name || '',

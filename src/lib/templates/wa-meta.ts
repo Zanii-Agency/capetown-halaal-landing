@@ -120,6 +120,27 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
     ],
   },
+  {
+    // PENDING META APPROVAL — the reason-carrying decline. A Meta template body
+    // is fixed at approval time, so the plain vendor_application_declined has no
+    // slot for the admin's free-typed reason. This variant adds {{2}}=reason so
+    // WhatsApp can state WHY (a duplicate, an incomplete, out-of-scope). Until
+    // it is CREATED + APPROVED in Meta Business Manager against the YAH WABA the
+    // send skips observably and decision-notify falls back to the plain decline
+    // (vendor still gets a WhatsApp, just without the reason). The email always
+    // carries the reason regardless.
+    key: 'vendor_application_declined_reason',
+    label: 'Vendor application declined (with reason)',
+    description: 'Notify a vendor their application was not selected, with the review reason.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, thank you for applying to Young at Heart Festival 2026. After a careful review we are not able to offer a stall this year. Reason: {{2}}. Your details stay on file for future events. Reply here if you would like to discuss it.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'reason', label: 'Reason', placeholder: 'Duplicate application', required: true },
+    ],
+  },
   // ---------------------------------------------------------------------------
   // PENDING META APPROVAL — added 2026-06-22 to stop notifyVendor silently 400ing
   // on template names Meta never had. The two events below (document approved /
