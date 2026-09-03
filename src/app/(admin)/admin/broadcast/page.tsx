@@ -24,6 +24,10 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Sparkles } from 'lucide-react'
+// Type-only import (erased at build, no server code enters the client bundle).
+// The stage/paid VALUES are enforced against these types, so a filter key can
+// never drift from what the audience builder in lib/broadcast-audience accepts.
+import type { VendorStage, PaidFilter } from '@/lib/broadcast-audience'
 
 type Channel = 'mail' | 'wa' | 'both'
 type Mode = 'template' | 'free_text'
@@ -54,15 +58,17 @@ interface Filters {
   status: string
   sector: string
   booth_tier: string
+  stage: '' | VendorStage
   has_docs: '' | 'true' | 'false'
   contract_signed: '' | 'true' | 'false'
-  paid: '' | 'true' | 'false'
+  paid: '' | PaidFilter
 }
 
 const EMPTY_FILTERS: Filters = {
   status: '',
   sector: '',
   booth_tier: '',
+  stage: '',
   has_docs: '',
   contract_signed: '',
   paid: '',
@@ -92,14 +98,44 @@ const SECTOR_OPTIONS: { value: string; label: string }[] = [
   { value: 'other', label: 'Other' },
 ]
 
+// zanii-codef: mirror of TIER_META in lib/stalls.ts. Hardcoded (not imported)
+// so the client bundle does not pull stalls.json. The OLD list here was stale
+// (gazebo-3x3, shell-scheme, ...) and matched NO real vendor — the tier filter
+// was silently dead. Sync by hand if a tier is added to TIER_META.
 const TIER_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'Any tier' },
-  { value: 'food-truck-6m', label: 'Food truck 6m' },
-  { value: 'food-truck-3m', label: 'Food truck 3m' },
-  { value: 'gazebo-3x3', label: 'Gazebo 3x3' },
-  { value: 'gazebo-6x3', label: 'Gazebo 6x3' },
-  { value: 'gazebo-9x3', label: 'Gazebo 9x3' },
-  { value: 'shell-scheme', label: 'Shell scheme' },
+  { value: 'marquee-table-2x2', label: 'Marquee Table 2×2m' },
+  { value: 'marquee-full-3x3', label: 'Marquee Full 3×3m' },
+  { value: 'marquee-table-double-4x2', label: 'Marquee Double Table 4×2m' },
+  { value: 'marquee-full-double-6x3', label: 'Marquee Full Double 6×3m' },
+  { value: 'outdoor-bedouin-2x3', label: 'Outdoor Bedouin 2×3m' },
+  { value: 'food-gazebo-3x3', label: 'Food Gazebo 3×3m' },
+  { value: 'mini-dessert-truck-3.5m', label: 'Mini Dessert Truck 3.5m' },
+  { value: 'food-truck-4.5m', label: 'Food Truck 4.5m' },
+  { value: 'food-truck-6m', label: 'Food Truck 6m' },
+  { value: 'food-truck-8m', label: 'Food Truck 8m' },
+]
+
+// Lifecycle funnel stage. Values are VendorStage-typed, so they cannot drift
+// from what lib/broadcast-audience.vendorStage() computes. Ordered by depth.
+const STAGE_OPTIONS: { value: '' | VendorStage; label: string }[] = [
+  { value: '', label: 'Any stage' },
+  { value: 'applied', label: 'Applied (pending review)' },
+  { value: 'info', label: 'Info requested' },
+  { value: 'approved', label: 'Approved, not allocated' },
+  { value: 'allocated', label: 'Allocated, awaiting contract' },
+  { value: 'contract', label: 'Contract signed, unpaid' },
+  { value: 'paid', label: 'Paid / confirmed' },
+  { value: 'rejected', label: 'Rejected' },
+]
+
+// Paid state — real payment sub-states, not just yes/no.
+const PAID_OPTIONS: { value: '' | PaidFilter; label: string }[] = [
+  { value: '', label: 'Any paid' },
+  { value: 'paid', label: 'Stall fee paid' },
+  { value: 'unpaid', label: 'Stall fee unpaid' },
+  { value: 'deferred', label: 'On a payment plan' },
+  { value: 'waived', label: 'Fee waived' },
 ]
 
 interface DispatchResponse {
@@ -130,6 +166,7 @@ function buildQuery(filters: Filters): string {
   if (filters.status) p.set('status', filters.status)
   if (filters.sector) p.set('sector', filters.sector)
   if (filters.booth_tier) p.set('booth_tier', filters.booth_tier)
+  if (filters.stage) p.set('stage', filters.stage)
   if (filters.has_docs) p.set('has_docs', filters.has_docs)
   if (filters.contract_signed) p.set('contract_signed', filters.contract_signed)
   if (filters.paid) p.set('paid', filters.paid)
@@ -141,9 +178,10 @@ function filtersToBody(filters: Filters) {
     status: filters.status || null,
     sector: filters.sector || null,
     booth_tier: filters.booth_tier || null,
+    stage: filters.stage || null,
     has_docs: filters.has_docs === '' ? null : filters.has_docs === 'true',
     contract_signed: filters.contract_signed === '' ? null : filters.contract_signed === 'true',
-    paid: filters.paid === '' ? null : filters.paid === 'true',
+    paid: filters.paid || null,
   }
 }
 
@@ -321,7 +359,7 @@ export default function BroadcastPage() {
   // approved body invites a reply, so the vendor can reply on WhatsApp. The
   // operator's text fills {{2}}; the greeting + reply invite are the fixed frame.
   const paidWaDelivery =
-    (channel === 'wa' || channel === 'both') && mode === 'free_text' && filters.paid === 'true'
+    (channel === 'wa' || channel === 'both') && mode === 'free_text' && filters.paid === 'paid'
 
   const send = async () => {
     setSending(true)
@@ -719,6 +757,10 @@ function BroadcastFilters({ filters, channel, setChannel, onChange, onClearAll }
     const lbl = TIER_OPTIONS.find((o) => o.value === filters.booth_tier)?.label || filters.booth_tier
     activeChips.push({ key: 'tier', label: `Tier: ${lbl}`, clear: () => onChange({ booth_tier: '' }) })
   }
+  if (filters.stage) {
+    const lbl = STAGE_OPTIONS.find((o) => o.value === filters.stage)?.label || filters.stage
+    activeChips.push({ key: 'stage', label: `Stage: ${lbl}`, clear: () => onChange({ stage: '' }) })
+  }
   if (filters.has_docs) {
     activeChips.push({ key: 'docs', label: `Docs: ${filters.has_docs === 'true' ? 'Yes' : 'No'}`, clear: () => onChange({ has_docs: '' }) })
   }
@@ -726,7 +768,8 @@ function BroadcastFilters({ filters, channel, setChannel, onChange, onClearAll }
     activeChips.push({ key: 'ct', label: `Contract: ${filters.contract_signed === 'true' ? 'Yes' : 'No'}`, clear: () => onChange({ contract_signed: '' }) })
   }
   if (filters.paid) {
-    activeChips.push({ key: 'paid', label: `Paid: ${filters.paid === 'true' ? 'Yes' : 'No'}`, clear: () => onChange({ paid: '' }) })
+    const lbl = PAID_OPTIONS.find((o) => o.value === filters.paid)?.label || filters.paid
+    activeChips.push({ key: 'paid', label: lbl, clear: () => onChange({ paid: '' }) })
   }
   if (channel !== 'mail') {
     activeChips.push({
@@ -745,6 +788,7 @@ function BroadcastFilters({ filters, channel, setChannel, onChange, onClearAll }
         <CompactSelect value={filters.status} onChange={(v) => onChange({ status: v })} options={STATUS_OPTIONS} />
         <CompactSelect value={filters.sector} onChange={(v) => onChange({ sector: v })} options={SECTOR_OPTIONS} />
         <CompactSelect value={filters.booth_tier} onChange={(v) => onChange({ booth_tier: v })} options={TIER_OPTIONS} />
+        <CompactSelect value={filters.stage} onChange={(v) => onChange({ stage: v as '' | VendorStage })} options={STAGE_OPTIONS} />
         <CompactSelect
           value={filters.has_docs}
           onChange={(v) => onChange({ has_docs: v as '' | 'true' | 'false' })}
@@ -765,12 +809,8 @@ function BroadcastFilters({ filters, channel, setChannel, onChange, onClearAll }
         />
         <CompactSelect
           value={filters.paid}
-          onChange={(v) => onChange({ paid: v as '' | 'true' | 'false' })}
-          options={[
-            { value: '', label: 'Any paid' },
-            { value: 'true', label: 'Stall fee paid' },
-            { value: 'false', label: 'Stall fee unpaid' },
-          ]}
+          onChange={(v) => onChange({ paid: v as '' | PaidFilter })}
+          options={PAID_OPTIONS}
         />
         <CompactSelect
           value={channel}

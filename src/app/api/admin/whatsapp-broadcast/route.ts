@@ -46,7 +46,11 @@ import { renderTemplate, TEMPLATE_KEYS, type TemplateKey, type TemplateVars } fr
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
 import { parseAllocation } from '@/lib/stalls'
-import { parsePortalState } from '@/lib/portal-state'
+import {
+  buildAudience,
+  filtersFromSearch,
+  filtersFromBody,
+} from '@/lib/broadcast-audience'
 import { assertRole } from '@/lib/admin-rbac'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
@@ -139,104 +143,9 @@ const ALLOWED_WA_TEMPLATES = new Set<string>([
   ...PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS,
 ])
 
-// ---------------------------------------------------------------------------
-// Filter shape + parsing.
-// ---------------------------------------------------------------------------
-
-export interface BroadcastFilters {
-  status?: string | null
-  sector?: string | null
-  booth_tier?: string | null
-  has_docs?: boolean | null
-  contract_signed?: boolean | null
-  paid?: boolean | null
-}
-
-function parseBoolParam(v: string | null | undefined): boolean | null {
-  if (v == null) return null
-  if (v === '1' || v === 'true' || v === 'yes') return true
-  if (v === '0' || v === 'false' || v === 'no') return false
-  return null
-}
-
-function filtersFromSearch(params: URLSearchParams): BroadcastFilters {
-  return {
-    status: params.get('status') || null,
-    sector: params.get('sector') || null,
-    booth_tier: params.get('booth_tier') || null,
-    has_docs: parseBoolParam(params.get('has_docs')),
-    contract_signed: parseBoolParam(params.get('contract_signed')),
-    paid: parseBoolParam(params.get('paid')),
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Audience builder.
-//
-// AND-of-filters. We pull a minimal column set and filter in-process for
-// admin_notes marker conditions, since those are not indexed.
-// ---------------------------------------------------------------------------
-
-interface AudienceRow {
-  id: string
-  business_name: string
-  contact_name: string | null
-  email: string | null
-  phone: string | null
-  preferred_booth_tier: string | null
-  product_categories: string[] | null
-  status: string | null
-  admin_notes: string | null
-  paid_at: string | null
-  contract_signed_at: string | null
-}
-
-const DOCS_COMPLETE_MARKER = '⟦DOCS:complete⟧'
-
-/**
- * Single source of "paid" truth. Mirrors lib/exhibitor-paygate.ts isPaid():
- * a vendor counts as paid when the first-class column says so (Yoco webhook /
- * admin mark-paid via confirm.ts) OR the legacy base64 portal-state marker
- * does. NO code ever writes a literal ⟦PAID⟧ marker, so the old
- * notes.includes('⟦PAID⟧') predicate always matched zero rows.
- */
-function isPaidRow(r: AudienceRow): boolean {
-  if (r.paid_at) return true
-  return parsePortalState(r.admin_notes).payment?.status === 'paid'
-}
-
-/** Contract-signed truth: the column the /exhibitor/contract/sign route stamps. */
-function isContractSignedRow(r: AudienceRow): boolean {
-  return !!r.contract_signed_at
-}
-
-async function buildAudience(filters: BroadcastFilters): Promise<AudienceRow[]> {
-  const admin = createAdminClient()
-  let q = admin
-    .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, preferred_booth_tier, product_categories, status, admin_notes, paid_at, contract_signed_at')
-
-  if (filters.status) q = q.eq('status', filters.status)
-  if (filters.booth_tier) q = q.eq('preferred_booth_tier', filters.booth_tier)
-  if (filters.sector) q = q.contains('product_categories', [filters.sector])
-
-  const { data, error } = await q
-  if (error) {
-    console.error('Audience query error', error)
-    return []
-  }
-  const rows = (data || []) as AudienceRow[]
-  return rows.filter((r) => {
-    const notes = r.admin_notes || ''
-    if (filters.has_docs === true && !notes.includes(DOCS_COMPLETE_MARKER)) return false
-    if (filters.has_docs === false && notes.includes(DOCS_COMPLETE_MARKER)) return false
-    if (filters.contract_signed === true && !isContractSignedRow(r)) return false
-    if (filters.contract_signed === false && isContractSignedRow(r)) return false
-    if (filters.paid === true && !isPaidRow(r)) return false
-    if (filters.paid === false && isPaidRow(r)) return false
-    return true
-  })
-}
+// Filter shape, parsing, derivation and the audience builder now live in
+// lib/broadcast-audience.ts (one module shared with the preview route, so the
+// "who receives this" logic can never drift into two copies).
 
 async function loadOptOutEmails(): Promise<Set<string>> {
   const admin = createAdminClient()
@@ -292,7 +201,8 @@ export async function GET(req: NextRequest) {
 
 interface BroadcastBody {
   channel: 'mail' | 'wa' | 'both'
-  filters?: BroadcastFilters
+  /** Raw filter object from the client; re-parsed server-side via filtersFromBody. */
+  filters?: Record<string, unknown>
   /** Required unless `free_text` is supplied. */
   template_key?: TemplateKey
   custom_message?: string
@@ -365,7 +275,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'unknown wa_template' }, { status: 400 })
   }
 
-  const filters = body.filters || {}
+  const filters = filtersFromBody(body.filters)
   const audience = await buildAudience(filters)
   const optout = await loadOptOutEmails()
 
