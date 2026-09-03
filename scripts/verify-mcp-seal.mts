@@ -41,7 +41,12 @@ const master = await tokenFor(MASTER)
 // 1. surface
 const list = await fetch(`${base}/api/mcp/${owner}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'tools/list' }) }).then(r => r.json()) as { result: { tools: { name: string }[] } }
 const names = list.result.tools.map(t => t.name)
-for (const bad of names.filter(x => /eft|master|settle|reconcil|mark.?paid/i.test(x))) failures.push(`tool exposed: ${bad}`)
+// The owner's OWN EFT surface (eft_proofs, eft_proof_confirm: the /admin/eft-proofs
+// page and its fenced confirm route) is hers by design. What must never appear is
+// the master console: lane switches, mark-collected, settle, reconcile, manual
+// mark-paid, or anything under /api/admin/eft/*.
+const OWNER_EFT_TOOLS = new Set(['eft_proofs', 'eft_proof_confirm'])
+for (const bad of names.filter(x => !OWNER_EFT_TOOLS.has(x) && /eft|master|collect|settle|reconcil|mark.?paid|lane/i.test(x))) failures.push(`tool exposed: ${bad}`)
 console.log(`tools: ${names.join(', ')}`)
 
 // 2. Lane vendors, chosen by the canonical rule. vendor_full is DESIGNED to
