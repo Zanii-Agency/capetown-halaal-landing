@@ -25,8 +25,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { executeStallChangeAction, pendingStallChangeRequests } from '@/lib/stall-change-action'
-import { parsePortalState, type PortalState } from '@/lib/portal-state'
+import { executeStallChangeAction } from '@/lib/stall-change-action'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { parsePortalState } from '@/lib/portal-state'
 import { TYPE_META, tierLabel, type StallType } from '@/lib/stalls'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 
@@ -51,8 +52,6 @@ async function requireOperator() {
 export async function GET() {
   const auth = await requireOperator()
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
-  const text = await pendingStallChangeRequests()
-  // Parse the text back into the JSON shape the UI already expects.
   const size: Array<{
     id: string
     business_name: string
@@ -73,8 +72,15 @@ export async function GET() {
     requestedAt: string | null
   }> = []
 
-  const supabase = await createClient()
-  const { data: apps } = await supabase.from('vendor_applications').select('id, business_name, admin_notes')
+  // Read via the SERVICE client, not the RLS-bound user client. requireOperator()
+  // already authorized the caller; the authed client's select on
+  // vendor_applications fails with "infinite recursion detected in policy for
+  // relation admin_users", so `apps` came back null and BOTH queues rendered
+  // empty for every operator (Samreen included) while 14 requests sat pending.
+  // Every sibling admin route reads through the service client for this reason.
+  const db = createAdminClient()
+  const { data: apps, error } = await db.from('vendor_applications').select('id, business_name, admin_notes')
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   for (const a of (apps || []) as Array<{ id: string; business_name: string | null; admin_notes: string | null }>) {
     const state = parsePortalState(a.admin_notes)
     const cr = state.stallChangeRequest
@@ -105,7 +111,7 @@ export async function GET() {
   }
   size.sort((a, b) => String(b.requestedAt || '').localeCompare(String(a.requestedAt || '')))
   move.sort((a, b) => String(b.requestedAt || '').localeCompare(String(a.requestedAt || '')))
-  return NextResponse.json({ requests: size, moveRequests: move, text })
+  return NextResponse.json({ requests: size, moveRequests: move })
 }
 
 export async function POST(req: NextRequest) {
