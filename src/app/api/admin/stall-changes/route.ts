@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { executeStallChangeAction } from '@/lib/stall-change-action'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { TYPE_META, tierLabel, type StallType } from '@/lib/stalls'
 import { recordAdminAction } from '@/lib/zanii-ledger'
@@ -52,6 +53,12 @@ async function requireOperator() {
 export async function GET() {
   const auth = await requireOperator()
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  // THE SEAL. The EFT admin (master) sees every request; the festival owner
+  // (Samreen) sees ONLY vendors in her scope. Without this, switching the read
+  // to the service client below would surface master-EFT-lane vendors (Joe & Co,
+  // NZ BAZAAR, GAYA on 2026-09-03) to her, the exact leak the wall forbids. Same
+  // predicate every other roster/stalls surface uses (vendorInOwnerScope).
+  const viewerAll = isEftAdmin(auth.user?.email)
   const size: Array<{
     id: string
     business_name: string
@@ -79,9 +86,11 @@ export async function GET() {
   // empty for every operator (Samreen included) while 14 requests sat pending.
   // Every sibling admin route reads through the service client for this reason.
   const db = createAdminClient()
-  const { data: apps, error } = await db.from('vendor_applications').select('id, business_name, admin_notes')
+  const { data: apps, error } = await db.from('vendor_applications').select('id, business_name, admin_notes, paid_at')
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  for (const a of (apps || []) as Array<{ id: string; business_name: string | null; admin_notes: string | null }>) {
+  for (const a of (apps || []) as Array<{ id: string; business_name: string | null; admin_notes: string | null; paid_at: string | null }>) {
+    // Owner never sees a vendor outside her scope (unpaid / master-EFT lane).
+    if (!viewerAll && !vendorInOwnerScope(a.admin_notes, a.paid_at)) continue
     const state = parsePortalState(a.admin_notes)
     const cr = state.stallChangeRequest
     if (cr && cr.status === 'pending') {
