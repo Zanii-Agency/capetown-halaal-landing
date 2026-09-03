@@ -1,14 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Eye, Loader2, Search } from 'lucide-react'
+import { Check, Clock, Loader2, Search, X } from 'lucide-react'
 import {
-  PageShell, PageHeader, Card, Pill, Tabs,
+  PageShell, PageHeader, Card,
 } from '@/components/chrome/PageChrome'
 import { DOC_LABEL } from '@/lib/exhibitor/required-docs'
 import { DocViewerDrawer } from '@/components/admin/documents/DocViewerDrawer'
-
-type TabKey = 'vendors' | 'tickets'
 
 interface VendorDocRow {
   application_id: string
@@ -25,19 +23,15 @@ interface VendorDocRow {
   note: string | null
 }
 
-interface TicketRow {
-  id: string
-  wc_order_id: number
-  fooevents_ticket_id: string | null
-  ticket_type: string | null
-  holder_first_name: string | null
-  holder_last_name: string | null
-  holder_email: string | null
-  holder_phone: string | null
-  attendance_date: string | null
-  verified_at: string | null
-  checked_in_at: string | null
-  pdf_url: string | null
+// One card row per vendor: their identity plus every document they have
+// uploaded, collapsed onto a single line of status chips.
+interface VendorGroup {
+  application_id: string
+  business_name: string
+  contact_name: string | null
+  email: string | null
+  docs: VendorDocRow[]
+  latest_at: string
 }
 
 function formatDateTime(iso: string | null): string {
@@ -61,10 +55,29 @@ function docTypeLabel(type: string): string {
   return known || titleize(type)
 }
 
-function docStatusTone(s: VendorDocRow['doc_status']): 'success' | 'warn' | 'danger' {
-  if (s === 'approved') return 'success'
-  if (s === 'rejected') return 'danger'
-  return 'warn'
+// Short label for the on-line chips. The full DOC_LABEL strings ("Halaal
+// certificate or declaration") are too long to fit several per row.
+const DOC_SHORT: Record<string, string> = {
+  halaal_cert: 'Halaal',
+  health_permit: 'Health',
+  gas_cert: 'Gas',
+  public_liability: 'Liability',
+  electrical_coc: 'Electrical',
+  fire_safety: 'Fire',
+  indemnity: 'Indemnity',
+  vendor_contract: 'Contract',
+  other: 'Other',
+}
+
+function docShort(type: string): string {
+  return DOC_SHORT[type] || titleize(type)
+}
+
+// Chip styling + icon per doc status. Mirrors the vendors-list blockers chips.
+function chipTone(s: VendorDocRow['doc_status']) {
+  if (s === 'approved') return { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', Icon: Check }
+  if (s === 'rejected') return { cls: 'bg-rose-50 text-rose-700 border-rose-200', Icon: X }
+  return { cls: 'bg-amber-50 text-amber-700 border-amber-200', Icon: Clock }
 }
 
 // Resolve the URL the inline viewer should load for a vendor doc row.
@@ -89,20 +102,16 @@ interface ViewerState {
 const VIEWER_CLOSED: ViewerState = { open: false, url: null, label: '', holder: null }
 
 export function DocumentsClient() {
-  const [tab, setTab] = useState<TabKey>('vendors')
   const [search, setSearch] = useState('')
   const [docTypeFilter, setDocTypeFilter] = useState('')
   const [docStatusFilter, setDocStatusFilter] = useState('')
-  const [ticketTypeFilter, setTicketTypeFilter] = useState('')
-  const [verifiedFilter, setVerifiedFilter] = useState('')
 
   const [vendorRows, setVendorRows] = useState<VendorDocRow[] | null>(null)
-  const [ticketRows, setTicketRows] = useState<TicketRow[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Inline viewer state. Shared by both tabs; we only ever surface one
-  // PDF at a time so a single state slot is enough.
+  // Inline viewer state. We only ever surface one PDF at a time so a single
+  // state slot is enough.
   const [viewer, setViewer] = useState<ViewerState>(VIEWER_CLOSED)
 
   // Debounce search so we are not firing on every keystroke.
@@ -114,7 +123,6 @@ export function DocumentsClient() {
 
   // Load vendor docs
   useEffect(() => {
-    if (tab !== 'vendors') return
     let cancelled = false
     setLoading(true)
     setError('')
@@ -135,34 +143,9 @@ export function DocumentsClient() {
       .catch((e) => { if (!cancelled) setError(e.message || 'Failed to load') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [tab, debouncedSearch, docTypeFilter, docStatusFilter])
+  }, [debouncedSearch, docTypeFilter, docStatusFilter])
 
-  // Load tickets
-  useEffect(() => {
-    if (tab !== 'tickets') return
-    let cancelled = false
-    setLoading(true)
-    setError('')
-    const params = new URLSearchParams()
-    if (debouncedSearch) params.set('search', debouncedSearch)
-    if (ticketTypeFilter) params.set('ticket_type', ticketTypeFilter)
-    if (verifiedFilter) params.set('verified', verifiedFilter)
-    fetch(`/api/admin/documents/tickets?${params.toString()}`)
-      .then(async (res) => {
-        if (res.status === 401 || res.status === 403) {
-          window.location.href = '/admin/login'
-          return
-        }
-        if (!res.ok) throw new Error(`Server ${res.status}`)
-        const body = await res.json()
-        if (!cancelled) setTicketRows(body.rows || [])
-      })
-      .catch((e) => { if (!cancelled) setError(e.message || 'Failed to load') })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [tab, debouncedSearch, ticketTypeFilter, verifiedFilter])
-
-  // Unique values for the filter dropdowns. Derived from the loaded rows so
+  // Unique doc types for the filter dropdown. Derived from the loaded rows so
   // the option list always matches reality.
   const docTypeOptions = useMemo(() => {
     const set = new Set<string>()
@@ -170,30 +153,39 @@ export function DocumentsClient() {
     return Array.from(set).sort()
   }, [vendorRows])
 
-  const ticketTypeOptions = useMemo(() => {
-    const set = new Set<string>()
-    ;(ticketRows || []).forEach((r) => r.ticket_type && set.add(r.ticket_type))
-    return Array.from(set).sort()
-  }, [ticketRows])
+  // Collapse the flat doc rows into one group per vendor. The API already
+  // sorts rows by uploaded_at desc, so first-seen order keeps vendors sorted
+  // by most-recent activity.
+  const groups = useMemo<VendorGroup[]>(() => {
+    const byVendor = new Map<string, VendorGroup>()
+    for (const r of vendorRows || []) {
+      let g = byVendor.get(r.application_id)
+      if (!g) {
+        g = {
+          application_id: r.application_id,
+          business_name: r.business_name,
+          contact_name: r.contact_name,
+          email: r.email,
+          docs: [],
+          latest_at: r.uploaded_at,
+        }
+        byVendor.set(r.application_id, g)
+      }
+      g.docs.push(r)
+      if ((r.uploaded_at || '') > (g.latest_at || '')) g.latest_at = r.uploaded_at
+    }
+    return Array.from(byVendor.values())
+  }, [vendorRows])
 
   return (
     <PageShell>
       <PageHeader
         kicker="Operations"
         title="Documents"
-        subtitle="Every vendor document and ticket PDF in one place. Click View to preview the file inline."
+        subtitle="Every vendor's uploads summarised on one row. Click any document chip to preview the file inline."
       />
 
       <div className="space-y-4">
-        <Tabs
-          items={[
-            { k: 'vendors', label: 'Vendor Documents' },
-            { k: 'tickets', label: 'Tickets' },
-          ]}
-          active={tab}
-          onChange={(k) => setTab(k as TabKey)}
-        />
-
         {/* Filter row */}
         <Card>
           <div className="flex flex-wrap gap-3 items-center">
@@ -203,59 +195,31 @@ export function DocumentsClient() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={tab === 'vendors' ? 'Search vendor, contact, or email' : 'Search holder name or email'}
+                placeholder="Search vendor, contact, or email"
                 className="w-full pl-9 pr-3 py-2.5 rounded-full border border-[#E5E5E5]/40 bg-[#FFFFFF] text-sm focus:outline-none focus:border-[#cd2653]/60"
               />
             </div>
 
-            {tab === 'vendors' && (
-              <>
-                <select
-                  value={docTypeFilter}
-                  onChange={(e) => setDocTypeFilter(e.target.value)}
-                  className="px-3 py-2.5 rounded-full border border-[#E5E5E5]/40 bg-[#FFFFFF] text-sm focus:outline-none focus:border-[#cd2653]/60"
-                >
-                  <option value="">All document types</option>
-                  {docTypeOptions.map((t) => (
-                    <option key={t} value={t}>{docTypeLabel(t)}</option>
-                  ))}
-                </select>
-                <select
-                  value={docStatusFilter}
-                  onChange={(e) => setDocStatusFilter(e.target.value)}
-                  className="px-3 py-2.5 rounded-full border border-[#E5E5E5]/40 bg-[#FFFFFF] text-sm focus:outline-none focus:border-[#cd2653]/60"
-                >
-                  <option value="">All statuses</option>
-                  <option value="pending">Pending</option>
-                  <option value="approved">Approved</option>
-                  <option value="rejected">Rejected</option>
-                </select>
-              </>
-            )}
-
-            {tab === 'tickets' && (
-              <>
-                <select
-                  value={ticketTypeFilter}
-                  onChange={(e) => setTicketTypeFilter(e.target.value)}
-                  className="px-3 py-2.5 rounded-full border border-[#E5E5E5]/40 bg-[#FFFFFF] text-sm focus:outline-none focus:border-[#cd2653]/60"
-                >
-                  <option value="">All ticket types</option>
-                  {ticketTypeOptions.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
-                <select
-                  value={verifiedFilter}
-                  onChange={(e) => setVerifiedFilter(e.target.value)}
-                  className="px-3 py-2.5 rounded-full border border-[#E5E5E5]/40 bg-[#FFFFFF] text-sm focus:outline-none focus:border-[#cd2653]/60"
-                >
-                  <option value="">All</option>
-                  <option value="yes">Verified</option>
-                  <option value="no">Not verified</option>
-                </select>
-              </>
-            )}
+            <select
+              value={docTypeFilter}
+              onChange={(e) => setDocTypeFilter(e.target.value)}
+              className="px-3 py-2.5 rounded-full border border-[#E5E5E5]/40 bg-[#FFFFFF] text-sm focus:outline-none focus:border-[#cd2653]/60"
+            >
+              <option value="">All document types</option>
+              {docTypeOptions.map((t) => (
+                <option key={t} value={t}>{docTypeLabel(t)}</option>
+              ))}
+            </select>
+            <select
+              value={docStatusFilter}
+              onChange={(e) => setDocStatusFilter(e.target.value)}
+              className="px-3 py-2.5 rounded-full border border-[#E5E5E5]/40 bg-[#FFFFFF] text-sm focus:outline-none focus:border-[#cd2653]/60"
+            >
+              <option value="">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
           </div>
         </Card>
 
@@ -265,158 +229,71 @@ export function DocumentsClient() {
           </Card>
         )}
 
-        {tab === 'vendors' && (
-          <Card padded={false} className="overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-[#1B1A17]/55 border-b border-[#E5E5E5]/30 bg-[#FFFFFF]/40">
-                    <th className="p-3 font-bold">Vendor</th>
-                    <th className="p-3 font-bold">Document</th>
-                    <th className="p-3 font-bold">Status</th>
-                    <th className="p-3 font-bold">Uploaded</th>
-                    <th className="p-3 font-bold text-right">Open</th>
+        <Card padded={false} className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-[#1B1A17]/55 border-b border-[#E5E5E5]/30 bg-[#FFFFFF]/40">
+                  <th className="p-3 font-bold">Vendor</th>
+                  <th className="p-3 font-bold">Documents</th>
+                  <th className="p-3 font-bold text-right">Last upload</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (
+                  <tr>
+                    <td colSpan={3} className="p-8 text-center">
+                      <Loader2 className="w-5 h-5 animate-spin text-[#1B1A17]/45 mx-auto" />
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {loading && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center">
-                        <Loader2 className="w-5 h-5 animate-spin text-[#1B1A17]/45 mx-auto" />
-                      </td>
-                    </tr>
-                  )}
-                  {!loading && vendorRows && vendorRows.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-[#1B1A17]/45 text-sm">
-                        No documents match these filters.
-                      </td>
-                    </tr>
-                  )}
-                  {!loading && (vendorRows || []).map((r, i) => (
-                    <tr key={`${r.application_id}-${r.doc_type}-${i}`} className="border-b border-[#E5E5E5]/15 last:border-b-0 hover:bg-[#FFFFFF]/60">
-                      <td className="p-3">
-                        <p className="text-sm font-medium text-[#1B1A17]">{r.business_name}</p>
-                        <p className="text-xs text-[#1B1A17]/45">
-                          {[r.contact_name, r.email].filter(Boolean).join(' · ')}
-                        </p>
-                      </td>
-                      <td className="p-3">
-                        <p className="text-sm text-[#1B1A17]">{docTypeLabel(r.doc_type)}</p>
-                        <p className="text-xs text-[#1B1A17]/45 truncate max-w-[260px]" title={r.doc_name}>{r.doc_name}</p>
-                      </td>
-                      <td className="p-3">
-                        <Pill tone={docStatusTone(r.doc_status)}>{r.doc_status}</Pill>
-                      </td>
-                      <td className="p-3">
-                        <span className="text-sm text-[#1B1A17]/70">{formatDateTime(r.uploaded_at)}</span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setViewer({
-                            open: true,
-                            url: vendorDocUrl(r),
-                            label: `${docTypeLabel(r.doc_type)} · ${r.doc_name}`,
-                            holder: r.business_name,
-                          })}
-                          className="inline-flex items-center gap-1 text-sm font-semibold text-[#cd2653] hover:text-[#bf3026]"
-                        >
-                          <Eye className="w-3.5 h-3.5" /> View
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
-
-        {tab === 'tickets' && (
-          <Card padded={false} className="overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-[#1B1A17]/55 border-b border-[#E5E5E5]/30 bg-[#FFFFFF]/40">
-                    <th className="p-3 font-bold">Holder</th>
-                    <th className="p-3 font-bold">Ticket</th>
-                    <th className="p-3 font-bold">Order</th>
-                    <th className="p-3 font-bold">Verified</th>
-                    <th className="p-3 font-bold text-right">PDF</th>
+                )}
+                {!loading && vendorRows && groups.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="p-8 text-center text-[#1B1A17]/45 text-sm">
+                      No documents match these filters.
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {loading && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center">
-                        <Loader2 className="w-5 h-5 animate-spin text-[#1B1A17]/45 mx-auto" />
-                      </td>
-                    </tr>
-                  )}
-                  {!loading && ticketRows && ticketRows.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-[#1B1A17]/45 text-sm">
-                        No tickets match these filters.
-                      </td>
-                    </tr>
-                  )}
-                  {!loading && (ticketRows || []).map((r) => {
-                    const holder = [r.holder_first_name, r.holder_last_name].filter(Boolean).join(' ') || 'Unknown'
-                    return (
-                      <tr key={r.id} className="border-b border-[#E5E5E5]/15 last:border-b-0 hover:bg-[#FFFFFF]/60">
-                        <td className="p-3">
-                          <p className="text-sm font-medium text-[#1B1A17]">{holder}</p>
-                          <p className="text-xs text-[#1B1A17]/45">
-                            {[r.holder_email, r.holder_phone].filter(Boolean).join(' · ')}
-                          </p>
-                        </td>
-                        <td className="p-3">
-                          <p className="text-sm text-[#1B1A17]">{r.ticket_type || 'Unknown type'}</p>
-                          {r.fooevents_ticket_id && (
-                            <p className="text-xs text-[#1B1A17]/45 truncate max-w-[200px]" title={r.fooevents_ticket_id}>
-                              {r.fooevents_ticket_id}
-                            </p>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          <span className="text-sm text-[#1B1A17]/70">#{r.wc_order_id}</span>
-                        </td>
-                        <td className="p-3">
-                          {r.verified_at
-                            ? <Pill tone="success">Verified</Pill>
-                            : <Pill tone="warn">Pending</Pill>}
-                        </td>
-                        <td className="p-3 text-right">
-                          {r.pdf_url ? (
+                )}
+                {!loading && groups.map((g) => (
+                  <tr key={g.application_id} className="border-b border-[#E5E5E5]/15 last:border-b-0 hover:bg-[#FFFFFF]/60 align-top">
+                    <td className="p-3">
+                      <p className="text-sm font-medium text-[#1B1A17]">{g.business_name}</p>
+                      <p className="text-xs text-[#1B1A17]/45">
+                        {[g.contact_name, g.email].filter(Boolean).join(' · ')}
+                      </p>
+                    </td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {g.docs.map((d, i) => {
+                          const { cls, Icon } = chipTone(d.doc_status)
+                          return (
                             <button
+                              key={`${d.doc_type}-${i}`}
                               type="button"
+                              title={`${docTypeLabel(d.doc_type)} · ${d.doc_name} · ${d.doc_status}`}
                               onClick={() => setViewer({
                                 open: true,
-                                // Route through our same-origin proxy so the
-                                // drawer iframe can render the FooEvents PDF
-                                // inline (cross-origin direct embed is blocked
-                                // by tickets.youngatheart.co.za).
-                                url: `/api/admin/documents/tickets/proxy?url=${encodeURIComponent(r.pdf_url ?? '')}`,
-                                label: r.ticket_type ? `Ticket · ${r.ticket_type}` : 'Ticket',
-                                holder,
+                                url: vendorDocUrl(d),
+                                label: `${docTypeLabel(d.doc_type)} · ${d.doc_name}`,
+                                holder: g.business_name,
                               })}
-                              className="inline-flex items-center gap-1 text-sm font-semibold text-[#cd2653] hover:text-[#bf3026]"
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] font-medium transition hover:brightness-95 ${cls}`}
                             >
-                              <Eye className="w-3.5 h-3.5" /> View
+                              <Icon className="w-3 h-3" /> {docShort(d.doc_type)}
                             </button>
-                          ) : (
-                            <span className="text-xs text-[#1B1A17]/40">No PDF</span>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
+                          )
+                        })}
+                      </div>
+                    </td>
+                    <td className="p-3 text-right whitespace-nowrap">
+                      <span className="text-sm text-[#1B1A17]/70">{formatDateTime(g.latest_at)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
 
       <DocViewerDrawer
