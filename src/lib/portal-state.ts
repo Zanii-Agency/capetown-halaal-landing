@@ -130,7 +130,18 @@ export interface PortalState {
      *  Read by isChaseSuppressed() so the payment cron and the manual chase
      *  scripts stop billing a vendor we have promised more time. Writer:
      *  scripts/confirm-arrangement.tsx. */
-    arrangement?: { until: string; agreed_at?: string; note?: string }
+    arrangement?: {
+      until: string; agreed_at?: string; note?: string
+      /** A multi-instalment payment PLAN the vendor proposed via WhatsApp (exact
+       *  dates + amounts). `until` mirrors the LAST instalment date so the existing
+       *  chase suppression already respects the whole plan. plan_status is 'pending'
+       *  until the 5-minute auto-approval cron flips it to 'approved' and confirms
+       *  to the vendor. Writer: lib/payments/payment-plan.ts. */
+      installments?: Array<{ date: string; amount: number }>
+      proposed_at?: string
+      approved_at?: string
+      plan_status?: 'pending' | 'approved'
+    }
     /** ACCESSORY (electricity/furniture) EFT sub-ledger for vendors whose STALL
      *  fee is already settled but whose accessories were under-billed by the
      *  pre-2026-08-04 pricing bug. Mirrors the stall two-state so revenue counts

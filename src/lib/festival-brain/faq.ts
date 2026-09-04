@@ -498,11 +498,11 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
       /\bplan\b.{0,10}\bpay\b/i,
     ],
     fact:
-      'Stall fees are not split into part payments, instalments or deposits. The full amount is what settles the stall. A vendor who cannot meet their own payment due date can take until 31 August 2026 to settle in full and keeps their reserved space until then, but this is only offered when they ask for it. Their original due date still stands, so they keep seeing the payment as due and may still receive reminders in the meantime.',
+      'Vendors can pay their stall fee in instalments through a payment plan. They propose the exact date and amount of each instalment (2 to 6 of them, every date on or before 12 December 2026, together covering the full outstanding fee), and it is approved automatically a few minutes later. A single card checkout takes the full amount at once, so instalments are paid by EFT with the proof sent to support@youngatheart.co.za. A vendor who would rather make one full payment with more time can take until 31 August 2026 to settle in full instead.',
     // zanii-codef: unreachable while this key stays out of intentFaqKeys(); kept
     // truthful so it degrades correctly if anyone ever wires it as a canned answer.
     answer:
-      'We are not able to take the stall fee in parts. The full amount is what settles the stall, and your space stays reserved for you. If the due date on your account is tight, you can take until 31 August 2026 to settle in full. Your account will still show the payment as due and you may still get reminders in the meantime, that is expected as long as you settle by then.',
+      'Yes, we can set up a payment plan for you. Tell me the amount and the exact date of each instalment (2 to 6 payments, every date on or before 12 December 2026, adding up to your full stall fee) and I will submit it for approval. You pay each instalment by EFT and send your proof to support@youngatheart.co.za. If you would rather pay the whole amount at once but need more time, you can take until 31 August 2026.',
   },
   vendor_invoice_vat: {
     key: 'vendor_invoice_vat',

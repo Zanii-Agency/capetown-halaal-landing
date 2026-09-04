@@ -60,6 +60,10 @@
     {
       "path": "/api/cron/daily-ops-digest",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/plan-approvals",
+      "schedule": "*/2 * * * *"
     }
   ]
 }
