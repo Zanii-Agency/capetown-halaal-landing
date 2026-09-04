@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { Loader2, Upload, Plus, Trash2, Check, Globe, Instagram, Facebook, Sparkles, ExternalLink, CheckCircle2, AlertCircle, Image as ImageIcon, X } from 'lucide-react'
+import { prepareUploadFile, FileTooLargeError, tooLargeMessage } from '@/lib/client/prepare-upload'
 
 interface Menu { name: string; price?: string; desc?: string }
 interface GalleryPhoto { path: string; url: string }
@@ -136,16 +137,24 @@ export default function ProfileEditor({
     setUploading('logo')
     setError(null)
     try {
+      // Compress oversized images under Vercel's ~4.5MB body cap. Without this a
+      // phone-sized logo 413s BEFORE the route runs, logo_path never saves, and the
+      // vendor is re-nagged forever while believing they uploaded it (Elegant
+      // Muslimah, 2026-09-04). Small logos pass through untouched (transparency
+      // kept). Same fix already on DocumentsManager / EftPanel.
+      const toSend = await prepareUploadFile(file)
       const fd = new FormData()
-      fd.append('logo', file)
+      fd.append('logo', toSend)
       const res = await fetch('/api/exhibitor/profile', { method: 'POST', body: fd })
+      if (res.status === 413) throw new Error(tooLargeMessage(toSend.size))
       const j = await res.json()
       if (!res.ok) throw new Error(j.error || 'Upload failed')
       const next = { ...p, logo_url: j.logo_url as string }
       setP(next)
       recomputePublication(next)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed')
+      if (e instanceof FileTooLargeError) setError(e.message)
+      else setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
       setUploading(null)
     }
@@ -155,15 +164,18 @@ export default function ProfileEditor({
     setUploading('gallery')
     setError(null)
     try {
+      const toSend = await prepareUploadFile(file)
       const fd = new FormData()
-      fd.append('gallery', file)
+      fd.append('gallery', toSend)
       const res = await fetch('/api/exhibitor/profile', { method: 'POST', body: fd })
+      if (res.status === 413) throw new Error(tooLargeMessage(toSend.size))
       const j = await res.json()
       if (!res.ok) throw new Error(j.error || 'Upload failed')
       const next = { ...p, gallery_urls: [...p.gallery_urls, { path: j.path, url: j.url }] }
       setP(next)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed')
+      if (e instanceof FileTooLargeError) setError(e.message)
+      else setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
       setUploading(null)
       if (galleryInput.current) galleryInput.current.value = ''
