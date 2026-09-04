@@ -275,6 +275,13 @@ export default function EftPanel({
               <p className="text-xs text-white/50 mt-3">
                 Use <span className="font-semibold text-white/80">{reference}</span> as your payment reference so we can match your payment to {businessName}.
               </p>
+              <div className="mt-4 rounded-xl bg-white/5 border border-white/10 p-3.5 text-xs text-white/80 leading-relaxed">
+                <p className="font-semibold text-white mb-1">After you pay, send your proof of payment:</p>
+                <p>
+                  Email it to <a href="mailto:support@youngatheart.co.za" className="font-semibold text-[#ff7a9c] underline">support@youngatheart.co.za</a>, or upload it on this page.
+                  Sending it to <span className="font-semibold text-white/90">support@youngatheart.co.za</span> reaches our whole team, so whoever is available can confirm you fastest. That is why we ask you to use it rather than a team member&apos;s personal inbox.
+                </p>
+              </div>
             </div>
           ) : (
             <button
