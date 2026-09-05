@@ -538,9 +538,12 @@ test('eftProofVisibleToOwner: ⟦OWNERVIS⟧ hands a covert/frozen vendor to the
   assert.equal(eftProofVisibleToOwner('frozen1', withEftMarker(notes), fullEft), false)
   // same vendor marked ⟦OWNERVIS⟧ -> handed to the owner, proof is HERS.
   assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker(withEftMarker(notes)), fullEft), true)
-  // the post-cutover FLOOR still applies to an owner-visible vendor: a PRE-cutover proof stays hidden.
+  // the post-cutover FLOOR still hides a PRE-cutover proof for everyone else...
   const pre = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-08-01T00:00:00.000Z' } } as never)
-  assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker(pre), fullEft), false)
+  assert.equal(eftProofVisibleToOwner('v2', pre, fullEft), false)
+  // ...but the hand-set marker overrides it (Island Way Sorbet, paid into her account
+  // 2026-08-25, before the 31 Aug re-activation; the proof is dated truthfully).
+  assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker(pre), fullEft), true)
   // OWNERVIS with NO proof at all -> nothing to surface.
   assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker('note'), fullEft), false)
 })

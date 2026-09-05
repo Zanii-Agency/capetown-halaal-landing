@@ -10,7 +10,9 @@ import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner, eftReference, r
 import { parsePortalState } from '@/lib/portal-state'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 
-export type EftProofRow = { id: string; name: string; contact: string | null; reference: string; amount: number; proofUrl: string | null; note: string | null; uploadedAt: string; paid: boolean }
+/** `reference` = as printed on the proof when we could read it (what she matches on her
+ *  statement); `expectedReference` = the one we asked the vendor to use. */
+export type EftProofRow = { id: string; name: string; contact: string | null; reference: string | null; expectedReference: string; amount: number; proofUrl: string | null; note: string | null; uploadedAt: string; paid: boolean }
 
 export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEft: Awaited<ReturnType<typeof getFullEftMode>>; rows: EftProofRow[]; totalAmount: number; paidAmount: number }> {
   const db = createAdminClient()
@@ -39,11 +41,13 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
       id: v.id as string,
       name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
       contact: (v.contact_name as string) || null,
-      reference: eftReference(v),
+      reference: newest?.reference ?? null,
+      expectedReference: eftReference(v),
       amount: bill,
       proofUrl,
       note: newest?.note ?? null,
-      uploadedAt: (p.eft_submitted_at as string) || newest?.uploaded_at || '',
+      // When the vendor SENT it (proof upload time), never when an operator filed it.
+      uploadedAt: newest?.uploaded_at || (p.eft_submitted_at as string) || '',
       paid: rosterPaid(v.admin_notes as string | null, v.paid_at as string | null),
     })
   }

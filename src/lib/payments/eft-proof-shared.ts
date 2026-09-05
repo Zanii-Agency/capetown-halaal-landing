@@ -63,6 +63,28 @@ export type EftProofResult =
   | { ok: true; path: string; uploaded_at: string; isFirst: boolean }
   | { ok: false; error: string; status: number }
 
+/** Pull the payment reference off a bank proof-of-payment PDF. Matches the
+ *  reference line every SA bank prints (FNB "Reference :", Capitec "Payment
+ *  reference", Standard Bank "Beneficiary reference", Discovery "Reference",
+ *  Nedbank "Their reference", statements "Statement Reference"). Returns null
+ *  when there is no text layer or no such line. Pure on the text; never throws. */
+export function referenceFromProofText(text: string): string | null {
+  const m = text.match(/(?:beneficiary|payment|their|statement|your)?\s*reference(?:\s*(?:number|no\.?))?\s*[:\-]?\s*([^\r\n]{2,40})/i)
+  if (!m) return null
+  const ref = m[1].trim().replace(/\s{2,}/g, ' ')
+  // A bare bank reference NUMBER (10+ digits) is the bank's own id, not the vendor's reference.
+  if (/^\d{8,}$/.test(ref)) return null
+  return ref.slice(0, 40)
+}
+
+async function extractProofReference(bytes: Buffer): Promise<string | null> {
+  try {
+    const { extractTextFromBuffer } = await import('@/lib/extract-text')
+    const text = await extractTextFromBuffer(bytes, 'application/pdf', { maxChars: 20_000 })
+    return text ? referenceFromProofText(text) : null
+  } catch { return null }
+}
+
 function allowedExtension(filename?: string, mimeType?: string): string | null {
   const ext = (filename?.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '')
   if (ext && ALLOWED_EXT.includes(ext)) return ext
@@ -150,6 +172,9 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   }
 
   const uploaded_at = new Date().toISOString()
+  // The reference the vendor actually typed at their bank, read off the proof
+  // itself (PDF text layer only; screenshots have none). Best-effort.
+  const reference = ext === 'pdf' ? await extractProofReference(file.bytes) : null
   const priorState = parsePortalState(admin_notes || '').payment
   const isFirst = forAccessories ? !priorState?.acc?.submitted_at : !priorState?.eft_submitted_at
 
@@ -162,7 +187,7 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
         : { eft_submitted_at: s.payment?.eft_submitted_at || uploaded_at }),
       proofs: [
         ...(s.payment?.proofs || []),
-        { path, kind: (forAccessories ? 'eft_accessories' : 'eft_submission') as 'eft_accessories' | 'eft_submission', note: note || undefined, uploaded_at },
+        { path, kind: (forAccessories ? 'eft_accessories' : 'eft_submission') as 'eft_accessories' | 'eft_submission', note: note || undefined, uploaded_at, ...(reference ? { reference } : {}) },
       ],
     },
   }))

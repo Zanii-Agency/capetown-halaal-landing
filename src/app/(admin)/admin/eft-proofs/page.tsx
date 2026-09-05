@@ -70,7 +70,11 @@ export default async function EftProofsPage() {
                       <div className="font-medium text-neutral-900">{r.name}</div>
                       {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
                     </td>
-                    <td className="px-5 py-3 font-mono text-xs text-neutral-600">{r.reference}</td>
+                    <td className="px-5 py-3 font-mono text-xs text-neutral-600">
+                      {r.reference
+                        ? r.reference
+                        : <span className="text-neutral-400" title="The proof shows no reference. This is the one the vendor was asked to use.">{r.expectedReference} <span className="font-sans">(not on proof)</span></span>}
+                    </td>
                     <td className="px-5 py-3 text-right font-semibold text-neutral-900">{formatRand(r.amount)}</td>
                     <td className="px-5 py-3 text-neutral-600">{fmtDate(r.uploadedAt)}</td>
                     <td className="px-5 py-3">
