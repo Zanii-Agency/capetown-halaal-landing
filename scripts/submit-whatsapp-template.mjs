@@ -36,6 +36,8 @@ const body = m[1].trim()
 // Variable examples for Meta approval (they require a sample of each {{N}})
 const VAR_SAMPLES = {
   vendor_application_approved: ['Samreen', 'Samreen Test Stall', '1 September 2026'],
+  // {{1}} = first name, {{2}} = the review reason (free text).
+  vendor_application_declined_reason: ['Samreen', 'Duplicate application, you already applied under Rose Bakes'],
   vendor_payment_confirmation: ['Samreen', 'R6 500', 'MARQUEE Full Space 3x3m'],
   // Paid-cohort message suite: {{1}} = first name, {{2}} = the operator's message.
   paid_vendor_update: ['Samreen', 'Setup opens Thursday 10 December from 09:00. Please bring your vehicle pass and stall confirmation.'],

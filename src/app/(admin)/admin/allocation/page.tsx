@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Loader2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { Loader2, PanelLeftClose, PanelLeftOpen, MapPin } from 'lucide-react'
 import { AdminPage } from '@/components/admin/AdminPage'
 import FloorCommand, { type FloorBooth, type FloorApp, type FloorStatus } from '@/components/floor/FloorCommand'
 import type { MapStall } from '@/components/admin/StallMap'
@@ -21,6 +21,9 @@ interface AppRow extends AppRowLite {
   stall_status: string | null
   payment_status?: string
   payment_amount?: number
+  // The vendor's stall POSITION preference (from their stallMoveRequest), so the
+  // allocator can honour it while placing them. Null when they never asked.
+  stall_pref?: { zone: string | null; details: string } | null
 }
 interface Avail { total: number; allocated: number; held: number; available: number }
 interface StallsResponse {
@@ -313,6 +316,9 @@ export default function AllocationPage() {
                 placeholder="Search vendors..."
                 className="w-full px-2 py-1.5 text-xs border border-neutral-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cd2653]"
               />
+              <p className="mt-2 text-[11px] leading-snug text-neutral-400">
+                Drag a vendor onto an available booth to allocate. Zoom in first if the booths are small.
+              </p>
             </div>
             <div className="overflow-y-auto flex-1">
               {unallocatedVendors.length === 0 ? (
@@ -323,8 +329,20 @@ export default function AllocationPage() {
                     <button
                       key={v.id}
                       type="button"
+                      draggable
+                      onDragStart={(e) => {
+                        // Payload the FloorCommand booth drop-handler reads. text/plain
+                        // is a fallback for browsers that strip the custom MIME type.
+                        e.dataTransfer.setData(
+                          'application/x-cth-vendor',
+                          JSON.stringify({ id: v.id, name: v.business_name }),
+                        )
+                        e.dataTransfer.setData('text/plain', v.business_name)
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
                       onClick={() => setSelectedVendor(v.id === selectedVendor ? null : v.id)}
-                      className={`w-full text-left px-3 py-2.5 hover:bg-neutral-50 transition-colors ${
+                      title="Drag onto an available booth to allocate"
+                      className={`w-full text-left px-3 py-2.5 hover:bg-neutral-50 transition-colors cursor-grab active:cursor-grabbing ${
                         selectedVendor === v.id ? 'bg-[#cd2653]/5 border-l-2 border-[#cd2653]' : ''
                       }`}
                     >
@@ -335,6 +353,15 @@ export default function AllocationPage() {
                           {v.app_status}
                         </span>
                       </div>
+                      {v.stall_pref && (
+                        <div className="mt-1 flex items-start gap-1 text-[11px] text-[#cd2653]" title="Vendor's requested spot preference">
+                          <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
+                          <span className="leading-snug">
+                            Wants {v.stall_pref.zone || 'a specific spot'}
+                            {v.stall_pref.details ? `: ${v.stall_pref.details}` : ''}
+                          </span>
+                        </div>
+                      )}
                     </button>
                   ))}
                 </div>

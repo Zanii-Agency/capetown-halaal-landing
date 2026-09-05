@@ -5,7 +5,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
-import { getEftMode, vendorInEftLane, eftReference } from '@/lib/eft'
+import { getEftMode, getPaymentRail, vendorInEftLane, eftReference } from '@/lib/eft'
 import { notifyOwners } from '@/lib/bot/notify'
 import { sendMedia, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS } from '@/lib/bot/admins'
@@ -47,6 +47,11 @@ export interface EftProofInput {
    *  support-mail-fetcher are rail-aware). On the master rail the vendor is laned
    *  and stays hidden; on samreen_eft the proof is meant to reach her page. */
   captureRegardless?: boolean
+  /** Skip the built-in vendor acknowledgement. The email intake sends the ack on
+   *  RECEIPT (before/independent of this filing) so a filing hiccup can never deny
+   *  the vendor their reply; it passes skipAck so we never double-send. Portal and
+   *  bot callers omit it and keep the automatic ack. */
+  skipAck?: boolean
   /** 'accessories' = an ACCESSORY-balance EFT from a vendor whose stall fee is
    *  already settled (split-bill, 2026-08-04). Uses the `payment.acc` sub-ledger
    *  and the `<ref>-ACC` reference; gated on an actual accessory balance owing,
@@ -173,12 +178,18 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   // rather than at a console that won't list them.
   const offLane = !!input.captureRegardless
     && !vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })
+  // On the samreen_eft rail an unpaid vendor's proof lands on HER page, so "card-only,
+  // not on the EFT lane" would misdirect the master (it read that way for every
+  // owner-rail proof until 2026-09-05). Point at /admin/eft-proofs instead.
+  const ownerRail = !forAccessories && !paid_at && (await getPaymentRail()) === 'samreen_eft'
   try {
     await notifyOwners({
       event: 'system_alert',
       audience: 'master',
       body: forAccessories
         ? `${name} uploaded ${isFirst ? 'their ACCESSORY EFT proof' : 'ANOTHER accessory EFT proof'} via ${source} (accessory electricity balance). Ref ${ref}${noteSnippet}. Collect it on /admin/eft.`
+        : ownerRail
+          ? `${name} sent ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. It is on /admin/eft-proofs for Samreen to confirm.`
         : offLane
           ? `${name} sent a proof of payment via ${source}${paid_at ? ' (already marked paid, may be a duplicate or accessories)' : ' but is card-only, not on the EFT lane'}. Ref ${ref}${noteSnippet}. Check it against the account and mark them paid on their profile if it clears.`
           : `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. Reconcile it on /admin/eft.`,
@@ -187,8 +198,9 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
     console.error(`[eft-proof-shared:${source}] notifyOwners failed:`, (e as Error).message)
   }
 
-  // Vendor ack (first proof only).
-  if (isFirst) {
+  // Vendor ack (first proof only). skipAck lets a caller that already acked on
+  // receipt (the email intake) suppress this so the vendor is not double-messaged.
+  if (isFirst && !input.skipAck) {
     try {
       const { sendProofAck } = await import('@/lib/payments/send-proof-ack')
       const r = await sendProofAck({ businessName: name, contactName: contact_name, email, phone })

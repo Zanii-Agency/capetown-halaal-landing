@@ -41,7 +41,9 @@ function ownerMaySee(appId: string | null): boolean {
   //   unapproved applicants have no payment lane yet, so nothing to protect
   //   ⟦OWNERVIS⟧ is an explicit per-vendor hand-over
   if (a.status && a.status !== 'approved') return true
-  if (/\u27E6OWNERVIS\u27E7/.test((a.admin_notes as string) || '')) return true
+  // ⟦OWNERVIS⟧ is judged by the wall: hers unless money is IN MOTION on the master
+  // lane (Stubborn Monkey, collected 2026-07-26, correctly withheld). Treating the
+  // marker as unconditional reported that withholding as a false over-block.
   return vendorInOwnerScope(a.admin_notes as string | null, a.paid_at as string | null)
 }
 

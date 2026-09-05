@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Loader2, Layers, Search } from 'lucide-react'
+import { Loader2, Layers, Search, Mail } from 'lucide-react'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { QueueList } from '@/components/admin/applications/QueueList'
 import { PreviewPane } from '@/components/admin/applications/PreviewPane'
@@ -434,6 +434,31 @@ export default function ApplicationsWorkbenchPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [visibleRows, focusedId, focused, runAction, shortcutsOpen, dedupeOpen, flashHint])
 
+  // Send a TEST of the rejection email to the logged-in admin's own inbox, so
+  // they see exactly what a vendor gets (reason and all) before firing a real
+  // reject. Reuses the reject window.prompt idiom; no vendor is touched.
+  const sendTestEmail = useCallback(async () => {
+    const reason = window.prompt(
+      'Preview the REJECTION email in your own inbox.\n\nType the reason to include (e.g. "Duplicate application"), or leave blank to preview the generic capacity email:'
+    )
+    if (reason === null) return // cancelled
+    try {
+      const res = await fetch('/api/admin/applications/test-decision-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected', reason }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        window.alert(j?.error || 'Test send failed.')
+        return
+      }
+      window.alert(`Test rejection email sent to ${j.sentTo}.`)
+    } catch {
+      window.alert('Test send failed.')
+    }
+  }, [])
+
   // ---- render ---------------------------------------------------------------
   const selectedCount = selectedIds.size
 
@@ -480,6 +505,13 @@ export default function ApplicationsWorkbenchPage() {
           className="ml-auto px-2.5 py-1.5 text-xs rounded-md border border-neutral-200 hover:border-neutral-400 inline-flex items-center gap-1.5 text-neutral-700"
         >
           <Layers className="w-3.5 h-3.5" /> Dedupe
+        </button>
+        <button
+          onClick={sendTestEmail}
+          title="Send yourself a test of the rejection email (with a sample reason) before rejecting for real"
+          className="px-2.5 py-1.5 text-xs rounded-md border border-neutral-200 hover:border-neutral-400 inline-flex items-center gap-1.5 text-neutral-700"
+        >
+          <Mail className="w-3.5 h-3.5" /> Test email
         </button>
         <Link
           href="/admin"

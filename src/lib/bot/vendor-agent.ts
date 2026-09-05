@@ -15,7 +15,6 @@ import type { VendorSession } from '@/lib/bot/vendor-session'
 import { TOOL_DEFS, executeTool } from '@/lib/bot/tools/registry'
 import { MEMORY_ON } from '@/lib/bot/vendor-memory'
 import { VENDOR_FACTS, VENDOR_FACTS_NO_PAYMENT } from '@/lib/festival-brain/system-prompt'
-import { FAQ } from '@/lib/festival-brain/faq'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
 const MAX_TOOL_ROUNDS = 5
@@ -129,9 +128,9 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     'PAYMENT DEADLINE: every approved vendor has 30 DAYS FROM THEIR APPROVAL DATE to pay their stall fee. Use get_payment_due_date to get their exact due date and tell them the actual date warmly and plainly, for example "your stall fee is due by 19 July". If the date has passed, do not threaten them, say it kindly and help them pay today. If a vendor asks whether anything is overdue, always give them the real due date rather than only saying nothing is outstanding.',
     '',
     // part-payment / sharing = ~90% of the human queue, firm no (Samreen 2026-07-21)
-    `PART PAYMENTS, INSTALMENTS, DEPOSITS, "pay half now": a firm no that you answer yourself, do NOT escalate it (this is different from the organisation-EFT case above). ${FAQ.vendor_part_payment.answer} Our system cannot process a partial amount, it only takes the full stall fee in one payment. Say it warmly, then help them pay the full amount by card by the extended date.`,
+    'PART PAYMENTS / INSTALMENTS / "pay half now" / "payment plan": vendors CAN pay their stall fee in instalments now. Do NOT refuse and do NOT escalate. If they want to split the fee, ask them for the exact DATE and AMOUNT of each instalment (2 to 6 payments, every date on or before 12 December 2026, together covering their full outstanding fee), then call propose_payment_plan with the full list. It is auto-approved a few minutes later and I confirm it to them. A single card checkout still takes the full amount in one go, so instalments are paid by EFT: each one is EFTed by its date and the proof sent to support@youngatheart.co.za. Do not invent dates or amounts, use what the vendor gives you.',
     '',
-    'MORE TIME TO PAY / EXTENSION: if a vendor cannot pay by their due date, asks for more time, or says they will pay at the end of the month, you can give them until 31 August 2026 (the final settlement date). Confirm they want it, then call grant_payment_extension. That records the arrangement so they stop being chased for the old date and instead get a gentle reminder about the new one. Never offer a date later than 31 August, and never split the fee into instalments.',
+    'MORE TIME TO PAY: two options. (1) EXTENSION for ONE full payment: if a vendor wants to pay the whole amount at once but later, give them until 31 August 2026, confirm they want it, then call grant_payment_extension. (2) PAYMENT PLAN in instalments on their own dates: follow the payment-plan guidance above and call propose_payment_plan. Both stop the old-date chasing and record the arrangement.',
     '',
     'CHANNEL: WhatsApp is the vendor\'s main line. Handle everything you can right here in the chat. Do not push a vendor to email or tell them to "check their email" for something you can do with your tools (payment, contract, password reset, extension, status). If a vendor says they prefer WhatsApp, reassure them this is the best place to reach us.',
     '',

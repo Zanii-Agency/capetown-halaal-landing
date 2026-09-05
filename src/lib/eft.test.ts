@@ -544,3 +544,24 @@ test('eftProofVisibleToOwner: ⟦OWNERVIS⟧ hands a covert/frozen vendor to the
   // OWNERVIS with NO proof at all -> nothing to surface.
   assert.equal(eftProofVisibleToOwner('frozen1', withOwnerVisibleMarker('note'), fullEft), false)
 })
+
+// ---------------------------------------------------------------------------
+// 2026-09-05: Samreen's own EFT confirmations must count as HERS.
+// /api/admin/eft-proofs/confirm used to write method 'eft', a MASTER_ONLY method,
+// so every vendor she confirmed on her own page fell out of her finance
+// dashboard, roster scope and inbox. 'samreen_eft' is her reconciled account.
+// ---------------------------------------------------------------------------
+
+test("a vendor Samreen confirmed on her EFT-proofs page ('samreen_eft') is in her scope and reads PAID", () => {
+  const notes = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'samreen_eft', amount: 6500, eft_submitted_at: '2026-09-01T10:00:00.000Z', paid_at: '2026-09-05T08:00:00.000Z' } } as never)
+  assert.equal(reconciledPaid(notes, '2026-09-05T08:00:00.000Z'), true)
+  assert.equal(vendorInOwnerScope(notes, '2026-09-05T08:00:00.000Z'), true)
+  assert.equal(rosterPaymentStatus(notes, '2026-09-05T08:00:00.000Z', 'capetownhalaal@gmail.com'), 'paid')
+})
+
+test("the same state with method 'eft' (a master-lane settlement) stays OUT of her scope", () => {
+  const notes = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'eft', amount: 6500, eft_submitted_at: '2026-09-01T10:00:00.000Z' } } as never)
+  assert.equal(reconciledPaid(notes, '2026-09-05T08:00:00.000Z'), false)
+  assert.equal(vendorInOwnerScope(notes, '2026-09-05T08:00:00.000Z'), false)
+})
+

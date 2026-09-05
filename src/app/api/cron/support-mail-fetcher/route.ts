@@ -223,55 +223,14 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
       const vendor = await findVendorByEmail(supabase, fromAddress)
       const buyer = vendor ? null : await findBuyerByEmail(supabase, fromAddress)
 
-      // EMAILED PROOF OF PAYMENT -> master lane, automatically (Taona 2026-08-02:
-      // "if vendor emails proof of payment or via whatsapp, it should
-      // autopopulate on masterlane if it isnt acknowledged"). Same flow as the
-      // WhatsApp path: lane them first (recordEftProof refuses non-lane vendors),
-      // then record the proof — which stamps eft_submitted_at, puts them on
-      // /admin/eft, alerts the master with a copy, and acks the vendor.
+      // EMAILED PROOF OF PAYMENT: shared intake (src/lib/payments/email-proof-intake)
+      // with the gmail fetcher. Resolves the vendor wider than the exact sender
+      // address, acks on receipt, files via recordEftProof (rail-aware laning),
+      // alerts the master when a proof-looking mail matches no vendor.
       // Best-effort: a failure here must never block the inbox ingest.
-      if (vendor && !vendor.paid_at && parsedAttachments.length) {
-        try {
-          const { looksLikeProofEmail, pickProofAttachment } = await import('@/lib/payments/email-proof-detect')
-          const { vendorInEftLane, getEftMode, getPaymentRail, markVendorToldEft } = await import('@/lib/eft')
-          const alreadyLane = vendorInEftLane(vendor.admin_notes || '', await getEftMode(), vendor.paid_at, { email: vendor.email, phone: vendor.phone })
-          if (looksLikeProofEmail({ subject, body, attachments: parsedAttachments, alreadyLane })) {
-            const att = pickProofAttachment(parsedAttachments)
-            if (att?.content) {
-              // RAIL-AWARE covert laning, identical to the WhatsApp path
-              // (handle-eft-proof-media). Only lane ⟦EFT⟧ (hide from Samreen) on the
-              // MASTER rail. On samreen_eft/yoco the emailed proof is captured
-              // (captureRegardless) but NOT laned, so eftProofVisibleToOwner can
-              // surface it on HER page. Previously this laned unconditionally, which
-              // buried emailed proofs on Samreen's own rail (inconsistent with
-              // WhatsApp). The capture-time rail is what decides covert-vs-owner.
-              if ((await getPaymentRail()) === 'master' && !alreadyLane) {
-                await markVendorToldEft({ email: vendor.email, phone: vendor.phone })
-              }
-              const { recordEftProof } = await import('@/lib/payments/eft-proof-shared')
-              const fresh = await findVendorByEmail(supabase, fromAddress)
-              const result = await recordEftProof({
-                applicationId: vendor.id,
-                admin_notes: fresh?.admin_notes ?? vendor.admin_notes ?? null,
-                paid_at: vendor.paid_at ?? null,
-                email: vendor.email ?? null,
-                phone: vendor.phone ?? null,
-                business_name: vendor.business_name ?? null,
-                contact_name: vendor.contact_name ?? null,
-                file: { bytes: att.content, name: att.filename || 'proof-of-payment', type: att.contentType },
-                note: `emailed proof of payment (subject: "${subject.slice(0, 120)}")`,
-                source: 'email',
-                // Capture even a card-only ⟦NOEFT⟧ vendor's emailed proof rather
-                // than 403 + drop it. Storage only; no lane marker, Samreen wall
-                // untouched. Matches the WhatsApp path.
-                captureRegardless: true,
-              })
-              if (!result.ok) errors.push(`eft-proof ${fromAddress}: ${result.error}`)
-            }
-          }
-        } catch (e) {
-          errors.push(`eft-proof ${fromAddress}: ${(e as Error).message}`)
-        }
+      {
+        const { fileEmailedProof } = await import('@/lib/payments/email-proof-intake')
+        errors.push(...await fileEmailedProof({ db: supabase, vendor, fromAddress, subject, body, attachments: parsedAttachments, messageId, mailbox: 'support' }))
       }
 
       // Upsert thread keyed on peer_email.
@@ -279,12 +238,14 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
       try {
         const { data: existing } = await supabase
           .from('support_inbox_threads')
-          .select('id,unread_count')
+          .select('id,unread_count,vendor_application_id')
           .eq('peer_email', fromAddress)
           .maybeSingle()
 
         if (existing) {
           threadId = (existing as { id: string }).id
+          // Never NULL a link a human (or an earlier match) already made.
+          const keepVendor = vendor?.id ?? (existing as { vendor_application_id?: string | null }).vendor_application_id ?? null
           const prevUnread = (existing as { unread_count: number }).unread_count ?? 0
           await supabase
             .from('support_inbox_threads')
@@ -295,7 +256,7 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
               snoozed_until: null,
               last_inbound_at: receivedAt,
               unread_count: prevUnread + 1,
-              vendor_application_id: vendor?.id ?? null,
+              vendor_application_id: keepVendor,
             })
             .eq('id', threadId)
         } else {

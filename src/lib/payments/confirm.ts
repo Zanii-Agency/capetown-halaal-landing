@@ -19,11 +19,16 @@ import { paymentReference } from '@/lib/payments'
 
 const SITE = 'https://cthalaal.co.za'
 
-export type PaymentMethod = 'yoco' | 'eft' | 'cash' | 'manual_card' | 'waived'
+/** 'samreen_eft' = an EFT into the festival owner's reconciled account (...629),
+ *  confirmed by HER on /admin/eft-proofs. It is her money exactly like Yoco, so it
+ *  is NOT a master-only method: until 2026-09-05 the confirm route wrote 'eft',
+ *  which MASTER_ONLY_METHODS treats as covert, and every vendor she confirmed
+ *  vanished from her own finance dashboard, roster scope and inbox. */
+export type PaymentMethod = 'yoco' | 'eft' | 'samreen_eft' | 'cash' | 'manual_card' | 'waived'
 
 /** Every payment method, so a new one cannot be added without the audience test
  *  below forcing a decision about who sees its alert. */
-export const PAYMENT_METHODS: readonly PaymentMethod[] = ['yoco', 'eft', 'cash', 'manual_card', 'waived']
+export const PAYMENT_METHODS: readonly PaymentMethod[] = ['yoco', 'eft', 'samreen_eft', 'cash', 'manual_card', 'waived']
 
 /** Who sees a payment alert. Routes on the METHOD, not the EFT lane (Taona
  *  2026-07-26: "payment captured from yoco is always her but never eft").
@@ -36,8 +41,8 @@ export const PAYMENT_METHODS: readonly PaymentMethod[] = ['yoco', 'eft', 'cash',
 export function paymentAlertAudience(method: PaymentMethod): 'all' | 'master' {
   // manual_card joins eft on the master lane (Taona 2026-07-26): both are
   // operator-entered settlements of a payment taken outside Yoco, so they carry
-  // the same off-gateway handling the owner is walled off from. yoco, cash and
-  // waived are hers.
+  // the same off-gateway handling the owner is walled off from. yoco, cash,
+  // waived and samreen_eft (her own reconciled EFT account) are hers.
   return method === 'eft' || method === 'manual_card' ? 'master' : 'all'
 }
 

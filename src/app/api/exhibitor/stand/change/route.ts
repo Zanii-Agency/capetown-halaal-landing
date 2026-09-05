@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState, updatePortalState, type PortalState } from '@/lib/portal-state'
-import { TIER_META } from '@/lib/stalls'
+import { TIER_META, BEDOUIN_TIER, isBedouinEligible } from '@/lib/stalls'
 
 export async function GET() {
   const ctx = await getExhibitorContext()
@@ -24,6 +24,19 @@ export async function POST(req: NextRequest) {
 
   if (!requestedTier || !TIER_META[requestedTier]) {
     return NextResponse.json({ error: 'Invalid stall tier' }, { status: 400 })
+  }
+
+  // The Outdoor Bedouin tent is reserved for arts / crafts / toy vendors. Mirror
+  // the same guard the WhatsApp bot enforces so neither channel can log an
+  // ineligible request (one shared predicate in lib/stalls).
+  if (
+    requestedTier === BEDOUIN_TIER &&
+    !isBedouinEligible({ business_name: app.business_name as string, business_description: app.business_description as string })
+  ) {
+    return NextResponse.json(
+      { error: 'The Outdoor Bedouin tent is reserved for arts, crafts and toy vendors. Please choose a different size, or contact the team if you sell arts, crafts or toys.', code: 'BEDOUIN_RESTRICTED' },
+      { status: 400 },
+    )
   }
 
   const currentTier = (app.preferred_booth_tier as string) || ''

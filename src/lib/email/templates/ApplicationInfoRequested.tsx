@@ -16,6 +16,9 @@ interface ApplicationInfoRequestedProps {
   businessName: string
   /** Optional specifics the committee needs — rendered as bullet steps when present. */
   requested?: string[]
+  /** Admin-typed free-text note. Each non-empty line becomes a bullet, taking
+   *  precedence over the generic default list. */
+  reason?: string
 }
 
 /**
@@ -26,9 +29,16 @@ export function ApplicationInfoRequested({
   contactName,
   businessName,
   requested,
+  reason,
 }: ApplicationInfoRequestedProps) {
+  const reasonItems = (reason || '')
+    .split('\n')
+    .map((l) => l.replace(/^[-•\s]+/, '').trim())
+    .filter(Boolean)
   const items =
-    requested && requested.length > 0
+    reasonItems.length > 0
+      ? reasonItems
+      : requested && requested.length > 0
       ? requested
       : [
           'A clear description of what you plan to sell or showcase.',

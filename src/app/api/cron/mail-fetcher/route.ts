@@ -20,6 +20,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { captureAttachments } from '@/lib/email/attachments'
+import type { IntakeVendor } from '@/lib/payments/email-proof-intake'
+import type { ProofAttachment } from '@/lib/payments/email-proof-detect'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -32,10 +34,10 @@ export const maxDuration = 300
 async function findVendorByEmail(
   supabase: ReturnType<typeof createAdminClient>,
   email: string
-): Promise<{ id: string } | null> {
+): Promise<IntakeVendor | null> {
   if (!email) return null
-  const { data } = await supabase.from('vendor_applications').select('id').eq('email', email).limit(1)
-  return (data?.[0] as { id: string }) || null
+  const { data } = await supabase.from('vendor_applications').select('id, business_name, contact_name, email, phone, admin_notes, paid_at').eq('email', email).limit(1)
+  return (data?.[0] as IntakeVendor) || null
 }
 
 /** Reject a hung promise so a silent stall becomes a loud, logged failure. */
@@ -247,9 +249,11 @@ export async function GET(req: Request) {
 
       let body = ''
       let bodyHtml: string | null = null
+      let parsedAttachments: ProofAttachment[] = []
       if (msg.source instanceof Buffer) {
         try {
           const parsed = await simpleParser(msg.source)
+          parsedAttachments = (parsed.attachments || []) as ProofAttachment[]
           body = (parsed.text || '').trim().slice(0, 4000)
           const html = typeof parsed.html === 'string' ? parsed.html.trim() : ''
           if (html) bodyHtml = html.slice(0, 32_000)
@@ -265,16 +269,26 @@ export async function GET(req: Request) {
 
       const vendor = await findVendorByEmail(supabase, fromAddress)
 
+      // EMAILED PROOF OF PAYMENT to Samreen's own mailbox. Same shared intake as the
+      // support fetcher (until 2026-09-05 this mailbox had NO proof detection, so
+      // Telkom's R4,800 POP and a bank confirmation for Island Way Sorbet sat here
+      // unfiled). Best-effort, never blocks the ingest.
+      {
+        const { fileEmailedProof } = await import('@/lib/payments/email-proof-intake')
+        errors.push(...await fileEmailedProof({ db: supabase, vendor, fromAddress, subject, body, attachments: parsedAttachments, messageId, mailbox: 'gmail' }))
+      }
+
       // Upsert thread by peer_email (mirrors support-mail-fetcher).
       let threadId: string | null = null
       try {
-        const { data: existing } = await supabase.from('support_inbox_threads').select('id,unread_count').eq('peer_email', fromAddress).maybeSingle()
+        const { data: existing } = await supabase.from('support_inbox_threads').select('id,unread_count,vendor_application_id').eq('peer_email', fromAddress).maybeSingle()
         if (existing) {
           threadId = (existing as { id: string }).id
           await supabase.from('support_inbox_threads').update({
             peer_name: fromName, subject, status: 'open', snoozed_until: null,
             last_inbound_at: receivedAt, unread_count: ((existing as { unread_count: number }).unread_count ?? 0) + 1,
-            vendor_application_id: vendor?.id ?? null,
+            // Never NULL a link a human (or an earlier match) already made.
+            vendor_application_id: vendor?.id ?? (existing as { vendor_application_id?: string | null }).vendor_application_id ?? null,
           }).eq('id', threadId)
         } else {
           const { data: inserted, error: insErr } = await supabase.from('support_inbox_threads').insert({

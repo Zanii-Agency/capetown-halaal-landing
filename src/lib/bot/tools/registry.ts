@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import type { VendorSession } from '@/lib/bot/vendor-session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState, type DocRecord } from '@/lib/portal-state'
-import { parseAllocation, resolveTierSlug, tierLabel, TIER_META, TYPE_META, STALL_LIST } from '@/lib/stalls'
+import { parseAllocation, resolveTierSlug, tierLabel, TIER_META, TYPE_META, STALL_LIST, BEDOUIN_TIER, isBedouinEligible } from '@/lib/stalls'
 import { FAQ, type FaqKey } from '@/lib/festival-brain/faq'
 import { writeToolReceipt } from '@/lib/bot/tools/audit'
 import { notifyOwners } from '@/lib/bot/notify'
@@ -26,6 +26,7 @@ import { computeVendorPricing } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
+import { proposePaymentPlan } from '@/lib/payments/payment-plan'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
 import { CONTRACT_VERSION } from '@/lib/contract/copy'
@@ -174,9 +175,34 @@ export const TOOL_DEFS = [
   },
   {
     name: 'grant_payment_extension',
-    description: "Give THIS vendor until 31 August 2026 (the festival's final settlement date) to pay their stall fee in full. Call when a verified vendor asks for an extension, more time, or says they will pay by the end of the month, AFTER you have confirmed they want it. This records the arrangement so the reminder system stops chasing them for the earlier date and instead acknowledges the extension. It does NOT split the fee into instalments, it only moves the single full-payment date to 31 August. If they are already paid, do not call it.",
+    description: "Give THIS vendor until 31 August 2026 (the festival's final settlement date) to pay their stall fee in full, in ONE payment. Call when a verified vendor asks for an extension or more time to pay the WHOLE amount at once by the end of the month, AFTER you have confirmed they want it. It moves the single full-payment date to 31 August. If they want to pay in several instalments on their own dates, use propose_payment_plan instead. If they are already paid, do not call it.",
     strict: true,
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  },
+  {
+    name: 'propose_payment_plan',
+    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into instalments they will pay by their own exact dates. Call ONLY when a verified, unpaid vendor wants to pay in instalments AND has given you the exact DATE and AMOUNT of each instalment (for example 'R3000 on 30 September and R3500 on 31 October'). Each instalment needs a real future date and a Rand amount, there must be 2 to 6 of them, every date must be on or before 12 December 2026, and the amounts must add up to at least their full outstanding fee. If they have not given exact dates and amounts, ask for them first. Do not invent dates or amounts. For a single full payment with more time, use grant_payment_extension instead.",
+    // NOT strict on purpose: a nested-array argument, and claude-sonnet-5 caps
+    // strict tools at 20 (adding a 21st 400s every vendor call, see
+    // get_badge_allocation). The handler validates every field defensively.
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        installments: {
+          type: 'array',
+          description: 'The instalments in date order. Each is an object with a date and an amount.',
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: {
+              date: { type: 'string', description: 'Exact date of this instalment, as YYYY-MM-DD' },
+              amount: { type: 'number', description: 'Rand amount to be paid on this date' },
+            },
+            required: ['date', 'amount'],
+          },
+        },
+      },
+      required: ['installments'],
+    },
   },
   {
     name: 'where_is_my_stall',
@@ -236,7 +262,7 @@ export const TOOL_DEFS = [
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
   'send_contract', 'sign_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
-  'get_payment_due_date', 'grant_payment_extension', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'upload_eft_proof',
+  'get_payment_due_date', 'grant_payment_extension', 'propose_payment_plan', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'upload_eft_proof',
   'escalate_to_human',
 ])
 
@@ -269,11 +295,11 @@ async function ownRow(vendorId: string) {
     // blocked, Law 8) and selecting it failed this scoped fetch with 42703,
     // which silently broke EVERY vendor tool below (status, due date, stall).
     // The due date is computed from reviewed_at + 30 by computePaymentDue.
-    .select('business_name, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements, reviewed_at, created_at')
+    .select('business_name, business_description, contact_name, email, status, admin_notes, contract_signed_at, contract_pdf_path, preferred_booth_tier, special_requirements, reviewed_at, created_at')
     .eq('id', vendorId)
     .single()
   return data as {
-    business_name: string; contact_name: string | null; email: string | null; status: string
+    business_name: string; business_description: string | null; contact_name: string | null; email: string | null; status: string
     admin_notes: string | null; contract_signed_at: string | null; contract_pdf_path: string | null
     preferred_booth_tier: string | null; special_requirements: unknown
     payment_due_date: string | null; reviewed_at: string | null; created_at: string | null
@@ -808,6 +834,17 @@ async function requestStallChange(session: VendorSession, requestedTier: string)
     return `That is not one of our stall sizes, so I cannot log it. Here is everything we have:\n${menu}\n\nWhich one would you like? I will send it to the team for approval.`
   }
 
+  // THE BEDOUIN RULE. The Outdoor Bedouin tent is reserved for arts / crafts /
+  // toy vendors. Refuse to log a Bedouin request from anyone else (a person can
+  // still override on the day if the vendor believes they qualify).
+  if (clean === BEDOUIN_TIER && !isBedouinEligible(row)) {
+    const menu = Object.entries(TIER_META)
+      .filter(([slug]) => slug !== BEDOUIN_TIER)
+      .map(([, m]) => `- ${m.label}, R${m.price.toLocaleString('en-ZA')}`)
+      .join('\n')
+    return `The Outdoor Bedouin tent is reserved for arts, crafts and toy vendors, so I cannot log that one for you. Here are the sizes you can choose from:\n${menu}\n\nWhich would you like? If you do sell arts, crafts or toys and think this is a mistake, tell me and I will pass it to the team.`
+  }
+
   await updatePortalState(vendorId, (s) => ({
     ...s,
     stallChangeRequest: {
@@ -1257,6 +1294,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'request_stall_change': content = await requestStallChange(session, (args as { requested_tier?: string })?.requested_tier || ''); break
       case 'get_payment_due_date': content = await getPaymentDueDate(session.vendorId!); break
       case 'grant_payment_extension': content = await grantPaymentExtension(session.vendorId!); break
+      case 'propose_payment_plan': content = await proposePaymentPlan(session.vendorId!, (args as { installments?: unknown })?.installments); break
       case 'withdraw_application': content = await withdrawSelf(session, (args as { reason?: string; confirmed?: boolean })); break
       case 'where_is_my_stall': content = await whereIsMyStall(session.vendorId!); break
       case 'report_issue': content = await reportIssue(session, args as { issue_type?: string; description?: string }); break

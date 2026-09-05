@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { recordVendorAction } from '@/lib/vendor-action-log'
+import { getPaymentRail } from '@/lib/eft'
 
 // TEMPORARY EFT lane (lib/eft.ts). The vendor uploads their OWN proof of an EFT
 // payment. This route DELIBERATELY does NOT call confirmPayment() or write a
@@ -41,6 +42,13 @@ export async function POST(req: NextRequest) {
     file: { bytes: buffer, name: file.name, type: file.type },
     note,
     source: 'portal',
+    // The portal shows this uploader via resolveInEftLane (rail-aware), but
+    // recordEftProof's lane gate keys on the MASTER-ONLY getEftMode(), so on the
+    // samreen_eft rail an ordinary unpaid vendor the page just told to pay EFT
+    // gets 403 and their proof is dropped. Capture the fact whenever EFT is the
+    // active rail, exactly as the WhatsApp/email paths do. Storage-only: no
+    // ⟦EFT⟧ marker, no lane move, so Samreen's wall is untouched.
+    captureRegardless: (await getPaymentRail()) !== 'yoco',
   })
 
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })

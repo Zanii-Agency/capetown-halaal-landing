@@ -10,6 +10,7 @@
 // stripped before the body is ever shown to an operator.
 import type { Attachment } from 'mailparser'
 import type { createAdminClient } from '@/lib/supabase/admin'
+import { isRealAttachment } from '@/lib/payments/email-proof-detect'
 
 export const EMAIL_ATTACHMENTS_BUCKET = 'email-attachments'
 const MARKER_RE = /\n*⟦ATTACH:([A-Za-z0-9+/=]+)⟧\s*$/
@@ -48,7 +49,9 @@ export async function captureAttachments(
     // from body_html) are signature graphics and tracking pixels, not
     // something a vendor "sent us". Real attachments are 'attachment' or,
     // for senders that never set the header, undefined.
-    if (a.contentDisposition === 'inline') continue
+    // Shared predicate with proof detection: a large inline image (pasted bank
+    // screenshot) is real, a small one (signature logo) is not.
+    if (!isRealAttachment(a)) continue
     if (!a.content || a.size > MAX_BYTES) continue
     const filename = safeFilename(a.filename || `attachment-${idx + 1}`)
     const path = `${slug}/${idx}-${filename}`

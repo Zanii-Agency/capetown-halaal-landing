@@ -101,6 +101,17 @@ async function loadOccupants(admin: ReturnType<typeof createAdminClient>, viewer
       payment_status: paymentStatus,
       payment_amount: paymentAmount,
       payment_ref: portal.payment?.provider_ref || portal.payment?.reference || null,
+      // The vendor's stall POSITION preference, surfaced AT ALLOCATION time (not
+      // just on the /admin/stall-changes queue) so the allocator can honour it
+      // while dragging them onto a booth. Non-rejected requests only.
+      stall_pref: portal.stallMoveRequest && portal.stallMoveRequest.status !== 'rejected'
+        ? {
+            zone: portal.stallMoveRequest.preferredZone
+              ? (TYPE_META[portal.stallMoveRequest.preferredZone as StallType]?.label || portal.stallMoveRequest.preferredZone)
+              : null,
+            details: portal.stallMoveRequest.details || '',
+          }
+        : null,
     }
     // Reverse map: EVERY code the vendor holds points back to this row, so the
     // floor highlights all of a multi-booth vendor's stalls (not just the first).

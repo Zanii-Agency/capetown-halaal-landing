@@ -205,6 +205,10 @@ export async function POST(
         admin,
         id,
         status: decisionStatus,
+        // The typed reject / info reason reaches the vendor in the email (and on
+        // WhatsApp once the reason template is approved). Was captured into the
+        // audit row + Zanii Proof but never threaded to the vendor before.
+        reason: note || undefined,
         app: {
           email: before.email || '',
           business_name: before.business_name || '',

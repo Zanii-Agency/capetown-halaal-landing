@@ -18,7 +18,6 @@ import {
   isOptedOut,
 } from '@/lib/wa-consent'
 import { askFestivalBrain } from '@/lib/festival-brain'
-import { isPartPaymentAsk, FAQ } from '@/lib/festival-brain/faq'
 import { detectHumanIntent, escalateToHuman, isInHandover, isPendingHandover, setPendingHandover } from '@/lib/bot/handover'
 import { notifyOwners, sendToAdmin } from '@/lib/bot/notify'
 import { resolveSwipeReplyTarget } from '@/lib/bot/swipe-reply'
@@ -660,16 +659,11 @@ async function handleInbound(msg: {
   // vendors / ticket buyers / unknowns.
   const identity = await resolveIdentity(e164)
 
-  // Deterministic guard: part-payment / instalment / payment-plan questions are
-  // a firm no and must NEVER escalate to a human. The model sometimes misses the
-  // phrasing (e.g. "payment plan"), so we short-circuit with the canonical FAQ
-  // answer before any brain/agent call.
-  if (identity.role === 'vendor' && isPartPaymentAsk(msg.text)) {
-    const answer = FAQ.vendor_part_payment.answer
-    const res = await sendText(e164, answer)
-    await logMessage({ direction: 'out', wa_phone: e164, body: answer, status: res.skipped ? 'failed' : 'sent', providerMessageId: res.messageId })
-    return
-  }
+  // Instalment / payment-plan questions used to be short-circuited here with a
+  // flat "no". Vendors CAN now pay in instalments via a payment plan (Taona
+  // 2026-09-04), so this goes to the agent instead: it collects the exact dates
+  // and amounts and calls propose_payment_plan. The old-refusal grounding in
+  // FAQ.vendor_part_payment was updated to match, so the agent offers the plan.
 
   // NOTE: the EFT lane deliberately does NOT change the bot's replies. Vendors in
   // the lane get the normal agent/brain like everyone else (no "maintenance"

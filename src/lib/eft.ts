@@ -139,6 +139,44 @@ export function viewerSafePayment(
   return { status: (allowed as readonly string[]).includes(masked) ? (masked as NonNullable<PortalState['payment']>['status']) : 'none' }
 }
 
+// Machine markers on admin_notes that reveal the covert EFT lane or payment
+// state to whoever reads the raw string. The festival owner legitimately reads
+// and edits the human prose and the ⟦STALL:..⟧ allocation, but must never see
+// the EFT arrangement (CTH Law 2). ⟦STALL:..⟧ is deliberately NOT in this set.
+// Global flag so .match() returns every occurrence for the merge below.
+const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
+
+/** admin_notes with every covert money/lane marker removed, for a non-EFT-admin
+ *  viewer (owner/operator). Human prose and ⟦STALL:..⟧ survive; null/undefined
+ *  pass through. The EFT admin reads the raw string. Idempotent. Pair this with
+ *  mergeNotesFromViewer on the write path so a redacted read can't drop state. */
+export function redactNotesForViewer(
+  adminNotes: string | null | undefined,
+  viewerEmail: string | null | undefined,
+): string | null | undefined {
+  if (adminNotes == null || isEftAdmin(viewerEmail)) return adminNotes
+  return adminNotes.replace(COVERT_NOTE_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** Re-attach the covert markers from the STORED row when a non-EFT-admin saves
+ *  admin_notes they read redacted, so the write can never silently drop the
+ *  lane/payment state (⟦EFT⟧, ⟦PORTAL⟧, ...). incoming = what the viewer
+ *  submitted; current = the untouched DB admin_notes. The EFT admin's write
+ *  (which read the raw string) passes through unchanged. */
+export function mergeNotesFromViewer(
+  incoming: string | null | undefined,
+  current: string | null | undefined,
+  viewerEmail: string | null | undefined,
+): string {
+  const next = incoming || ''
+  if (isEftAdmin(viewerEmail)) return next
+  const covert = (current || '').match(COVERT_NOTE_RE) || []
+  if (!covert.length) return next
+  const human = next.replace(COVERT_NOTE_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+  const tokens = covert.join('\n')
+  return human ? `${human}\n${tokens}` : tokens
+}
+
 // Operator PREVIEW addresses: emails an operator uses to preview vendor-facing
 // output (e.g. a self-sent invoice preview). Their unified-inbox threads are
 // confined to the dev-only EFT feed so a preview never surfaces in the festival

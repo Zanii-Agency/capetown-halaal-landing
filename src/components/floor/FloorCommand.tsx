@@ -143,6 +143,8 @@ export default function FloorCommand({
   const [vendorInput, setVendorInput] = useState('')
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Code of the booth currently under a dragged vendor card (drag-to-allocate).
+  const [dragOverCode, setDragOverCode] = useState<string | null>(null)
   const toastTimer = useRef<NodeJS.Timeout | null>(null)
   // Refs to the scroll container + each booth <g> so a search can scroll the
   // first matching booth into view.
@@ -330,6 +332,51 @@ export default function FloorCommand({
     }
   }, [selBooth, onToggleBlock, showToast, closeDrawer])
 
+  // ---------------- drag-to-allocate ----------------
+  // Only in admin mode with a persistence callback wired. Vendor mode is
+  // read-only, so cards there could never allocate anyway.
+  const dndEnabled = initialMode === 'admin' && !!onAllocate
+
+  const onBoothDragOver = useCallback((e: React.DragEvent, b: FloorBooth) => {
+    if (!canDropOn(b)) return
+    // preventDefault marks this element as a valid drop target (required for
+    // onDrop to fire) and lets us paint the hover highlight.
+    e.preventDefault()
+    try { e.dataTransfer.dropEffect = 'move' } catch { /* older browsers */ }
+    setDragOverCode((c) => (c === b.code ? c : b.code))
+  }, [])
+
+  const onBoothDragLeave = useCallback((b: FloorBooth) => {
+    setDragOverCode((c) => (c === b.code ? null : c))
+  }, [])
+
+  const handleVendorDrop = useCallback(async (e: React.DragEvent, b: FloorBooth) => {
+    e.preventDefault()
+    setDragOverCode(null)
+    if (!onAllocate) return
+    let name = ''
+    try {
+      const raw =
+        e.dataTransfer.getData('application/x-cth-vendor') ||
+        e.dataTransfer.getData('text/plain')
+      if (raw) {
+        try { name = String(JSON.parse(raw)?.name || '').trim() } catch { name = raw.trim() }
+      }
+    } catch { /* dataTransfer unreadable */ }
+    if (!name) return
+    if (!canDropOn(b)) { showToast(`${b.code} is ${b.status}. Release it first.`); return }
+    setSaving(true)
+    try {
+      await onAllocate(b.code, name, 'allocated')
+      showToast(`${b.code} allocated to ${name}`)
+      setSelected(b.code)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Allocation failed')
+    } finally {
+      setSaving(false)
+    }
+  }, [onAllocate, showToast])
+
   // ---------------- render ----------------
   return (
     <div
@@ -468,8 +515,9 @@ export default function FloorCommand({
               // matches stand out. Facilities never dim — they're context.
               const searchDim = hasActiveSearch && searchHits.size > 0 && !isHit && !isFacility
               const isDimmed = searchDim || (mode === 'vendor' && hasMine && !isMine && !isHit)
-              const fill = isMine ? C.brand : fillFor(b.status)
-              const stroke = isMine ? C.brand2 : isSel || isHit ? C.brand : strokeFor(b.status)
+              const isDropTarget = dndEnabled && dragOverCode === b.code
+              const fill = isMine ? C.brand : isDropTarget ? C.resvFill : fillFor(b.status)
+              const stroke = isDropTarget ? C.brand : isMine ? C.brand2 : isSel || isHit ? C.brand : strokeFor(b.status)
               const tcolor = isMine ? '#fff' : textFill(b.status)
               const isDashed = b.status === 'available' || b.status === 'blocked'
               const x = b.col * CELL + GAP / 2
@@ -490,6 +538,9 @@ export default function FloorCommand({
                   onClick={() => handleStallClick(b)}
                   onMouseEnter={(e) => !isFacility && (e.currentTarget.style.filter = 'brightness(1.06)')}
                   onMouseLeave={(e) => (e.currentTarget.style.filter = 'none')}
+                  onDragOver={dndEnabled && !isFacility ? (e) => onBoothDragOver(e, b) : undefined}
+                  onDragLeave={dndEnabled && !isFacility ? () => onBoothDragLeave(b) : undefined}
+                  onDrop={dndEnabled && !isFacility ? (e) => handleVendorDrop(e, b) : undefined}
                 >
                   <rect
                     x={x}
@@ -499,7 +550,7 @@ export default function FloorCommand({
                     rx={2.5 * scale}
                     fill={fill}
                     stroke={stroke}
-                    strokeWidth={isSel || isMine || isHit ? stallSelStrokeW : stallStrokeW}
+                    strokeWidth={isSel || isMine || isHit || isDropTarget ? stallSelStrokeW : stallStrokeW}
                     strokeDasharray={isDashed ? `${2 * scale} ${1.5 * scale}` : undefined}
                     filter={isSel || isMine ? `drop-shadow(0 0 ${4 * scale}px ${C.brand}55)` : undefined}
                   />
@@ -787,6 +838,13 @@ function BtnD({ children, onClick, disabled }: React.ButtonHTMLAttributes<HTMLBu
       {children}
     </button>
   )
+}
+
+// A vendor card can only be dropped onto an empty booth (available/blocked).
+// Facilities, and booths already allocated/reserved, reject the drop so a drag
+// can never silently overwrite an existing occupant.
+function canDropOn(b: FloorBooth): boolean {
+  return b.type !== 'facility' && (b.status === 'available' || b.status === 'blocked')
 }
 
 function prettyType(t: FloorBooth['type']) {

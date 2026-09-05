@@ -30,34 +30,14 @@ import {
 } from '@/lib/mail/templates'
 import { renderTemplate } from '@/lib/interpolate'
 import { parseAllocation } from '@/lib/stalls'
-import { parsePortalState } from '@/lib/portal-state'
+import {
+  type AudienceRow,
+  buildAudience,
+  filtersFromSearch,
+  filtersFromBody,
+} from '@/lib/broadcast-audience'
 
 export const dynamic = 'force-dynamic'
-
-interface AudienceRow {
-  id: string
-  business_name: string | null
-  contact_name: string | null
-  email: string | null
-  phone: string | null
-  preferred_booth_tier: string | null
-  product_categories: string[] | null
-  status: string | null
-  admin_notes: string | null
-  paid_at: string | null
-  contract_signed_at: string | null
-}
-
-/** Paid truth, mirroring lib/exhibitor-paygate.ts isPaid(). No ⟦PAID⟧ marker exists. */
-function isPaidRow(r: AudienceRow): boolean {
-  if (r.paid_at) return true
-  return parsePortalState(r.admin_notes).payment?.status === 'paid'
-}
-
-/** Contract-signed truth: the column the /exhibitor/contract/sign route stamps. */
-function isContractSignedRow(r: AudienceRow): boolean {
-  return !!r.contract_signed_at
-}
 
 async function assertAdmin(): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const supabase = await createClient()
@@ -73,45 +53,9 @@ async function assertAdmin(): Promise<{ ok: true } | { ok: false; status: number
   return { ok: true }
 }
 
-function parseBool(v: string | null): boolean | null {
-  if (v == null) return null
-  if (v === '1' || v === 'true' || v === 'yes') return true
-  if (v === '0' || v === 'false' || v === 'no') return false
-  return null
-}
-
-async function buildAudience(params: URLSearchParams): Promise<AudienceRow[]> {
-  const admin = createAdminClient()
-  let q = admin
-    .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, preferred_booth_tier, product_categories, status, admin_notes, paid_at, contract_signed_at')
-    .limit(50)
-
-  const status = params.get('status')
-  const sector = params.get('sector')
-  const boothTier = params.get('booth_tier')
-  const hasDocs = parseBool(params.get('has_docs'))
-  const contractSigned = parseBool(params.get('contract_signed'))
-  const paid = parseBool(params.get('paid'))
-
-  if (status) q = q.eq('status', status)
-  if (boothTier) q = q.eq('preferred_booth_tier', boothTier)
-  if (sector) q = q.contains('product_categories', [sector])
-
-  const { data, error } = await q
-  if (error) return []
-  const rows = (data || []) as AudienceRow[]
-  return rows.filter((r) => {
-    const n = r.admin_notes || ''
-    if (hasDocs === true && !n.includes('⟦DOCS:complete⟧')) return false
-    if (hasDocs === false && n.includes('⟦DOCS:complete⟧')) return false
-    if (contractSigned === true && !isContractSignedRow(r)) return false
-    if (contractSigned === false && isContractSignedRow(r)) return false
-    if (paid === true && !isPaidRow(r)) return false
-    if (paid === false && isPaidRow(r)) return false
-    return true
-  })
-}
+// Audience building (filter parsing + derivation) is shared with the dispatch
+// route via lib/broadcast-audience. buildAudience there reads all matching rows;
+// this route only needs a sample, so callers slice after.
 
 function firstNameOrNull(contact?: string | null): string | null {
   if (!contact) return null
@@ -144,7 +88,7 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const url = new URL(req.url)
-  const audience = await buildAudience(url.searchParams)
+  const audience = await buildAudience(filtersFromSearch(url.searchParams))
   return NextResponse.json({
     audience: audience.slice(0, 25).map((r) => ({
       id: r.id,
@@ -187,13 +131,7 @@ export async function POST(req: NextRequest) {
   // Find an audience row to use as the preview sample. We use the supplied
   // filter set when building the audience so the preview reflects the actual
   // outbound slice.
-  const params = new URLSearchParams()
-  if (body.filters) {
-    for (const [k, v] of Object.entries(body.filters)) {
-      if (v != null && v !== '') params.set(k, String(v))
-    }
-  }
-  const audience = await buildAudience(params)
+  const audience = await buildAudience(filtersFromBody(body.filters))
 
   const sample =
     (body.vendor_id ? audience.find((a) => a.id === body.vendor_id) : audience[0]) ||
@@ -209,6 +147,8 @@ export async function POST(req: NextRequest) {
       product_categories: null,
       status: null,
       admin_notes: null,
+      paid_at: null,
+      contract_signed_at: null,
     } as AudienceRow
 
   const vars = varsFor(sample, body.custom_message || '')

@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { prepareUploadFile, FileTooLargeError, tooLargeMessage } from '@/lib/client/prepare-upload'
 
 export interface DocView {
   type: string
@@ -51,15 +52,20 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
   async function upload(docType: string, file: File) {
     setError(null); setBusy(docType)
     try {
+      // Shrink oversized photos so they clear Vercel's ~4.5MB request-body cap;
+      // a too-big PDF throws FileTooLargeError with a real "email it instead" msg.
+      const toSend = await prepareUploadFile(file)
       const fd = new FormData()
-      fd.append('file', file); fd.append('doc_type', docType)
+      fd.append('file', toSend); fd.append('doc_type', docType)
       const res = await fetch('/api/exhibitor/documents', { method: 'POST', body: fd })
-      const j = await res.json()
+      if (res.status === 413) throw new Error(tooLargeMessage(toSend.size))
+      const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || 'Upload failed')
       setSuccessDoc(docType)
       router.refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed')
+      if (e instanceof FileTooLargeError) setError(e.message)
+      else setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
       setBusy(null)
     }
@@ -139,7 +145,7 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
           </div>
         )
       })}
-      <p className="text-xs text-neutral-400 px-1">PDF, JPG or PNG, up to 10MB. Documents are reviewed by the organisers before show day.</p>
+      <p className="text-xs text-neutral-400 px-1">A photo of any size works (we shrink large photos for you), or a PDF up to 4MB. Documents are reviewed by the organisers before show day.</p>
     </div>
     </>
   )
