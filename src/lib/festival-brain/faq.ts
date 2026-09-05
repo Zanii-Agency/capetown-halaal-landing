@@ -498,11 +498,11 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
       /\bplan\b.{0,10}\bpay\b/i,
     ],
     fact:
-      'Vendors can pay their stall fee in instalments through a payment plan. They propose the exact date and amount of each instalment (2 to 6 of them, every date on or before 12 December 2026, together covering the full outstanding fee), and it is approved automatically a few minutes later. A single card checkout takes the full amount at once, so instalments are paid by EFT with the proof sent to support@youngatheart.co.za. A vendor who would rather make one full payment with more time can take until 31 August 2026 to settle in full instead.',
+      'Vendors can pay their stall fee in instalments through a payment plan. They propose the exact date and amount of each instalment (2 to 6 of them, every date on or before 12 December 2026, together covering the full outstanding fee), and it is approved automatically a few minutes later. A single card checkout takes the full amount at once, so instalments are paid by EFT with the proof sent to support@youngatheart.co.za. A vendor who would rather make one full payment with more time can take until 31 August 2026 to settle in full instead. Until a plan is approved or the fee is settled, the current due date of the vendor still stands and they still receive the payment reminder emails.',
     // zanii-codef: unreachable while this key stays out of intentFaqKeys(); kept
     // truthful so it degrades correctly if anyone ever wires it as a canned answer.
     answer:
-      'Yes, we can set up a payment plan for you. Tell me the amount and the exact date of each instalment (2 to 6 payments, every date on or before 12 December 2026, adding up to your full stall fee) and I will submit it for approval. You pay each instalment by EFT and send your proof to support@youngatheart.co.za. If you would rather pay the whole amount at once but need more time, you can take until 31 August 2026.',
+      'Yes, we can set up a payment plan for you. Tell me the amount and the exact date of each instalment (2 to 6 payments, every date on or before 12 December 2026, adding up to your full stall fee) and I will submit it for approval. You pay each instalment by EFT and send your proof to support@youngatheart.co.za. If you would rather pay the whole amount at once but need more time, you can take until 31 August 2026. Until your plan is approved, your current due date still stands and you will still receive the reminder emails.',
   },
   vendor_invoice_vat: {
     key: 'vendor_invoice_vat',

@@ -24,11 +24,21 @@ const PROOF_FILENAME_RE = /proof|payment|pop|deposit|eft|bank|receipt|statement|
 
 const IMAGE_OR_PDF_RE = /^(application\/pdf|image\/(png|jpe?g|webp))$/i
 
-function isRealAttachment(a: ProofAttachment): boolean {
-  // Same rule as captureAttachments: inline resources are signature graphics.
-  if (a.contentDisposition === 'inline') return false
-  if (!a.content || (a.size ?? a.content.byteLength) > 10 * 1024 * 1024) return false
+/** Inline resources are usually signature graphics and tracking pixels, but an
+ *  iPhone/Gmail "paste a screenshot" of a bank app also arrives as
+ *  contentDisposition:'inline' (microbshuttle@, shameemakhan87@ on 2026-09-01,
+ *  both proofs lost). A signature logo is a few KB; a bank screenshot is 200KB+.
+ *  zanii-codef: size floor as the tell, cid-reference check if it misfires. */
+export const INLINE_IMAGE_MIN_BYTES = 60 * 1024
+
+/** Shared with captureAttachments so storage and proof detection cannot drift. */
+export function isRealAttachment(a: ProofAttachment): boolean {
+  const size = a.size ?? a.content?.byteLength ?? 0
   const type = (a.contentType || '').toLowerCase()
+  // An inline PDF is never a signature graphic (Bil's, iPhone Mail 2026-09-01).
+  const inlineOk = type === 'application/pdf' || (/^image\//.test(type) && size >= INLINE_IMAGE_MIN_BYTES)
+  if (a.contentDisposition === 'inline' && !inlineOk) return false
+  if (!a.content || size > 10 * 1024 * 1024) return false
   if (IMAGE_OR_PDF_RE.test(type)) return true
   // Senders that omit a content type: accept a payment-ish filename.
   return !!a.filename && /\.(pdf|png|jpe?g|webp)$/i.test(a.filename)

@@ -100,7 +100,7 @@ export interface PortalState {
      *  'cash' | 'manual_card' | 'waived' = the specific method an admin picked
      *  on the standard vendor Mark Paid flow (vendors/[id]/mark-paid) — this is
      *  what the invoice line and VendorPaymentsSection "Method" field show. */
-    method?: 'yoco' | 'fnb' | 'manual' | 'eft' | 'cash' | 'manual_card' | 'waived'
+    method?: 'yoco' | 'fnb' | 'manual' | 'eft' | 'samreen_eft' | 'cash' | 'manual_card' | 'waived'
     /** Venue zone (venue-zones.ts key) for non-marquee vendors that are
      *  payment-tracked + acknowledged but NOT allocated on the floor plan. */
     zone?: string

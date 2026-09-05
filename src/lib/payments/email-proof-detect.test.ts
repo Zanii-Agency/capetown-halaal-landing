@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { looksLikeProofEmail, pickProofAttachment, type ProofAttachment } from './email-proof-detect'
+import { looksLikeProofEmail, pickProofAttachment, isRealAttachment, type ProofAttachment } from './email-proof-detect'
 
 // 2026-08-02, Taona: "if vendor emails proof of payment or via whatsapp, it
 // should autopopulate on masterlane if it isnt acknowledged". A proof arriving
@@ -52,4 +52,15 @@ test('pickProofAttachment prefers the payment-ish file and skips inline images',
 test('oversized attachments are not picked', () => {
   const big = att({ filename: 'proof.pdf', size: 11 * 1024 * 1024 })
   assert.equal(pickProofAttachment([big]), null)
+})
+
+test('a large inline image (pasted bank screenshot) is a real attachment; a small inline logo is not', () => {
+  const big = { filename: 'image001.jpg', contentType: 'image/jpeg', contentDisposition: 'inline', size: 320_000, content: Buffer.alloc(10) }
+  const logo = { filename: 'logo.png', contentType: 'image/png', contentDisposition: 'inline', size: 8_000, content: Buffer.alloc(10) }
+  assert.equal(isRealAttachment(big), true)
+  assert.equal(isRealAttachment(logo), false)
+  // iPhone Mail attaches a PDF as inline; a PDF is never a signature graphic.
+  assert.equal(isRealAttachment({ filename: 'CTH payment.pdf', contentType: 'application/pdf', contentDisposition: 'inline', size: 67_645, content: Buffer.alloc(10) }), true)
+  assert.equal(looksLikeProofEmail({ subject: 'Proof of payment', body: 'please see attached', attachments: [big] }), true)
+  assert.equal(looksLikeProofEmail({ subject: 'Proof of payment', body: 'please see attached', attachments: [logo] }), false)
 })

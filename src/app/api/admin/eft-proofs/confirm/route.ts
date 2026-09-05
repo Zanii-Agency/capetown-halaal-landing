@@ -59,13 +59,14 @@ export async function POST(req: NextRequest) {
 
   // Same authority as the Yoco webhook and the manual mark-paid: cumulative,
   // atomic (paid_at IS NULL transition), de-duped by providerRef, and it sends
-  // the vendor their "Payment received" confirmation. Method 'eft' is honest
-  // (they paid EFT into the reconciled account); finance counts it via rosterPaid
-  // and the vendor roster reads PAID. A stable providerRef makes a double-click
+  // the vendor their "Payment received" confirmation. Method 'samreen_eft': an
+  // EFT into HER reconciled account, hers exactly like Yoco. NOT 'eft': that is a
+  // MASTER_ONLY method, and writing it here made every vendor she confirmed drop
+  // out of her own finance dashboard, roster scope and inbox (2026-09-05). A stable providerRef makes a double-click
   // idempotent — one confirm per vendor, never a double-count.
   const result = await confirmPayment({
     applicationId: id,
-    method: 'eft',
+    method: 'samreen_eft',
     providerRef: `eftproof-${id}`,
   })
   if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: 500 })
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
     await db.from('vendor_application_events').insert({
       application_id: id,
       event_type: 'payment_manual',
-      after_value: { total_paid: result.amount, method: 'eft', reference: `eftproof-${id}`, source: 'eft-proofs' },
+      after_value: { total_paid: result.amount, method: 'samreen_eft', reference: `eftproof-${id}`, source: 'eft-proofs' },
       actor_email: gate.adminUser.email,
       actor_role: 'admin',
       note: 'EFT proof confirmed from the EFT Proofs page',
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
     actor: { email: gate.adminUser.email, role: gate.role },
     action: 'mark_paid',
     vendorId: id,
-    payload: { method: 'eft', amount: result.amount ?? null, reference: `eftproof-${id}`, source: 'eft-proofs' },
+    payload: { method: 'samreen_eft', amount: result.amount ?? null, reference: `eftproof-${id}`, source: 'eft-proofs' },
   })
 
   const after = parsePortalState(

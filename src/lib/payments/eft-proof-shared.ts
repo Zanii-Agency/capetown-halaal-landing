@@ -5,7 +5,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
-import { getEftMode, vendorInEftLane, eftReference } from '@/lib/eft'
+import { getEftMode, getPaymentRail, vendorInEftLane, eftReference } from '@/lib/eft'
 import { notifyOwners } from '@/lib/bot/notify'
 import { sendMedia, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS } from '@/lib/bot/admins'
@@ -178,12 +178,18 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   // rather than at a console that won't list them.
   const offLane = !!input.captureRegardless
     && !vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })
+  // On the samreen_eft rail an unpaid vendor's proof lands on HER page, so "card-only,
+  // not on the EFT lane" would misdirect the master (it read that way for every
+  // owner-rail proof until 2026-09-05). Point at /admin/eft-proofs instead.
+  const ownerRail = !forAccessories && !paid_at && (await getPaymentRail()) === 'samreen_eft'
   try {
     await notifyOwners({
       event: 'system_alert',
       audience: 'master',
       body: forAccessories
         ? `${name} uploaded ${isFirst ? 'their ACCESSORY EFT proof' : 'ANOTHER accessory EFT proof'} via ${source} (accessory electricity balance). Ref ${ref}${noteSnippet}. Collect it on /admin/eft.`
+        : ownerRail
+          ? `${name} sent ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. It is on /admin/eft-proofs for Samreen to confirm.`
         : offLane
           ? `${name} sent a proof of payment via ${source}${paid_at ? ' (already marked paid, may be a duplicate or accessories)' : ' but is card-only, not on the EFT lane'}. Ref ${ref}${noteSnippet}. Check it against the account and mark them paid on their profile if it clears.`
           : `${name} uploaded ${isFirst ? 'their EFT proof of payment' : 'ANOTHER EFT proof'} via ${source}. Ref ${ref}${noteSnippet}. Reconcile it on /admin/eft.`,

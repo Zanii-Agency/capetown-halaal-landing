@@ -23,7 +23,7 @@ interface InvoiceData {
   issuedAt: string
   /** How this was actually paid. Undefined = a paid record from before this
    *  field existed; render a neutral "Paid" line rather than guessing. */
-  method?: 'yoco' | 'fnb' | 'manual' | 'eft' | 'cash' | 'manual_card' | 'waived'
+  method?: 'yoco' | 'fnb' | 'manual' | 'eft' | 'samreen_eft' | 'cash' | 'manual_card' | 'waived'
 }
 
 const METHOD_LABEL: Record<NonNullable<InvoiceData['method']>, string> = {
@@ -31,6 +31,7 @@ const METHOD_LABEL: Record<NonNullable<InvoiceData['method']>, string> = {
   fnb: 'Paid via bank transfer',
   manual: 'Paid (recorded manually)',
   eft: 'Paid via EFT',
+  samreen_eft: 'Paid via EFT',
   cash: 'Paid via cash',
   manual_card: 'Paid via card (in person)',
   waived: 'Fee waived',
