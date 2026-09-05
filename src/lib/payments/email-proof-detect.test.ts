@@ -64,3 +64,14 @@ test('a large inline image (pasted bank screenshot) is a real attachment; a smal
   assert.equal(looksLikeProofEmail({ subject: 'Proof of payment', body: 'please see attached', attachments: [big] }), true)
   assert.equal(looksLikeProofEmail({ subject: 'Proof of payment', body: 'please see attached', attachments: [logo] }), false)
 })
+
+test('referenceFromProofText reads the reference line every SA bank prints', async () => {
+  const { referenceFromProofText } = await import('./eft-proof-shared')
+  assert.equal(referenceFromProofText('Payee Details\nName : Halaal Hub\nReference : CTH830EF5\nEND'), 'CTH830EF5')
+  assert.equal(referenceFromProofText('Amount R12 000.00\nPayment reference CTHCE8557\nIMPORTANT'), 'CTHCE8557')
+  assert.equal(referenceFromProofText('Beneficiary reference ISLAND WAY SORBET\nAmount R5400.00'), 'ISLAND WAY SORBET')
+  assert.equal(referenceFromProofText('Statement Reference\nYAH - O-0F246CD9\n'), 'YAH - O-0F246CD9')
+  // the bank's own reference NUMBER is not the vendor's reference
+  assert.equal(referenceFromProofText('Reference number 4134150361\nBeneficiary name X'), null)
+  assert.equal(referenceFromProofText('You have paid R3 700 to Halal Hub'), null)
+})

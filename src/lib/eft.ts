@@ -803,12 +803,9 @@ export function eftProofVisibleToOwner(
   fullEft: { startedAt: string; protectedIds: Set<string> } | null,
 ): boolean {
   if (!fullEft) return false
-  // Must have an actual proof, uploaded AFTER the cutover. This floor applies to
-  // EVERYONE, including an owner-visible vendor: it is what stops an old covert
-  // proof surfacing.
+  // Must have an actual proof.
   const submitted = parsePortalState(adminNotes).payment?.eft_submitted_at
   if (!submitted) return false
-  if (new Date(submitted).getTime() < new Date(fullEft.startedAt).getTime()) return false
   // ⟦OWNERVIS⟧ is a DELIBERATE, per-vendor "this vendor is Samreen's" decision (18
   // vendors, hand-set, never blanket). It hands the vendor to the owner: their proof
   // belongs on HER page and the master lane skips them. It overrides the covert
@@ -816,7 +813,13 @@ export function eftProofVisibleToOwner(
   // Vogue Cpt should show on eft-proofs... route by who they are"). Verified against
   // live data: this exposes ONLY OWNERVIS-marked vendors; the other 65 of the frozen
   // 66, and every un-marked ⟦EFT⟧ vendor, stay hidden.
+  // It also overrides the post-cutover floor below: Island Way Sorbet paid into HER
+  // account on 2026-08-25 (bank letter), before the re-activation bumped started_at
+  // to 31 Aug; dating the proof truthfully must not hide it (Taona 2026-09-05).
   if (isOwnerVisible(adminNotes)) return true
+  // Uploaded AFTER the cutover. This floor is what stops an old covert proof
+  // surfacing automatically; only the hand-set marker above bypasses it.
+  if (new Date(submitted).getTime() < new Date(fullEft.startedAt).getTime()) return false
   // A hand-picked covert vendor (⟦EFT⟧) or a member of the frozen cutover cohort is
   // on the master lane by definition and must NEVER surface to the owner. Safe to
   // over-freeze (module doctrine): hiding one extra can never leak, missing one can.

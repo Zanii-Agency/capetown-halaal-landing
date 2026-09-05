@@ -157,7 +157,12 @@ export interface PortalState {
      *  portal mints a short-lived signed URL server-side (Law 2). kind:
      *  'receipt'|'refund' = operator-uploaded (/api/admin/vendors/[id]/payment-proof);
      *  'eft_submission' = the vendor's own EFT proof (/api/exhibitor/eft-proof). */
-    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string }>
+    /** `reference` = the payment reference AS PRINTED ON THE PROOF (bank
+     *  notification / app screenshot), extracted at filing time for PDFs or set
+     *  by hand. The owner reconciles against THIS, not the reference we
+     *  suggested: vendors who paid before 2026-09-01 used the old CTH<id-tail>
+     *  code, Telkom used its invoice reference (Taona 2026-09-05). */
+    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string; reference?: string }>
     /** PRESENT-TO-OWNER (2026-08-23). The operator showed this EFT-collected
      *  payment to the festival owner as a clean "paid via Yoco" entry (her
      *  request: the interim EFT state makes her accounting harder, she knows

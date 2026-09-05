@@ -145,7 +145,7 @@ const TOOLS: Record<string, { description: string; inputSchema: Json; run: (a: J
     },
   },
   eft_proofs: {
-    description: 'The EFT Proofs page: vendors who uploaded proof of an EFT payment, newest first. Per row: reference, amount, uploadedAt, paid (true once confirmed), proofUrl (opens the uploaded proof, valid 1 hour), note. Totals: totalAmount and paidAmount. Use before confirming a proof.',
+    description: 'The EFT Proofs page: vendors who uploaded proof of an EFT payment, newest first. Per row: reference (as printed on the proof itself, null when the proof shows none), expectedReference (the one we asked the vendor to use), amount, uploadedAt (when the vendor sent the proof), paid (true once confirmed), proofUrl (opens the uploaded proof, valid 1 hour), note. Totals: totalAmount and paidAmount. Use before confirming a proof.',
     inputSchema: { type: 'object', properties: { unconfirmed_only: { type: 'boolean', description: 'default false' } } },
     run: async (a) => {
       const d = await loadEftProofs()
