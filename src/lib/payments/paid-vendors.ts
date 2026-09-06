@@ -24,6 +24,8 @@ export type PaidVendorRow = {
   id: string; name: string; contact: string | null; paidOn: string; sortKey: string; method: string; payState: PayState
   /** Partial payments: what is still owed on the stall fee and the next instalment (if on a plan). */
   owing: number; nextAmount: number | null; nextDue: string | null
+  /** What the partial payer will have paid when done: the plan total when on a plan (stall + accessories), else the stall fee. */
+  due: number
   /** The instalment ledger for the Partial payments tab (click to expand). Empty when not on a plan. */
   instalments: Instalment[]
   /** A proof is in that no confirm has consumed yet (proofs > confirms): the next instalment can be confirmed. */
@@ -105,7 +107,8 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       sortKey: paidOn || (pay?.eft_submitted_at as string) || '',
       method: METHOD_LABEL[String(pay?.method || '')] || (bill.payClass === 'card' ? 'Yoco (card)' : 'EFT'),
       payState,
-      owing: onPartial ? Math.max(0, bill.stall.price - bill.paidTotal) : 0,
+      due: instalments.length ? instalments.reduce((s, i) => s + i.amount, 0) : bill.stall.price,
+      owing: onPartial ? Math.max(0, (instalments.length ? instalments.reduce((s, i) => s + i.amount, 0) : bill.stall.price) - bill.paidTotal) : 0,
       nextAmount: inst ? Math.min(inst.amount, bill.owing) : (onPartial ? bill.owing : null),
       nextDue: inst?.date ?? null,
       instalments,
