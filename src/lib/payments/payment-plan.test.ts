@@ -70,3 +70,20 @@ test('the approval message is dash-free (Law 7) and lists the dates', () => {
   assert.match(msg, /30 September 2026/)
   assert.match(msg, /support@youngatheart\.co\.za/)
 })
+
+test('nextInstalment: the first instalment the money so far has not covered, with what is still due on it', async () => {
+  const { nextInstalment, planSummary } = await import('./payment-plan')
+  const plan = { plan_status: 'approved', installments: [{ date: '2026-10-02', amount: 2500 }, { date: '2026-09-06', amount: 5000 }] }
+  // nothing paid: instalment 1 (sorted by date), R5 000
+  assert.deepEqual(nextInstalment(plan, 0), { index: 0, amount: 5000, date: '2026-09-06', total: 5000, count: 2 })
+  // R5 000 confirmed: instalment 2, R2 500
+  assert.deepEqual(nextInstalment(plan, 5000), { index: 1, amount: 2500, date: '2026-10-02', total: 7500, count: 2 })
+  // a short first payment (R3 000): the rest of instalment 1 is still due
+  assert.equal(nextInstalment(plan, 3000)?.amount, 2000)
+  // fully paid, pending plan, or no plan: nothing
+  assert.equal(nextInstalment(plan, 7500), null)
+  assert.equal(nextInstalment({ ...plan, plan_status: 'pending' }, 0), null)
+  assert.equal(nextInstalment(undefined, 0), null)
+  // locale thousands separator is a non-breaking space; assert on the words, not the byte
+  assert.match(planSummary(plan.installments), /^R5.000 by 6 September 2026, then R2.500 by 2 October 2026$/)
+})

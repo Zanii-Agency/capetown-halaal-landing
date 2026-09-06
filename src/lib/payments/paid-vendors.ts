@@ -10,6 +10,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid, isOwnerVisible } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
+import { nextInstalment } from '@/lib/payments/payment-plan'
 import { isTestVendor } from '@/lib/test-vendors'
 
 export const METHOD_LABEL: Record<string, string> = {
@@ -17,13 +18,21 @@ export const METHOD_LABEL: Record<string, string> = {
   manual: 'Manual', cash: 'Cash', waived: 'Waived',
 }
 
-export type PayState = 'Paid' | 'EFT received' | 'Proof pending'
+export type Instalment = { n: number; amount: number; due: string; status: 'paid' | 'proof' | 'due' | 'overdue'; paidOn: string | null }
+export type PayState = 'Paid' | 'Partial payment' | 'EFT received' | 'Proof pending'
 export type PaidVendorRow = {
   id: string; name: string; contact: string | null; paidOn: string; sortKey: string; method: string; payState: PayState
+  /** Partial payments: what is still owed on the stall fee and the next instalment (if on a plan). */
+  owing: number; nextAmount: number | null; nextDue: string | null
+  /** The instalment ledger for the Partial payments tab (click to expand). Empty when not on a plan. */
+  instalments: Instalment[]
+  /** A proof is in that no confirm has consumed yet (proofs > confirms): the next instalment can be confirmed. */
+  proofPending: boolean
+  proofUrl: string | null
   stall: number; accTotal: number; accOwing: number; accState: string; totalPaid: number
 }
 
-export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confirmedRows: PaidVendorRow[]; pendingRows: PaidVendorRow[]; paidTotal: number; accOwingTotal: number }> {
+export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confirmedRows: PaidVendorRow[]; partialRows: PaidVendorRow[]; pendingRows: PaidVendorRow[]; paidTotal: number; accOwingTotal: number }> {
   const db = createAdminClient()
   const rail = await getPaymentRail()
   const fullEft = await getFullEftMode()
@@ -47,6 +56,7 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     const settled = rosterPaid(notes, paidAt)
     const collected = pay?.status === 'collected'
     const proofOnly = !!pay?.eft_submitted_at
+    const planApproved = pay?.arrangement?.plan_status === 'approved' && (pay.arrangement.installments?.length ?? 0) > 0
     if (!settled && !collected && !proofOnly) continue
     // Samreen's side: not the covert master lane, OR a deliberate ⟦OWNERVIS⟧
     // hand-back (which overrides the frozen-set membership).
@@ -57,7 +67,35 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     try {
       bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt })
     } catch { continue }
-    const payState: PayState = settled ? 'Paid' : collected ? 'EFT received' : 'Proof pending'
+    //   Partial payment = settled but the stall fee is not fully covered (instalments)
+    //   A plan vendor whose first proof is in (nothing confirmed yet) sits under
+    //   Partial too, so instalment 1 is confirmable from that tab.
+    const onPartial = (settled && bill.partial) || (!settled && planApproved && proofOnly)
+    const payState: PayState = onPartial ? 'Partial payment' : settled ? 'Paid' : collected ? 'EFT received' : 'Proof pending'
+    const inst = onPartial ? nextInstalment(pay?.arrangement, bill.paidTotal) : null
+    const proofs = (pay?.proofs || []).filter((f) => f.kind === 'eft_submission')
+    const confirms = [...(pay?.refs || []), pay?.provider_ref || ''].filter((r) => String(r).startsWith(`eftproof-${v.id}`)).length
+    const proofPending = proofs.length > confirms
+    const newestProof = [...proofs].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
+    let proofUrl: string | null = null
+    if (onPartial && newestProof) {
+      const { data: signed } = await db.storage.from('vendor-docs').createSignedUrl(newestProof.path, 60 * 60)
+      proofUrl = signed?.signedUrl ?? null
+    }
+    const today = new Date().toISOString().slice(0, 10)
+    let cumulative = 0
+    let nextSeen = false
+    const instalments: Instalment[] = onPartial && planApproved
+      ? [...(pay!.arrangement!.installments as Array<{ date: string; amount: number }>)].sort((a, b) => (a.date < b.date ? -1 : 1)).map((p, i) => {
+          cumulative += Number(p.amount) || 0
+          const covered = cumulative <= bill.paidTotal + 0.005
+          let status: Instalment['status']
+          if (covered) status = 'paid'
+          else if (!nextSeen) { nextSeen = true; status = proofPending ? 'proof' : (p.date < today ? 'overdue' : 'due') }
+          else status = p.date < today ? 'overdue' : 'due'
+          return { n: i + 1, amount: Number(p.amount) || 0, due: p.date, status, paidOn: covered ? ((pay?.paid_at as string) || paidAt) : null }
+        })
+      : []
     const paidOn = (pay?.paid_at as string) || (pay?.eft_collected_at as string) || paidAt || ''
     rows.push({
       id: v.id as string,
@@ -67,21 +105,30 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       sortKey: paidOn || (pay?.eft_submitted_at as string) || '',
       method: METHOD_LABEL[String(pay?.method || '')] || (bill.payClass === 'card' ? 'Yoco (card)' : 'EFT'),
       payState,
+      owing: onPartial ? Math.max(0, bill.stall.price - bill.paidTotal) : 0,
+      nextAmount: inst ? Math.min(inst.amount, bill.owing) : (onPartial ? bill.owing : null),
+      nextDue: inst?.date ?? null,
+      instalments,
+      proofPending,
+      proofUrl,
       stall: bill.stall.price,
       accTotal: bill.accessories.total,
       accOwing: bill.accessories.owing,
       accState: bill.accessories.state,
-      totalPaid: bill.paidTotal || bill.stall.price,
+      // Old settled rows carry no amount: assume the stall price. An unsettled
+      // partial row (plan vendor, first proof in) has genuinely paid nothing yet.
+      totalPaid: settled ? (bill.paidTotal || bill.stall.price) : bill.paidTotal,
     })
   }
   // Confirmed first, then proof-pending; newest within each.
-  const stateRank: Record<PayState, number> = { Paid: 0, 'EFT received': 0, 'Proof pending': 1 }
+  const stateRank: Record<PayState, number> = { Paid: 0, 'EFT received': 0, 'Partial payment': 1, 'Proof pending': 2 }
   rows.sort((a, b) => stateRank[a.payState] - stateRank[b.payState] || (a.sortKey < b.sortKey ? 1 : -1))
 
-  const confirmedRows = rows.filter((r) => r.payState !== 'Proof pending')
+  const confirmedRows = rows.filter((r) => r.payState === 'Paid' || r.payState === 'EFT received')
+  const partialRows = rows.filter((r) => r.payState === 'Partial payment')
   const pendingRows = rows.filter((r) => r.payState === 'Proof pending')
   const accOwingTotal = rows.reduce((s, r) => s + r.accOwing, 0)
-  // Total collected counts CONFIRMED money only, never unconfirmed proofs.
-  const paidTotal = confirmedRows.reduce((s, r) => s + r.totalPaid, 0)
-  return { rows, confirmedRows, pendingRows, paidTotal, accOwingTotal }
+  // Total collected counts CONFIRMED money only (full and partial), never unconfirmed proofs.
+  const paidTotal = [...confirmedRows, ...partialRows].reduce((s, r) => s + r.totalPaid, 0)
+  return { rows, confirmedRows, partialRows, pendingRows, paidTotal, accOwingTotal }
 }

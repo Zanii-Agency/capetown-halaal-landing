@@ -122,8 +122,10 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
     // balance is actually owing on the split bill, AND the EFT lane switch is
     // still on (global mode or individual marker) so one switch closes the
     // whole rail (doctrine review 2026-08-04).
+    // Rail-aware (2026-09-06): getEftMode() is master-only; on the samreen_eft rail
+    // the accessory panel showed but every accessory proof 403d here.
     const { hasEftMarker } = await import('@/lib/eft')
-    if (!(await getEftMode()) && !hasEftMarker(admin_notes || '')) {
+    if ((await getPaymentRail()) === 'yoco' && !hasEftMarker(admin_notes || '')) {
       return { ok: false, error: 'EFT is not enabled for your account', status: 403 }
     }
     const db = createAdminClient()

@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parsePortalState } from '@/lib/portal-state'
 import { rosterPaymentStatus } from '@/lib/eft'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { parseVendorExtras } from '@/lib/vendor-extras'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { VendorsList, type VendorRow } from '@/components/admin/vendors/VendorsList'
@@ -52,7 +53,9 @@ export default async function VendorsListPage() {
       const notes = (a.admin_notes as string) || ''
       const { stall, status: stallStatus } = parseAllocation(notes)
       const portal = parsePortalState(notes)
-      const paymentStatus = rosterPaymentStatus(notes, a.paid_at as string | null, user.email)
+      const rosterStatus = rosterPaymentStatus(notes, a.paid_at as string | null, user.email)
+      // An instalment plan mid-way reads "partial", never "paid" (Taona 2026-09-06).
+      const paymentStatus = rosterStatus === 'paid' && vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: notes, paid_at: a.paid_at as string | null }).partial ? 'partial' : rosterStatus
       const paymentAmount = portal.payment?.amount || null
       const docsCount = (portal.docs || []).length
       const contractSigned = !!(a.contract_signed_at || a.contract_pdf_path)
@@ -63,7 +66,8 @@ export default async function VendorsListPage() {
 
       const blockers: string[] = []
       if (withdrawn) blockers.push('Withdrawn')
-      if (paymentStatus !== 'paid' && paymentStatus !== 'waived') blockers.push('Fee unpaid')
+      if (paymentStatus === 'partial') blockers.push('Fee part-paid')
+      else if (paymentStatus !== 'paid' && paymentStatus !== 'waived') blockers.push('Fee unpaid')
       if (!contractSigned) blockers.push('Contract unsigned')
       if (docsCount === 0) blockers.push('No docs')
       if (!stall) blockers.push('No stall allocated')

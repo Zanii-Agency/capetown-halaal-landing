@@ -34,6 +34,35 @@ function planLines(plan: Installment[]): string {
   return plan.map((p, i) => `  ${i + 1}. ${rand(p.amount)} by ${fmt(p.date)}`).join('\n')
 }
 
+/** The instalment a plan vendor owes NOW: the first one their money paid so far
+ *  has not yet covered, with the amount still due on it. Pure. null when there is
+ *  no approved plan or the plan is fully paid. Used by the portal EFT panel (show
+ *  THIS instalment, not the whole fee: Call-A-Braai 2026-09-06 "it does not allow
+ *  me to edit the amount") and by the owner's proof confirm (record the instalment,
+ *  not the whole fee). */
+export function nextInstalment(
+  arrangement: { installments?: Installment[]; plan_status?: string } | null | undefined,
+  paidSoFar: number,
+): { index: number; amount: number; date: string; total: number; count: number } | null {
+  const plan = arrangement?.plan_status === 'approved' ? (arrangement.installments || []) : []
+  if (!plan.length) return null
+  const sorted = [...plan].sort((a, b) => (a.date < b.date ? -1 : 1))
+  let cumulative = 0
+  for (let i = 0; i < sorted.length; i++) {
+    cumulative += Number(sorted[i].amount) || 0
+    if (cumulative > paidSoFar + 0.005) {
+      return { index: i, amount: Math.round((cumulative - paidSoFar) * 100) / 100, date: sorted[i].date, total: cumulative, count: sorted.length }
+    }
+  }
+  return null
+}
+
+/** One line for the vendor: "R5 000 by 6 September 2026, then R2 500 by 2 October 2026". */
+export function planSummary(plan: Installment[]): string {
+  const sorted = [...plan].sort((a, b) => (a.date < b.date ? -1 : 1))
+  return sorted.map((p, i) => `${i ? 'then ' : ''}${rand(p.amount)} by ${fmt(p.date)}`).join(', ')
+}
+
 /** Validate a proposed plan against the outstanding fee. Correctness only (exact
  *  future dates in order, on/before the festival, amounts covering the full fee),
  *  never a business-policy gate. Returns a clean vendor-facing error string. */

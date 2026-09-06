@@ -40,6 +40,7 @@ interface ReconciliationRow extends Record<string, unknown> {
 interface Stats {
   total_vendors: number
   total_paid: number
+  total_partial?: number
   total_pending: number
   total_none: number
   total_overdue: number
@@ -151,6 +152,7 @@ export default function FinancePage() {
   const paymentStatusTone = (status: string): 'success' | 'warn' | 'danger' | 'neutral' | 'info' => {
     switch (status) {
       case 'paid': return 'success'
+      case 'partial': return 'warn'
       case 'waived': return 'info'
       case 'pending': return 'warn'
       case 'deferred': return 'info'
@@ -254,7 +256,7 @@ export default function FinancePage() {
 
         <KpiStrip>
           <Kpi label="Money In (all)" value={fmtMoney(stats.total_money_in ?? stats.total_revenue)} hint="vendors + tickets" />
-          <Kpi label="Vendor fees" value={fmtMoney(stats.total_revenue)} hint={`${stats.total_paid} paid`} />
+          <Kpi label="Vendor fees" value={fmtMoney(stats.total_revenue)} hint={`${stats.total_paid} paid${stats.total_partial ? `, ${stats.total_partial} partial` : ''}`} />
           <Kpi label="Ticket sales" value={fmtMoney(stats.ticket_revenue ?? 0)} hint={`${stats.ticket_orders ?? 0} orders`} />
           <Kpi label="Pending" value={stats.total_pending} />
           <Kpi
@@ -297,6 +299,7 @@ export default function FinancePage() {
         <div>
           <FilterPillRow>
             <FilterPill label="Paid" active={paymentFilter === 'paid'} onClick={() => setPaymentFilter('paid')} />
+            <FilterPill label="Partial" active={paymentFilter === 'partial'} onClick={() => setPaymentFilter('partial')} />
             <FilterPill label="All" active={!paymentFilter} onClick={() => setPaymentFilter('')} />
             <FilterPill label="Pending" active={paymentFilter === 'pending'} onClick={() => setPaymentFilter('pending')} />
             <FilterPill label="Overdue" active={paymentFilter === 'overdue'} onClick={() => setPaymentFilter('overdue')} />

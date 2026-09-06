@@ -51,8 +51,10 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 export default function EftPanel({
-  submitted, bank, reference, amount, dueDate, businessName, purpose = 'stall', accessories,
+  submitted, bank, reference, amount, dueDate, businessName, purpose = 'stall', accessories, planNote,
 }: {
+  /** Approved payment plan: "This instalment: R5 000 by 6 September 2026. Plan: ...". */
+  planNote?: string | null
   submitted: boolean
   bank: Bank | null
   reference: string
@@ -69,7 +71,7 @@ export default function EftPanel({
 }) {
   const forAccessories = purpose === 'accessories'
   const accAmt = accessories && accessories > 0 ? accessories : 0
-  const showAccNote = !forAccessories && accAmt > 0 && !!amount && amount > accAmt
+  const showAccNote = !forAccessories && accAmt > 0 && !!amount && amount > accAmt && !planNote
   const feeNoun = forAccessories ? 'accessory electricity balance' : 'stall fee'
   const [file, setFile] = useState<File | null>(null)
   const [note, setNote] = useState('')
@@ -256,6 +258,9 @@ export default function EftPanel({
             </p>
             {showAccNote && (
               <p className="text-sm text-white/60 mt-0.5">Includes R{accAmt.toFixed(2)} for accessories (electricity, furniture)</p>
+            )}
+            {planNote && (
+              <p className="text-sm text-white/60 mt-0.5">{planNote}</p>
             )}
             <p className="text-sm text-white/60 mt-0.5 flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 shrink-0" />

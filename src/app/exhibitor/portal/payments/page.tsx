@@ -9,6 +9,7 @@ import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
 import EftPanel from '@/components/exhibitor/EftPanel'
 import { eftBankFor, eftReference, getPaymentRail, getFullEftMode, onCovertMasterLane, resolveInEftLane, hasEftMarker } from '@/lib/eft'
+import { nextInstalment, planSummary } from '@/lib/payments/payment-plan'
 import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
   PageShell, PageHeader, Card
@@ -129,6 +130,17 @@ export default async function PaymentsPage() {
   // Settled vendor still owing accessories (the split-bill case).
   const accDue = settled && accState === 'owing' && accOwing > 0
   const amount = owed
+  // APPROVED PAYMENT PLAN (bot, 2026-09-04): the EFT panel asks for THIS
+  // instalment, not the whole fee, and stays open after a part-payment settles
+  // paid_at so the next instalment has somewhere to be paid (Call-A-Braai
+  // 2026-09-06: "it does not allow me to edit the amount").
+  const plan = state.payment?.arrangement
+  const inst = nextInstalment(plan, paidSoFar)
+  const instAmount = inst ? Math.min(inst.amount, outstanding ?? inst.amount) : null
+  const planNote = inst && plan?.installments?.length
+    ? `Instalment ${inst.index + 1} of ${inst.count}, due ${fmtDate(inst.date)}. Your plan: ${planSummary(plan.installments)}.`
+    : null
+  const planDue = settled && (outstanding || 0) > 0 && !!inst && !accPending
 
   // Countdown banner. Until the vendor pays, the rest of the portal is locked
   // (requirePaid on every other route redirects them here). The banner makes
@@ -167,6 +179,8 @@ export default async function PaymentsPage() {
           ? 'Your stall fee is paid and your booth is confirmed. The electricity for the appliances you booked is billed separately and is still due, see below.'
           : eftPending
           ? 'We have your EFT proof. Please allow up to 24 hours for us to confirm your payment and update you. Once confirmed, your full portal unlocks and you can continue.'
+          : planDue
+          ? 'Your next instalment is due. Pay it by EFT using the details below, then upload your proof of payment.'
           : fullyPaid
           ? 'Thank you. Your booth is confirmed. The full festival portal is unlocked for you below.'
           : topUpDue
@@ -372,14 +386,26 @@ export default async function PaymentsPage() {
               failedAttempts={failedAttempts}
               topUpNote="Accessory electricity, billed separately from your stall fee"
             />
+          ) : planDue ? (
+            // Next instalment of an approved plan, after an earlier one settled.
+            <EftPanel
+              submitted={false}
+              bank={eftBank}
+              reference={eftRef}
+              amount={instAmount}
+              dueDate={inst ? fmtDate(inst.date) : due}
+              businessName={(app?.business_name as string) || 'your business'}
+              planNote={planNote}
+            />
           ) : null
         ) : inEftLane && !fullyPaid ? (
           <EftPanel
             submitted={eftSubmitted}
             bank={eftBank}
             reference={eftRef}
-            amount={outstanding ?? amount}
-            dueDate={due}
+            amount={instAmount ?? outstanding ?? amount}
+            dueDate={inst ? fmtDate(inst.date) : due}
+            planNote={planNote}
             businessName={(app?.business_name as string) || 'your business'}
             // Fresh EFT-lane vendor (nothing paid): the total still holds the
             // accessory portion, so name it. Once they have part-paid the split

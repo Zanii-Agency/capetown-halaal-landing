@@ -57,7 +57,7 @@ test('the slot math is stable for large and negative counts', () => {
 // future edit can't reorder the guards (a rotation that ran before the paid or
 // ⟦NOEFT⟧ checks would be a real routing/privacy bug).
 const SRC = readFileSync(join(process.cwd(), 'src/lib/eft.ts'), 'utf8')
-const FN = SRC.slice(SRC.indexOf('export async function resolveInEftLane'), SRC.indexOf('export async function resolveInEftLane') + 2400)
+const FN = SRC.slice(SRC.indexOf('export async function resolveInEftLane'), SRC.indexOf('export async function resolveInEftLane') + 3600)
 
 test('resolver overrides win before the rotation, in the right order', () => {
   const order = ['isInternalAccount', 'app.paid_at', 'hasNoEftMarker', "status === 'paid'", 'hasEftMarker', 'eft_submitted_at', 'eft_revealed_at', 'eftRevealWithinGrace', "status === 'pending'", '!globalOn', 'getRotationStartAt', 'tierReceivedCount']

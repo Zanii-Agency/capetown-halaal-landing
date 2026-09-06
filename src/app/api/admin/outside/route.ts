@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { rosterPaymentStatus } from '@/lib/eft'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { tierLabel } from '@/lib/stalls'
 import {
   OUTSIDE_ZONES, zoneForTier, parseZoneAssignment, withZoneAssignment,
@@ -71,7 +72,7 @@ interface OutsideVendorRow {
 async function loadRoster(admin: ReturnType<typeof createAdminClient>, viewerEmail?: string | null) {
   const { data: apps } = await admin
     .from('vendor_applications')
-    .select('id, business_name, contact_name, phone, email, preferred_booth_tier, status, admin_notes, paid_at')
+    .select('id, business_name, contact_name, phone, email, preferred_booth_tier, special_requirements, status, admin_notes, paid_at')
 
   const vendors: OutsideVendorRow[] = []
   const bySlot = new Map<string, OutsideVendorRow>() // `${zone}:${slot}` -> vendor
@@ -84,7 +85,8 @@ async function loadRoster(admin: ReturnType<typeof createAdminClient>, viewerEma
     if (!['approved', 'pending', 'info_requested'].includes((a.status as string) || '')) continue
 
     const za = parseZoneAssignment(a.admin_notes as string)
-    const paymentStatus = rosterPaymentStatus(a.admin_notes as string, a.paid_at as string | null, viewerEmail)
+    const rosterStatus = rosterPaymentStatus(a.admin_notes as string, a.paid_at as string | null, viewerEmail)
+    const paymentStatus = rosterStatus === 'paid' && vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: a.admin_notes as string, paid_at: a.paid_at as string | null }).partial ? 'partial' : rosterStatus
     const paid = paymentStatus === 'paid' || paymentStatus === 'waived'
     const status = (a.status as string) || ''
     const committed = status === 'approved' // fills a spot; pending/info_requested wait

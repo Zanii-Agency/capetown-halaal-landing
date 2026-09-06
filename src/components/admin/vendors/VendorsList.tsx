@@ -36,6 +36,7 @@ type Filter = 'all' | 'has_blockers' | 'ready' | 'unallocated' | 'withdrawn'
 
 const PAYMENT_PILL: Record<string, string> = {
   paid: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  partial: 'bg-amber-50 text-amber-700 border-amber-200',
   waived: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   pending: 'bg-blue-50 text-blue-700 border-blue-200',
   deferred: 'bg-neutral-50 text-neutral-600 border-neutral-200',
@@ -424,6 +425,7 @@ const PIPELINE_STAGES = [
   { key: 'awaiting_contract', label: 'Awaiting contract', filter: (r: VendorRow) => !r.withdrawn && !r.contract_signed },
   { key: 'contract', label: 'Contract', filter: (r: VendorRow) => !r.withdrawn && r.contract_signed && r.payment_status !== 'paid' && r.payment_status !== 'deferred' },
   { key: 'paid', label: 'Paid', filter: (r: VendorRow) => !r.withdrawn && (r.payment_status === 'paid' || r.payment_status === 'deferred') },
+  { key: 'partial', label: 'Partial payments', filter: (r: VendorRow) => !r.withdrawn && r.payment_status === 'partial' },
   { key: 'ready', label: 'Show-ready', filter: (r: VendorRow) => !r.withdrawn && r.payment_status === 'paid' && r.docs_complete_at },
 ]
 
