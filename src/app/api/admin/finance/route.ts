@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
 import { vendorInOwnerScope, visiblePaymentStatus } from '@/lib/eft'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { getOrders, type WCOrder } from '@/lib/woocommerce'
 
@@ -81,24 +82,29 @@ export async function GET(req: NextRequest) {
     const statPayments = scopedRows.map((v) => {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
-      const isPaid = !!v.paid_at || p.status === 'paid'
+      const settledHere = !!v.paid_at || p.status === 'paid'
+      // Partial = money in but the stall fee not covered (instalment plans). Reads
+      // as its own status, never as paid; its money still counts in revenue.
+      const partial = settledHere && vendorBill({ id: v.id, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: v.admin_notes, paid_at: v.paid_at }).partial
+      const isPaid = settledHere && !partial
       const amount = p.amount ?? computeVendorPricing(v).total
       const dueDate = p.due || null
-      const paymentStatus = p.status ?? (v.paid_at ? 'paid' : 'none')
+      const paymentStatus = partial ? 'partial' : (p.status ?? (v.paid_at ? 'paid' : 'none'))
       let overdue = false
       if (paymentStatus === 'pending' && dueDate) {
         overdue = new Date(dueDate) < new Date()
       }
-      return { is_paid: isPaid, payment_status: paymentStatus, payment_amount: amount, overdue }
+      return { is_paid: isPaid, is_partial: partial, payment_status: paymentStatus, payment_amount: amount, overdue }
     })
 
     // Stats from the full operational view.
     const totalPaid = statPayments.filter(p => p.is_paid).length
+    const totalPartial = statPayments.filter(p => p.is_partial).length
     const totalPending = statPayments.filter(p => !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')).length
     const totalNone = statPayments.filter(p => !p.is_paid && p.payment_status === 'none').length
     const totalOverdue = statPayments.filter(p => p.overdue).length
     const totalRevenue = statPayments
-      .filter(p => p.is_paid)
+      .filter(p => p.is_paid || p.is_partial)
       .reduce((sum, p) => sum + (p.payment_amount || 0), 0)
 
     // Scoped detail list for the festival owner's view.
@@ -106,11 +112,13 @@ export async function GET(req: NextRequest) {
       const portal = parsePortalState(v.admin_notes || '')
       const p = portal.payment || {}
 
-      const isPaid = !!v.paid_at || p.status === 'paid'
+      const settledHere = !!v.paid_at || p.status === 'paid'
+      const partial = settledHere && vendorBill({ id: v.id, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: v.admin_notes, paid_at: v.paid_at }).partial
+      const isPaid = settledHere && !partial
       const paidAt = p.paid_at || v.paid_at || null
       const amount = p.amount ?? computeVendorPricing(v).total
       const dueDate = p.due || null
-      const paymentStatus = visiblePaymentStatus(p.status ?? (v.paid_at ? 'paid' : 'none'), viewerEmail)
+      const paymentStatus = partial ? 'partial' : visiblePaymentStatus(p.status ?? (v.paid_at ? 'paid' : 'none'), viewerEmail)
 
       let overdue = false
       if (paymentStatus === 'pending' && dueDate) {
@@ -185,6 +193,7 @@ export async function GET(req: NextRequest) {
     // Apply the payment filter in-code (the DB can't filter a marker).
     const list = !paymentFilter ? payments : payments.filter((p) => {
       if (paymentFilter === 'paid') return p.is_paid
+      if (paymentFilter === 'partial') return p.payment_status === 'partial'
       if (paymentFilter === 'pending') return !p.is_paid && (p.payment_status === 'pending' || p.payment_status === 'deferred')
       if (paymentFilter === 'overdue') return p.overdue
       if (paymentFilter === 'none') return !p.is_paid && p.payment_status === 'none'
@@ -205,7 +214,8 @@ export async function GET(req: NextRequest) {
         total_pending: totalPending,
         total_none: totalNone,
         total_overdue: totalOverdue,
-        total_revenue: totalRevenue,   // vendor stall fees
+        total_revenue: totalRevenue,   // vendor stall fees (full and partial payments)
+        total_partial: totalPartial,
         ticket_revenue: ticketRevenue, // WC ticket sales
         ticket_orders: ticketOrders,
         total_money_in: totalMoneyIn,  // vendors + tickets combined

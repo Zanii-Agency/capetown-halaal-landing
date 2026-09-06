@@ -36,6 +36,12 @@ export interface VendorBill {
     owing: number
     state: AccessoryState
   }
+  /** PARTIAL PAYMENT: money has landed (settled) but the STALL fee itself is not
+   *  yet covered: an instalment plan mid-way, or a short first payment. Not the
+   *  accessories-only-owing case (stall paid, electricity outstanding), which has
+   *  its own state. Taona 2026-09-06: "those who have paid should be under partial
+   *  payments", never under Paid. */
+  partial: boolean
   liveTotal: number
   paidTotal: number
   /** What the vendor still owes: accessories.owing when settled, else the full
@@ -97,6 +103,7 @@ export function vendorBill(app: BillApp): VendorBill {
       owing: accOwing,
       state: accState,
     },
+    partial: settled && paidTotal > 0 && paidTotal < pricing.stallPrice,
     liveTotal: pricing.total,
     paidTotal,
     owing: settled ? accOwing : Math.max(0, pricing.total - paidTotal),

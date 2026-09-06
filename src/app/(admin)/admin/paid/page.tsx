@@ -1,9 +1,11 @@
 import { redirect } from 'next/navigation'
-import { CheckCircle2 } from 'lucide-react'
+import Link from 'next/link'
+import { CheckCircle2, ChevronDown } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { formatRand } from '@/lib/payments/pricing'
 import { loadPaidVendors, type PaidVendorRow } from '@/lib/payments/paid-vendors'
 import { AdminPage } from '@/components/admin/AdminPage'
+import { EftProofConfirmButton } from '@/components/admin/EftProofConfirmButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,19 +29,32 @@ export const dynamic = 'force-dynamic'
 // Verified live 2026-09-02: 78 confirmed + 6 proof-pending, 0 covert leak (no
 // frozen-non-OWNERVIS surfaced). Unpaid/deferred vendors with no EFT proof stay out.
 //
+// TABS (Taona 2026-09-06: "those who have paid should be under partial payments,
+// make a partial payments tab, you should be able to click on instalments"):
+//   Paid              settled in full
+//   Partial payments  instalment plans mid-way (and a plan vendor whose first proof
+//                     is in): each row expands to its instalment ledger, and the
+//                     next instalment is confirmable right there once a proof is in
+//   Proof pending     an EFT proof awaiting confirmation, no plan
+//
 // Note: onCovertMasterLane short-circuits to true for everyone when the global
 // rail is 'master'; OWNERVIS still overrides, so her hand-backs stay visible.
 
-export default async function PaidVendorsPage() {
+type Tab = 'paid' | 'partial' | 'pending'
+
+export default async function PaidVendorsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/admin/login')
 
-  const { rows, confirmedRows, pendingRows, paidTotal, accOwingTotal } = await loadPaidVendors()
+  const { tab: rawTab } = await searchParams
+  const tab: Tab = rawTab === 'partial' || rawTab === 'pending' ? rawTab : 'paid'
+
+  const { rows, confirmedRows, partialRows, pendingRows, paidTotal, accOwingTotal } = await loadPaidVendors()
   type Row = PaidVendorRow
 
-  const fmtDate = (iso: string) =>
-    iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
+  const fmtDate = (iso: string | null) =>
+    iso ? new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', ...(iso.length === 10 ? { timeZone: 'UTC' } : {}) }) : '-'
 
   function accCell(r: Row) {
     if (r.accTotal <= 0) return <span className="text-neutral-300">-</span>
@@ -48,11 +63,25 @@ export default async function PaidVendorsPage() {
     return <span className="text-[#cd2653] font-semibold">Owing {formatRand(r.accOwing)}</span>
   }
 
+  const tabs: Array<{ key: Tab; label: string; count: number }> = [
+    { key: 'paid', label: 'Paid', count: confirmedRows.length },
+    { key: 'partial', label: 'Partial payments', count: partialRows.length },
+    { key: 'pending', label: 'Proof pending', count: pendingRows.length },
+  ]
+  const shown: Row[] = tab === 'paid' ? confirmedRows : tab === 'partial' ? partialRows : pendingRows
+
+  const instalmentStatus = (s: Row['instalments'][number]['status']) =>
+    s === 'paid' ? <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Paid</span>
+    : s === 'proof' ? <span className="text-amber-600 font-medium">Proof received</span>
+    : s === 'overdue' ? <span className="text-[#cd2653] font-semibold">Overdue</span>
+    : <span className="text-neutral-500">Due</span>
+
   return (
-    <AdminPage title="Paid Vendors" subtitle="Vendors paid via Yoco or Samreen EFT, with payment date, method, and accessories status. EFT proofs awaiting confirmation are marked Proof pending.">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+    <AdminPage title="Paid Vendors" subtitle="Vendors paid via Yoco or Samreen EFT, with payment date, method, and accessories status. Instalment plans sit under Partial payments until the stall fee is covered in full.">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
         {[
-          { label: 'Confirmed paid', value: String(confirmedRows.length) },
+          { label: 'Paid in full', value: String(confirmedRows.length) },
+          { label: 'Partial payments', value: String(partialRows.length) },
           { label: 'Proof pending', value: String(pendingRows.length) },
           { label: 'Accessories owing', value: formatRand(accOwingTotal) },
           { label: 'Total collected', value: formatRand(paidTotal) },
@@ -64,9 +93,101 @@ export default async function PaidVendorsPage() {
         ))}
       </div>
 
+      <div className="flex gap-1 mb-4 border-b border-neutral-200">
+        {tabs.map((t) => (
+          <Link
+            key={t.key}
+            href={t.key === 'paid' ? '/admin/paid' : `/admin/paid?tab=${t.key}`}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t.key ? 'border-[#cd2653] text-[#cd2653]' : 'border-transparent text-neutral-500 hover:text-neutral-800'}`}
+          >
+            {t.label} <span className="ml-1 text-xs text-neutral-400">{t.count}</span>
+          </Link>
+        ))}
+      </div>
+
       {rows.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
           No paid vendors to show yet.
+        </div>
+      ) : shown.length === 0 ? (
+        <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
+          {tab === 'partial' ? 'No partial payments. A vendor on an instalment plan appears here once their first proof is in.' : tab === 'pending' ? 'No proofs waiting for confirmation.' : 'No fully paid vendors yet.'}
+        </div>
+      ) : tab === 'partial' ? (
+        <div className="space-y-3">
+          {shown.map((r) => (
+            <details key={r.id} className="group rounded-xl border border-neutral-200 bg-white overflow-hidden" open={r.proofPending}>
+              <summary className="flex items-center justify-between gap-4 px-5 py-4 cursor-pointer list-none">
+                <div className="min-w-0">
+                  <div className="font-medium text-neutral-900 flex items-center gap-2">
+                    {r.name}
+                    <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Partial payment</span>
+                    {r.proofPending && <span className="inline-flex items-center rounded-full bg-neutral-100 border border-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-600">Proof received</span>}
+                  </div>
+                  {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
+                </div>
+                <div className="flex items-center gap-6 text-sm shrink-0">
+                  <div className="text-right">
+                    <div className="text-[11px] uppercase tracking-wider text-neutral-400">Paid so far</div>
+                    <div className="font-semibold text-neutral-900">{formatRand(r.totalPaid)} <span className="text-neutral-400 font-normal">of {formatRand(r.stall)}</span></div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[11px] uppercase tracking-wider text-neutral-400">Still owing</div>
+                    <div className="font-semibold text-[#cd2653]">{formatRand(r.owing)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[11px] uppercase tracking-wider text-neutral-400">Next</div>
+                    <div className="text-neutral-900">{r.nextAmount !== null ? formatRand(r.nextAmount) : '-'}{r.nextDue ? <span className="text-neutral-400"> by {fmtDate(r.nextDue)}</span> : null}</div>
+                  </div>
+                  <ChevronDown className="w-4 h-4 text-neutral-400 transition-transform group-open:rotate-180" />
+                </div>
+              </summary>
+              <div className="border-t border-neutral-100 px-5 py-4">
+                {r.instalments.length > 0 ? (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] uppercase tracking-wider text-neutral-500">
+                        <th className="py-2 font-medium">Instalment</th>
+                        <th className="py-2 font-medium text-right">Amount</th>
+                        <th className="py-2 font-medium">Due</th>
+                        <th className="py-2 font-medium">Status</th>
+                        <th className="py-2 font-medium text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-50">
+                      {r.instalments.map((i) => (
+                        <tr key={i.n}>
+                          <td className="py-2 text-neutral-900">{i.n} of {r.instalments.length}</td>
+                          <td className="py-2 text-right font-semibold text-neutral-900">{formatRand(i.amount)}</td>
+                          <td className="py-2 text-neutral-600">{fmtDate(i.due)}{i.status === 'paid' && i.paidOn ? <span className="text-neutral-400"> · paid {fmtDate(i.paidOn)}</span> : null}</td>
+                          <td className="py-2">{instalmentStatus(i.status)}</td>
+                          <td className="py-2 text-right">
+                            {i.status === 'proof' ? (
+                              <span className="inline-flex items-center gap-3">
+                                {r.proofUrl && <a href={r.proofUrl} target="_blank" rel="noopener noreferrer" className="text-[#cd2653] hover:underline font-medium">View proof</a>}
+                                <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount ?? i.amount)} />
+                              </span>
+                            ) : <span className="text-neutral-300">-</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-neutral-600">No instalment plan on file: {formatRand(r.owing)} of the stall fee is still outstanding.</span>
+                    {r.proofPending && (
+                      <span className="inline-flex items-center gap-3">
+                        {r.proofUrl && <a href={r.proofUrl} target="_blank" rel="noopener noreferrer" className="text-[#cd2653] hover:underline font-medium">View proof</a>}
+                        <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount ?? r.owing)} />
+                      </span>
+                    )}
+                  </div>
+                )}
+                <div className="mt-3 text-xs text-neutral-400">Paid on {fmtDate(r.paidOn || null)} · {r.method}{r.accTotal > 0 ? <> · Accessories {formatRand(r.accTotal)}: {r.accState === 'paid' ? 'paid' : r.accState === 'pending' ? 'proof pending' : `owing ${formatRand(r.accOwing)}`}</> : null}</div>
+              </div>
+            </details>
+          ))}
         </div>
       ) : (
         <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
@@ -84,7 +205,7 @@ export default async function PaidVendorsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-50">
-                {rows.map((r) => (
+                {shown.map((r) => (
                   <tr key={r.id} className="hover:bg-neutral-50">
                     <td className="px-5 py-3">
                       <div className="font-medium text-neutral-900 flex items-center gap-2">
@@ -98,7 +219,7 @@ export default async function PaidVendorsPage() {
                       </div>
                       {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
                     </td>
-                    <td className="px-5 py-3 text-neutral-600">{fmtDate(r.paidOn)}</td>
+                    <td className="px-5 py-3 text-neutral-600">{fmtDate(r.paidOn || null)}</td>
                     <td className="px-5 py-3 text-neutral-600">{r.method}</td>
                     <td className="px-5 py-3 text-right text-neutral-900">{formatRand(r.stall)}</td>
                     <td className="px-5 py-3 text-right text-neutral-900">{r.accTotal > 0 ? formatRand(r.accTotal) : <span className="text-neutral-300">-</span>}</td>
@@ -109,10 +230,10 @@ export default async function PaidVendorsPage() {
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-neutral-200 bg-neutral-50 font-semibold text-neutral-900">
-                  <td className="px-5 py-3" colSpan={4}>Total · {confirmedRows.length} paid{pendingRows.length > 0 ? ` · ${pendingRows.length} proof pending` : ''}</td>
-                  <td className="px-5 py-3 text-right">{formatRand(rows.reduce((s, r) => s + r.accTotal, 0))}</td>
-                  <td className="px-5 py-3 text-[#cd2653]">{accOwingTotal > 0 ? `${formatRand(accOwingTotal)} owing` : 'all settled'}</td>
-                  <td className="px-5 py-3 text-right">{formatRand(paidTotal)}</td>
+                  <td className="px-5 py-3" colSpan={4}>{tab === 'paid' ? `Total · ${confirmedRows.length} paid in full` : `${pendingRows.length} proof${pendingRows.length === 1 ? '' : 's'} pending`}</td>
+                  <td className="px-5 py-3 text-right">{formatRand(shown.reduce((s, r) => s + r.accTotal, 0))}</td>
+                  <td className="px-5 py-3 text-[#cd2653]">{tab === 'paid' ? (accOwingTotal > 0 ? `${formatRand(accOwingTotal)} owing` : 'all settled') : ''}</td>
+                  <td className="px-5 py-3 text-right">{tab === 'paid' ? formatRand(paidTotal) : ''}</td>
                 </tr>
               </tfoot>
             </table>

@@ -134,7 +134,7 @@ const TOOLS: Record<string, { description: string; inputSchema: Json; run: (a: J
     run: (a) => call(finance, req('/api/admin/finance', { query: { payment: a.payment } })),
   },
   paid_vendors: {
-    description: 'The Paid Vendors page: every vendor with money in, with payState = Paid (settled by card or confirmed EFT) | EFT received | Proof pending (vendor uploaded an EFT proof, waiting for the operator to confirm). Per row: method, paidOn, stall price, accessories total/owing/state, totalPaid. Totals: paidTotal (confirmed money only) and accOwingTotal. Use this for "who has paid", "what does X still owe", "how much have we collected".',
+    description: 'The Paid Vendors page: every vendor with money in, with payState = Paid (settled in full by card or confirmed EFT) | Partial payment (an instalment confirmed, stall fee not yet covered; owing, nextAmount, nextDue say what comes next) | EFT received | Proof pending (vendor uploaded an EFT proof, waiting for the operator to confirm). Per row: method, paidOn, stall price, accessories total/owing/state, totalPaid. Totals: paidTotal (confirmed money only) and accOwingTotal. Use this for "who has paid", "what does X still owe", "how much have we collected".',
     inputSchema: { type: 'object', properties: { state: { type: 'string', enum: ['all', 'confirmed', 'pending'], description: 'default all' }, q: str('filter by vendor or contact name') } },
     run: async (a) => {
       const d = await loadPaidVendors()
