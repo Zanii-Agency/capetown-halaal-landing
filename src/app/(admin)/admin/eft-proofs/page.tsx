@@ -92,7 +92,10 @@ export default async function EftProofsPage() {
                           <CheckCircle2 className="w-4 h-4" /> Paid
                         </span>
                       ) : (
-                        <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.amount)} />
+                        <span className="inline-flex items-center gap-2 justify-end">
+                          {r.paidSoFar > 0 && <span className="text-xs text-neutral-500">{formatRand(r.paidSoFar)} paid</span>}
+                          <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount)} />
+                        </span>
                       )}
                     </td>
                   </tr>

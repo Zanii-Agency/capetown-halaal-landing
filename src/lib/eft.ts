@@ -896,7 +896,12 @@ export async function resolveInEftLane(
 ): Promise<boolean> {
   if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator
   if (app.paid_at) return false                                                   // already paid
-  if (hasNoEftMarker(app.admin_notes)) return false                               // ⟦NOEFT⟧ excluded
+  // ⟦NOEFT⟧ means "not on the covert master push, pay by card". On the samreen_eft
+  // rail there is no card (Yoco is off) and EFT goes to HER account, so the marker
+  // has nothing to exclude them from: they pay Samreen EFT like everyone else.
+  // Before 2026-09-06 this returned false unconditionally and 19 unpaid ⟦NOEFT⟧
+  // vendors (11 on approved payment plans) saw a dead card button.
+  if (hasNoEftMarker(app.admin_notes) && (await getPaymentRail()) !== 'samreen_eft') return false // ⟦NOEFT⟧ excluded
   const p = parsePortalState(app.admin_notes).payment
   if (p?.status === 'paid') return false
   if (hasEftMarker(app.admin_notes)) return true                                  // ⟦EFT⟧ hand-picked

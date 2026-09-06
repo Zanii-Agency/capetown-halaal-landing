@@ -22,6 +22,8 @@ import { confirmPayment } from '@/lib/payments/confirm'
 import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner } from '@/lib/eft'
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { recordAdminAction } from '@/lib/zanii-ledger'
+import { vendorBill } from '@/lib/payments/vendor-bill'
+import { nextInstalment } from '@/lib/payments/payment-plan'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -37,7 +39,7 @@ export async function POST(req: NextRequest) {
   const db = createAdminClient()
   const { data: app } = await db
     .from('vendor_applications')
-    .select('id, admin_notes, paid_at, is_duplicate')
+    .select('id, admin_notes, paid_at, is_duplicate, preferred_booth_tier, special_requirements')
     .eq('id', id)
     .maybeSingle()
   if (!app) return NextResponse.json({ error: 'not found' }, { status: 404 })
@@ -64,10 +66,27 @@ export async function POST(req: NextRequest) {
   // MASTER_ONLY method, and writing it here made every vendor she confirmed drop
   // out of her own finance dashboard, roster scope and inbox (2026-09-05). A stable providerRef makes a double-click
   // idempotent — one confirm per vendor, never a double-count.
+  // INSTALMENTS (approved payment plan): confirm THIS instalment, not the whole
+  // fee, and give each confirm its own reference so the next one is a top-up
+  // instead of a duplicate no-op. Without a plan: the outstanding balance, once.
+  const bill = vendorBill({
+    id,
+    preferred_booth_tier: (app.preferred_booth_tier as string) || null,
+    special_requirements: app.special_requirements,
+    admin_notes: notes,
+    paid_at: (app.paid_at as string) || null,
+  })
+  if (bill.owing <= 0) return NextResponse.json({ error: 'nothing owing' }, { status: 409 })
+  const pay = parsePortalState(notes).payment
+  const inst = nextInstalment(pay?.arrangement, bill.paidTotal)
+  const priorConfirms = [...(pay?.refs || []), pay?.provider_ref || ''].filter((r) => String(r).startsWith(`eftproof-${id}`)).length
+  const providerRef = priorConfirms === 0 ? `eftproof-${id}` : `eftproof-${id}-${priorConfirms + 1}`
+  const amount = inst ? Math.min(inst.amount, bill.owing) : undefined
   const result = await confirmPayment({
     applicationId: id,
     method: 'samreen_eft',
-    providerRef: `eftproof-${id}`,
+    providerRef,
+    amount,
   })
   if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: 500 })
 
@@ -75,7 +94,7 @@ export async function POST(req: NextRequest) {
     await db.from('vendor_application_events').insert({
       application_id: id,
       event_type: 'payment_manual',
-      after_value: { total_paid: result.amount, method: 'samreen_eft', reference: `eftproof-${id}`, source: 'eft-proofs' },
+      after_value: { total_paid: result.amount, method: 'samreen_eft', reference: providerRef, source: 'eft-proofs' },
       actor_email: gate.adminUser.email,
       actor_role: 'admin',
       note: 'EFT proof confirmed from the EFT Proofs page',
@@ -92,7 +111,7 @@ export async function POST(req: NextRequest) {
     actor: { email: gate.adminUser.email, role: gate.role },
     action: 'mark_paid',
     vendorId: id,
-    payload: { method: 'samreen_eft', amount: result.amount ?? null, reference: `eftproof-${id}`, source: 'eft-proofs' },
+    payload: { method: 'samreen_eft', amount: result.amount ?? null, reference: providerRef, source: 'eft-proofs' },
   })
 
   const after = parsePortalState(

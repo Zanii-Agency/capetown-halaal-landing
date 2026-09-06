@@ -6,13 +6,17 @@
  * /admin/eft-proofs page and the Claude connector's eft_proofs tool.
  */
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner, eftReference, rosterPaid } from '@/lib/eft'
+import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner, eftReference } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
-import { computeVendorPricing } from '@/lib/payments/pricing'
+import { vendorBill } from '@/lib/payments/vendor-bill'
+import { nextInstalment } from '@/lib/payments/payment-plan'
 
 /** `reference` = as printed on the proof when we could read it (what she matches on her
  *  statement); `expectedReference` = the one we asked the vendor to use. */
-export type EftProofRow = { id: string; name: string; contact: string | null; reference: string | null; expectedReference: string; amount: number; proofUrl: string | null; note: string | null; uploadedAt: string; paid: boolean }
+/** amount = the full bill; paidSoFar = money confirmed so far; nextAmount = what the
+ *  next confirm records (an instalment on an approved plan, else the balance);
+ *  paid = settled in full. */
+export type EftProofRow = { id: string; name: string; contact: string | null; reference: string | null; expectedReference: string; amount: number; paidSoFar: number; nextAmount: number; proofUrl: string | null; note: string | null; uploadedAt: string; paid: boolean }
 
 export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEft: Awaited<ReturnType<typeof getFullEftMode>>; rows: EftProofRow[]; totalAmount: number; paidAmount: number }> {
   const db = createAdminClient()
@@ -29,7 +33,8 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
     if ((v as { is_duplicate?: boolean }).is_duplicate) continue
     if (!eftProofVisibleToOwner(v.id as string, v.admin_notes as string | null, fullEft)) continue
     const p = parsePortalState((v.admin_notes as string) || '').payment ?? {}
-    const bill = computeVendorPricing({ preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements }).total
+    const bill = vendorBill({ id: v.id as string, preferred_booth_tier: (v.preferred_booth_tier as string) || null, special_requirements: v.special_requirements, admin_notes: (v.admin_notes as string) || null, paid_at: (v.paid_at as string) || null })
+    const inst = nextInstalment(p.arrangement, bill.paidTotal)
     const proofFiles = (p.proofs ?? []).filter((f) => f.kind === 'eft_submission' || f.kind === 'eft_accessories')
     const newest = [...proofFiles].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
     let proofUrl: string | null = null
@@ -43,16 +48,18 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
       contact: (v.contact_name as string) || null,
       reference: newest?.reference ?? null,
       expectedReference: eftReference(v),
-      amount: bill,
+      amount: bill.pricing.total,
+      paidSoFar: bill.paidTotal,
+      nextAmount: inst ? Math.min(inst.amount, bill.owing) : bill.owing,
       proofUrl,
       note: newest?.note ?? null,
       // When the vendor SENT it (proof upload time), never when an operator filed it.
       uploadedAt: newest?.uploaded_at || (p.eft_submitted_at as string) || '',
-      paid: rosterPaid(v.admin_notes as string | null, v.paid_at as string | null),
+      paid: bill.settled && bill.owing <= 0,
     })
   }
   rows.sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1))
   const totalAmount = rows.reduce((s, r) => s + r.amount, 0)
-  const paidAmount = rows.filter((r) => r.paid).reduce((s, r) => s + r.amount, 0)
+  const paidAmount = rows.reduce((s, r) => s + r.paidSoFar, 0)
   return { ownerEftActive, fullEft, rows, totalAmount, paidAmount }
 }
