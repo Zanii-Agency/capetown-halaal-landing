@@ -129,7 +129,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                 <div className="flex items-center gap-6 text-sm shrink-0">
                   <div className="text-right">
                     <div className="text-[11px] uppercase tracking-wider text-neutral-400">Paid so far</div>
-                    <div className="font-semibold text-neutral-900">{formatRand(r.totalPaid)} <span className="text-neutral-400 font-normal">of {formatRand(r.stall)}</span></div>
+                    <div className="font-semibold text-neutral-900">{formatRand(r.totalPaid)} <span className="text-neutral-400 font-normal">of {formatRand(r.due)}</span></div>
                   </div>
                   <div className="text-right">
                     <div className="text-[11px] uppercase tracking-wider text-neutral-400">Still owing</div>
@@ -147,20 +147,20 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-left text-[11px] uppercase tracking-wider text-neutral-500">
-                        <th className="py-2 font-medium">Instalment</th>
-                        <th className="py-2 font-medium text-right">Amount</th>
-                        <th className="py-2 font-medium">Due</th>
-                        <th className="py-2 font-medium">Status</th>
+                        <th className="py-2 pr-4 font-medium">Instalment</th>
+                        <th className="py-2 pr-4 font-medium">Amount</th>
+                        <th className="py-2 pr-4 font-medium">Due</th>
+                        <th className="py-2 pr-4 font-medium">Status</th>
                         <th className="py-2 font-medium text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-50">
                       {r.instalments.map((i) => (
                         <tr key={i.n}>
-                          <td className="py-2 text-neutral-900">{i.n} of {r.instalments.length}</td>
-                          <td className="py-2 text-right font-semibold text-neutral-900">{formatRand(i.amount)}</td>
-                          <td className="py-2 text-neutral-600">{fmtDate(i.due)}{i.status === 'paid' && i.paidOn ? <span className="text-neutral-400"> · paid {fmtDate(i.paidOn)}</span> : null}</td>
-                          <td className="py-2">{instalmentStatus(i.status)}</td>
+                          <td className="py-2 pr-4 text-neutral-900">{i.n} of {r.instalments.length}</td>
+                          <td className="py-2 pr-4 font-semibold text-neutral-900">{formatRand(i.amount)}</td>
+                          <td className="py-2 pr-4 text-neutral-600">{fmtDate(i.due)}{i.status === 'paid' && i.paidOn ? <span className="text-neutral-400"> · paid {fmtDate(i.paidOn)}</span> : null}</td>
+                          <td className="py-2 pr-4">{instalmentStatus(i.status)}</td>
                           <td className="py-2 text-right">
                             {i.status === 'proof' ? (
                               <span className="inline-flex items-center gap-3">
@@ -184,7 +184,11 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                     )}
                   </div>
                 )}
-                <div className="mt-3 text-xs text-neutral-400">Paid on {fmtDate(r.paidOn || null)} · {r.method}{r.accTotal > 0 ? <> · Accessories {formatRand(r.accTotal)}: {r.accState === 'paid' ? 'paid' : r.accState === 'pending' ? 'proof pending' : `owing ${formatRand(r.accOwing)}`}</> : null}</div>
+                <div className="mt-3 text-xs text-neutral-400">
+                  {r.paidOn ? `Last payment ${fmtDate(r.paidOn)} · ` : ''}{r.method}
+                  {r.accTotal > 0 ? ` · Stall ${formatRand(r.stall)} + accessories ${formatRand(r.accTotal)}` : ` · Stall ${formatRand(r.stall)}`}
+                  {r.instalments.length ? ` · Plan total ${formatRand(r.due)}` : ''}
+                </div>
               </div>
             </details>
           ))}
