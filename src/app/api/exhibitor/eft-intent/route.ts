@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
-import { getEftMode, vendorInEftLane, eftReference } from '@/lib/eft'
+import { getEftMode, getPaymentRail, resolveInEftLane, eftReference } from '@/lib/eft'
 import { computeVendorPricing } from '@/lib/payments/pricing'
 import { notifyOwners } from '@/lib/bot/notify'
 import { recordVendorAction } from '@/lib/vendor-action-log'
@@ -53,13 +53,21 @@ export async function POST(req: Request) {
     // review 2026-08-04). The stall lane gate below would 403 these vendors
     // (it excludes paid), hence the separate test.
     const { hasEftMarker } = await import('@/lib/eft')
-    const laneOpen = (await getEftMode()) || hasEftMarker(app.admin_notes as string)
+    // Rail-aware (2026-09-06): getEftMode() is master-only, so on the samreen_eft
+    // rail it read false and every accessory intent 403d while the panel showed.
+    const laneOpen = (await getPaymentRail()) !== 'yoco' || hasEftMarker(app.admin_notes as string)
     if (!laneOpen || !bill.settled || bill.accessories.owing <= 0) {
       return NextResponse.json({ error: 'No accessory balance is owing on your account' }, { status: 403 })
     }
-  } else if (!vendorInEftLane(app.admin_notes as string, await getEftMode(), app.paid_at as string | null, { email: app.email as string | null, phone: app.phone as string | null })) {
-    // Same gate as the panel + proof route: only a vendor who actually sees the EFT
-    // panel may signal here (global mode on, or individually marked ⟦EFT⟧, unpaid).
+  } else if (!(await resolveInEftLane(
+    { admin_notes: app.admin_notes as string, paid_at: app.paid_at as string | null, preferred_booth_tier: app.preferred_booth_tier as string },
+    await getEftMode(),
+    { email: app.email as string | null, phone: app.phone as string | null },
+  ))) {
+    // THE SAME predicate the panel renders with (resolveInEftLane, rail-aware). It
+    // used to be vendorInEftLane(getEftMode()), which is master-only, so on the
+    // samreen_eft rail every un-marked vendor 403d here silently (the panel calls
+    // this fire-and-forget) and the master never got the "opened EFT" heads-up.
     return NextResponse.json({ error: 'EFT is not enabled for your account' }, { status: 403 })
   }
 
