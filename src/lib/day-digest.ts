@@ -39,7 +39,7 @@ const DOC = new Set(['vendor_doc_uploaded', 'profile_logo_uploaded'])
 // secret). Everything else — withdrawals, contracts, documents, stall changes —
 // is operational and shown for ALL vendors (Taona 2026-09-07: 'everything that
 // happened, except the master EFT lane').
-const PAYMENT_EVENTS = new Set(['payment_captured', 'payment_manual', 'payment_reverted', 'payment_plan_proposed', 'payment_extension_granted', 'eft_proof_uploaded', 'payment_proof_uploaded', 'payment_collected', 'eft_collected'])
+const PAYMENT_EVENTS = new Set(['payment_captured', 'payment_manual', 'payment_reverted', 'payment_plan_proposed', 'payment_extension_granted', 'eft_proof_uploaded', 'payment_proof_uploaded', 'payment_collected', 'eft_collected', 'accessories_collected'])
 
 export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr || '') ? (dateStr as string) : sastToday()
@@ -75,7 +75,7 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     }
   }
 
-  const buckets: Record<string, DayEntry[]> = { received: [], reversed: [], withdrawn: [], plan: [], contract: [], docs: [] }
+  const buckets: Record<string, DayEntry[]> = { received: [], accessories: [], reversed: [], withdrawn: [], plan: [], contract: [], docs: [] }
   const add = (k: string, name: string, detail: string, at: string) => buckets[k].push({ name, detail, at })
 
   for (const e of (vae.data || []) as Array<{ application_id: string | null; event_type: string; note: string | null; before_value: unknown; after_value: unknown; created_at: string }>) {
@@ -92,7 +92,8 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     }
     const name = v?.name || 'A vendor'
     const after = asObj(e.after_value)
-    if (RECEIVED.has(e.event_type)) add('received', name, rand(after.total_paid ?? after.amount) || 'Payment received', e.created_at)
+    if (e.event_type === 'accessories_collected') add('accessories', name, rand(Number(after.amount ?? e.after_value)) || 'Accessories paid', e.created_at)
+    else if (RECEIVED.has(e.event_type)) add('received', name, rand(after.total_paid ?? after.amount) || 'Stall fee paid', e.created_at)
     else if (e.event_type === 'payment_reverted') add('reversed', name, 'Payment reverted to unpaid', e.created_at)
     else if (e.event_type === 'vendor_withdrawn') add('withdrawn', name, `Withdrew${asObj(after.withdrawn).reason ? `: ${String(asObj(after.withdrawn).reason).slice(0, 80)}` : ''}`, e.created_at)
     else if (e.event_type === 'payment_plan_proposed') add('plan', name, `Payment plan${e.note ? `: ${e.note.slice(0, 80)}` : ''}`, e.created_at)
@@ -125,7 +126,8 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     })
   }
   const groups: DayGroup[] = [
-    { key: 'received', label: 'Payments received', items: dedupe(buckets.received) },
+    { key: 'received', label: 'Stall fees paid', items: dedupe(buckets.received) },
+    { key: 'accessories', label: 'Accessories paid', items: dedupe(buckets.accessories) },
     { key: 'plan', label: 'Payment plans & extensions', items: dedupe(buckets.plan) },
     { key: 'withdrawn', label: 'Withdrawals', items: dedupe(buckets.withdrawn) },
     { key: 'reversed', label: 'Payments reversed', items: dedupe(buckets.reversed) },
