@@ -163,7 +163,10 @@ const TOOLS: Record<string, { description: string; inputSchema: Json; run: (a: J
   day_activity: {
     description: 'What happened on a given day, scoped to her vendors: payments received, payment plans & extensions, withdrawals, payments reversed, contracts signed, documents uploaded. Pass `date` as YYYY-MM-DD (SAST); omit for today. Use for "what happened today", "who paid today", "who withdrew", "what happened on the 12th".',
     inputSchema: { type: 'object', properties: { date: str('YYYY-MM-DD, omit for today') } },
-    run: async (a) => ({ status: 200, data: await loadDayDigest(typeof a.date === 'string' ? a.date : undefined) }),
+    run: async (a) => {
+      const d = await loadDayDigest(typeof a.date === 'string' ? a.date : undefined)
+      return { status: 200, data: { ...d, groups: d.groups.filter((g) => g.items.length > 0) } }
+    },
   },
   eft_proof_confirm: {
     description: 'Confirm an EFT proof: marks the vendor PAID and sends them the payment-received message. Irreversible. Before calling: show the operator the vendor name, reference and amount from eft_proofs and get an explicit yes for THAT vendor. Never call it for a vendor whose proof the operator has not seen.',

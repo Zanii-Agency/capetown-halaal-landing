@@ -117,7 +117,7 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     { key: 'reversed', label: 'Payments reversed', items: dedupe(buckets.reversed) },
     { key: 'contract', label: 'Contracts signed', items: dedupe(buckets.contract) },
     { key: 'docs', label: 'Documents uploaded', items: dedupe(buckets.docs) },
-  ].filter((g) => g.items.length > 0)
+  ]
   const dateLabel = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
   return { date, dateLabel, total: groups.reduce((s, g) => s + g.items.length, 0), groups }
 }
