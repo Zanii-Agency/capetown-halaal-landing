@@ -112,6 +112,8 @@ test('the reminder email promises nothing the system will not honour', () => {
 test('the reply-shape rule is present and bans notice language', () => {
   assert.match(BASE_PROMPT, /PART PAYMENTS/)
   assert.match(BASE_PROMPT, /15 October 2026/)
+  // The ladder now pushes end of September FIRST, with 15 October as the fallback.
+  assert.match(BASE_PROMPT, /end of September 2026/i)
   // The banned words appear only inside the NEVER-use instruction itself.
   assert.match(BASE_PROMPT, /NEVER use the words "policy", "rules", "not allowed"/)
   // Reactive-only, and the due date must survive the concession.
