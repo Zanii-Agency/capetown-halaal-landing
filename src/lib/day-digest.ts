@@ -12,6 +12,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 import { hiddenFromOwner, siteEventHiddenFromOwner } from '@/lib/audit-scope'
+import { revealsPaymentArrangement } from '@/lib/eft'
 
 export type DayEntry = { name: string; detail: string; at: string }
 export type DayGroup = { key: string; label: string; items: DayEntry[] }
@@ -33,7 +34,12 @@ const asObj = (v: unknown): Record<string, unknown> => (v && typeof v === 'objec
 
 // event_type -> bucket + a human detail builder
 const RECEIVED = new Set(['payment_captured', 'payment_manual'])
-const DOC = new Set(['vendor_doc_uploaded', 'eft_proof_uploaded', 'payment_proof_uploaded', 'profile_logo_uploaded'])
+const DOC = new Set(['vendor_doc_uploaded', 'profile_logo_uploaded'])
+// EFT-lane / payment events stay walled by scope (the master EFT lane is the one
+// secret). Everything else — withdrawals, contracts, documents, stall changes —
+// is operational and shown for ALL vendors (Taona 2026-09-07: 'everything that
+// happened, except the master EFT lane').
+const PAYMENT_EVENTS = new Set(['payment_captured', 'payment_manual', 'payment_reverted', 'payment_plan_proposed', 'payment_extension_granted', 'eft_proof_uploaded', 'payment_proof_uploaded', 'payment_collected', 'eft_collected'])
 
 export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr || '') ? (dateStr as string) : sastToday()
@@ -75,7 +81,15 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
   for (const e of (vae.data || []) as Array<{ application_id: string | null; event_type: string; note: string | null; before_value: unknown; after_value: unknown; created_at: string }>) {
     const v = e.application_id ? vendorMap[e.application_id] : undefined
     const inScope = v?.scope
-    if (!unwalled && hiddenFromOwner({ event_type: e.event_type, note: e.note, before_value: e.before_value, after_value: e.after_value }, inScope)) continue
+    if (!unwalled) {
+      if (PAYMENT_EVENTS.has(e.event_type)) {
+        // Payment/EFT events: hide the master lane (out-of-scope), show her own.
+        if (hiddenFromOwner({ event_type: e.event_type, note: e.note, before_value: e.before_value, after_value: e.after_value }, inScope)) continue
+      } else {
+        // Operational: shown for all, but drop any whose text leaks an EFT arrangement.
+        if (revealsPaymentArrangement([e.event_type, e.note, JSON.stringify(e.after_value), JSON.stringify(e.before_value)].join(' '))) continue
+      }
+    }
     const name = v?.name || 'A vendor'
     const after = asObj(e.after_value)
     if (RECEIVED.has(e.event_type)) add('received', name, rand(after.total_paid ?? after.amount) || 'Payment received', e.created_at)
@@ -90,7 +104,7 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     const m = asObj(e.metadata)
     const id = (typeof m.application_id === 'string' ? m.application_id : typeof m.vendor_id === 'string' ? m.vendor_id : null)
     const v = id ? vendorMap[id] : undefined
-    if (!unwalled && siteEventHiddenFromOwner({ event_type: e.event_type, metadata: m }, v?.scope)) continue
+    if (!unwalled && e.event_type.startsWith('payment_') && siteEventHiddenFromOwner({ event_type: e.event_type, metadata: m }, v?.scope)) continue
     const name = v?.name || 'A vendor'
     if (e.event_type === 'contract_signed') add('contract', name, 'Signed their contract', e.created_at)
     else if (e.event_type.startsWith('vendor_doc_')) add('docs', name, 'Uploaded a document', e.created_at)
