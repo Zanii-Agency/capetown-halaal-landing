@@ -266,6 +266,15 @@ body {
   .email-body h1, .email-body h2, .email-body h3,
   .email-body h4, .email-body h5, .email-body h6 { font-weight: 600; margin: 1em 0 0.4em; }
   .email-body pre { white-space: pre-wrap; }
+  /* Tame the sender-mail noise that reads as "convoluted": stacked empty
+     paragraphs, giant leading, runaway divs. Normalise to our own rhythm. */
+  .email-body div { margin: 0; }
+  .email-body p:empty, .email-body div:empty { display: none; }
+  .email-body br + br { display: none; }
+  .email-body > *:first-child { margin-top: 0; }
+  .email-body > *:last-child { margin-bottom: 0; }
+  .email-body img { display: none; }
+  .email-body [style*="font-size"] { font-size: 14px !important; }
   .email-body hr { border: 0; border-top: 1px solid #e5e5e5; margin: 1em 0; }
 }
 

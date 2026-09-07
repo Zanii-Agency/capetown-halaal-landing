@@ -181,6 +181,13 @@ export async function GET(req: NextRequest) {
   // Contacts keyed by a stable conversation key (vendor id if resolved, else
   // the raw phone/email) so a vendor's WhatsApp + email merge into one.
   const contacts = new Map<string, Contact>()
+  // Reliable EMAIL unread signal, keyed by lowercased address: any of the
+  // sender's email threads with unread_count > 0. unread_count clears the moment
+  // a thread is opened (status route) and a new inbound re-raises it, so this is
+  // the source of truth for email unread, unlike the read_at path (which never
+  // persisted for email-only threads with no vendor_tickets row). (Taona 2026-09-07
+  // "the read/unread is not real enough".)
+  const emailUnread = new Map<string, boolean>()
   const keyFor = (vendorId: string | null, phone: string | null, email: string | null) =>
     vendorId ? `vendor:${vendorId}` : phone ? `wa:${norm(phone)}` : `mail:${(email || '').toLowerCase()}`
 
@@ -408,6 +415,7 @@ export async function GET(req: NextRequest) {
       // The real last message wins; the bookkeeping columns are only a fallback
       // for threads whose messages fell outside the 4000-row scan above.
       const lastMsg = lastMsgByThread.get(t.id)
+      if ((t.unread_count || 0) > 0) emailUnread.set(email, true)
       const at = lastMsg?.at || t.last_inbound_at || t.last_handled_at || t.created_at
       touch(
         {
@@ -494,9 +502,13 @@ export async function GET(req: NextRequest) {
   const list = Array.from(contacts.values()).map((c) => {
     const phoneDigits = c.phone ? c.phone.replace(/\D/g, '') : ''
     const readAt = (phoneDigits && waRead.get(phoneDigits)) || c.read_at
-    const unread =
+    const waUnread =
       c.last_direction === 'in' &&
       (!readAt || !c.last_message_at || new Date(c.last_message_at) > new Date(readAt))
+    // Email uses its own reliable unread_count signal; WhatsApp keeps the read_at
+    // derivation. A contact unread on EITHER channel reads unread.
+    const emUnread = !!c.email && emailUnread.get(c.email.toLowerCase()) === true
+    const unread = waUnread || emUnread
     const p = c.phone ? norm(c.phone) : ''
     const botPaused = c.phone ? (handoverPaused.get(p) ?? false) : false
     // Open escalation: the bot flagged a human follow-up and no human has

@@ -78,3 +78,15 @@ test('splitQuotedHtml keeps a forward that has no added comment', () => {
   assert.deepEqual(splitQuotedHtml(''), { visible: '', quoted: null })
   assert.deepEqual(splitQuotedHtml(null), { visible: '', quoted: null })
 })
+
+test('mobile + legal + sign-off footers move into the quoted tail, never the visible body', async () => {
+  const { splitQuotedText } = await import('./quote')
+  const iphone = splitQuotedText('Yes I can pay by Friday, thank you.\n\nSent from my iPhone')
+  assert.equal(iphone.visible, 'Yes I can pay by Friday, thank you.')
+  assert.match(iphone.quoted || '', /Sent from my iPhone/)
+  const signoff = splitQuotedText('I would like a payment plan please.\n\nKind regards\nFatima\n074 000 0000')
+  assert.equal(signoff.visible, 'I would like a payment plan please.')
+  // a body that is ONLY a footer is never blanked
+  const only = splitQuotedText('Sent from my iPhone')
+  assert.equal(only.visible, 'Sent from my iPhone')
+})
