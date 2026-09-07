@@ -53,7 +53,7 @@ Start a new chat, click the **+** (or the tools / connectors icon) in the messag
 
 ## Your To Do, in Claude
 
-Ask "What needs me today?" and Claude reads the same list as the *To Do* tab in the portal (under Dashboard). It only shows things that genuinely need YOU, oldest first:
+Ask "What needs me today?" and Claude reads the same list as the *To Do* tab in the portal (under Dashboard). It opens with **Things to do** (real jobs, not messages: vendors overdue on payment, documents to review, and once you start allocating, paid vendors who still need a stall) each showing a count and taking you straight to the right page when you tap it. Then the message work, oldest first:
 - **EFT proofs to confirm** (a vendor uploaded proof, waiting for your yes)
 - **WhatsApp replies owed** (only chats a person has taken off the bot, so they are actually waiting on you, not the bot)
 - **Email replies owed** (only real vendors, not marketing or cold email)

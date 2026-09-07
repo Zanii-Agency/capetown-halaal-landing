@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useState } from 'react'
-import { CheckCircle2, ChevronDown, ExternalLink, Loader2, Send } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Loader2, Send } from 'lucide-react'
 import type { Todo, TodoItem } from '@/lib/todo'
 
 type Msg = { id: string; channel?: string; direction: 'in' | 'out'; body: string; at: string; from?: string }
@@ -62,6 +62,22 @@ function Card({ item, onDone }: { item: TodoItem; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const a = item.action
+
+  // Operational task: a thing to DO, not a message. Render a clickable card that
+  // navigates to the page where she does it. No thread, no reply box.
+  if (a.type === 'navigate') {
+    return (
+      <li>
+        <a href={a.href} className="flex items-center gap-3 px-5 py-3 hover:bg-neutral-50">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-neutral-900">{item.title}</div>
+            <div className="text-sm text-neutral-500 mt-0.5">{item.whatsNeeded}</div>
+          </div>
+          <ChevronRight className="w-4 h-4 shrink-0 text-neutral-400" />
+        </a>
+      </li>
+    )
+  }
 
   const send = useCallback(async () => {
     setBusy(true); setErr(null)
