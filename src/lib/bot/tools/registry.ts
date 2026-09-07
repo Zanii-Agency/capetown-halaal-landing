@@ -29,7 +29,7 @@ import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { proposePaymentPlan } from '@/lib/payments/payment-plan'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
-import { CONTRACT_VERSION } from '@/lib/contract/copy'
+import { CONTRACT_VERSION, cancellationTermsText } from '@/lib/contract/copy'
 import { startVendorVerification } from '@/lib/bot/vendor-session'
 import { buildSendable } from '@/lib/inbox/send-library'
 import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
@@ -1220,7 +1220,9 @@ async function withdrawSelf(session: VendorSession, args: { reason?: string; con
 
   if (!res.ok && res.reason === 'paid_needs_human') {
     await escalateToHuman(session, `WITHDRAWAL from a PAID vendor (${biz}): "${reason}". Needs a refund decision before anything is cancelled.`).catch(() => {})
-    return 'Because your stall fee is already paid, a person needs to handle the refund side with you so nothing goes wrong with your payment. I have passed it to the team and they will come back to you here.'
+    const terms = cancellationTermsText()
+    const termsBlock = terms ? `\n\n${terms}\n` : ' '
+    return `Because your stall fee is already paid, I cannot cancel it here myself. The cancellation terms from the agreement you signed apply, and here is how it works:${termsBlock}\nA person from our team will confirm what applies to you and handle the refund side with you here, so nothing goes wrong with your payment. I have passed this on to them now.`
   }
   if (!res.ok && res.reason === 'already_withdrawn') {
     return 'You are already withdrawn from the festival, so there is nothing further to do. If you are still getting messages from us, tell me and I will get that stopped.'

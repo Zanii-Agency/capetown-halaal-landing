@@ -110,3 +110,15 @@ export const CONTRACT_ACCEPTANCE_LINE =
   'I fully understand and comprehend the above and wish to comply with the above in order to trade at the Cape Town Halaal Festival on ' +
   CONTRACT_DATE_RANGE +
   '.'
+
+// The Cancellation (refund) clause of the signed contract, formatted for a
+// WhatsApp / chat message. Sourced straight from CONTRACT_SECTIONS so what the
+// bot tells a withdrawing paid vendor and what they actually signed can never
+// drift. Taona 2026-09-07: a vendor who has paid and wants to withdraw must be
+// told how it works per the terms they signed.
+export function cancellationTermsText(): string {
+  const sec = CONTRACT_SECTIONS.find((s) => s.heading === 'Cancellation')
+  if (!sec) return ''
+  const bullets = (sec.bullets || []).map((b) => `• ${b}`).join('\n')
+  return [sec.intro, bullets].filter(Boolean).join('\n')
+}
