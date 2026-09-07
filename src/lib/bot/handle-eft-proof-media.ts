@@ -147,12 +147,21 @@ export async function tryHandleEftProofMedia(
   const eager = alreadyLane || !vendor.paid_at
 
   const { yes, note, looked } = await isProofMedia(media, caption, seen)
-  // Capture when it is a positive proof, OR the vendor is eager AND we could not
-  // confidently look at what they sent (vision down / ambiguous) so we must not
-  // risk dropping a real proof. A CONFIDENT not-a-proof (a sticker, a voice note,
-  // or an image vision examined and rejected) is NEVER captured, even for an eager
-  // unpaid vendor: that is exactly how an emoji got filed as "proof received".
-  if (!yes && !(eager && !looked)) return { handled: false }
+  const name = identity.firstName || vendor.contact_name || vendor.business_name || 'there'
+  // AN EFT PROOF MUST ACTUALLY BE READ FIRST (Taona 2026-09-07). Media is filed as
+  // a proof ONLY when we READ it and it IS one (`yes`), never on the vendor's
+  // unpaid status alone: that is how a thumbs-up sticker became "proof of payment
+  // received".
+  if (!yes) {
+    // Looked and it is clearly NOT a proof (sticker, voice note, selfie, meme), or
+    // nobody is expecting a payment from them: let the normal agent reply.
+    if (looked || !eager) return { handled: false }
+    // We could NOT read it (vision down, HEIC, oversized) and this is a vendor we
+    // expect a payment from. Do not drop a possible real proof and do not claim it
+    // is filed: hand it to a human to read, and say so honestly.
+    await alertMasterProofIssue(vendor.business_name, `sent a file on WhatsApp that could not be read automatically. It may be a proof of payment, check the vendor's WhatsApp thread.`, caption)
+    return { handled: true, laneAdded: false, reply: `Thanks ${name}, I can see you sent a file but I could not open it clearly on my side. I have asked the team to check it here, you do not need to resend.` }
+  }
 
   const bytes = await fetchMediaBytes(media.id)
   if (!bytes) {
@@ -208,8 +217,6 @@ export async function tryHandleEftProofMedia(
     // master; it never adds the ⟦EFT⟧ marker, so the Samreen wall is untouched.
     captureRegardless: true,
   })
-
-  const name = identity.firstName || vendor.contact_name || vendor.business_name || 'there'
 
   if (!result.ok) {
     // With captureRegardless the lane gate can no longer 403, so a failure here is

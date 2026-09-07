@@ -27,15 +27,19 @@ test('voice notes and videos are confident non-proofs too', async () => {
   }
 })
 
-// The capture decision the caller makes from isProofMedia's result. Encodes the
-// fix: capture on a positive proof, or when eager AND we could NOT look; a
-// confident not-a-proof (looked:true, yes:false) is never captured.
-const capture = (yes: boolean, looked: boolean, eager: boolean) => yes || (eager && !looked)
+// The decision the caller makes from isProofMedia's result. Read-first (Taona
+// 2026-09-07): a proof is FILED only when it was READ and is one (`yes`). Media is
+// never filed on the vendor's unpaid status alone. Unreadable media from a vendor
+// we expect a payment from is ESCALATED to a human (never dropped, never claimed
+// filed); anything else is IGNORED (the normal agent replies).
+type Outcome = 'filed' | 'escalated' | 'ignored'
+const decide = (yes: boolean, looked: boolean, eager: boolean): Outcome =>
+  yes ? 'filed' : looked || !eager ? 'ignored' : 'escalated'
 
-test('an eager vendor no longer captures a confidently-rejected sticker/emoji', () => {
-  assert.equal(capture(false, true, true), false, 'eager + confident-no (sticker/vision-rejected) -> NOT captured, the bug')
-  assert.equal(capture(true, true, false), true, 'a real proof (vision said yes) is captured')
-  assert.equal(capture(false, false, true), true, 'eager + could-not-look (vision down) -> still capture, never drop a real proof')
-  assert.equal(capture(false, true, false), false, 'paid vendor logo (confident no) -> not captured')
-  assert.equal(capture(false, false, false), false, 'not eager + no signal -> not captured (falls to document path)')
+test('a proof is filed only after it is actually read and confirmed', () => {
+  assert.equal(decide(true, true, false), 'filed', 'read + it is a proof -> filed')
+  assert.equal(decide(false, true, true), 'ignored', 'eager + confident-no (sticker / vision-rejected) -> ignored, the bug is dead')
+  assert.equal(decide(false, true, false), 'ignored', 'paid vendor logo (confident no) -> ignored')
+  assert.equal(decide(false, false, true), 'escalated', 'could NOT read + expecting payment -> a human reads it, never auto-filed')
+  assert.equal(decide(false, false, false), 'ignored', 'could not read + nobody expecting -> normal reply')
 })
