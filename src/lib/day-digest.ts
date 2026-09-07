@@ -10,8 +10,7 @@
  */
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
-import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
-import { hiddenFromOwner, siteEventHiddenFromOwner } from '@/lib/audit-scope'
+import { isEftAdmin, onCovertMasterLane, eftProofVisibleToOwner, getPaymentRail, getFullEftMode } from '@/lib/eft'
 import { revealsPaymentArrangement } from '@/lib/eft'
 
 export type DayEntry = { name: string; detail: string; at: string }
@@ -45,6 +44,7 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr || '') ? (dateStr as string) : sastToday()
   const { data: { user } } = await (await createClient()).auth.getUser()
   const unwalled = isEftAdmin(user?.email)
+  const [rail, fullEft] = await Promise.all([getPaymentRail(), getFullEftMode()])
   const { startIso, endIso } = sastDayBounds(date)
   const db = createAdminClient()
 
@@ -67,32 +67,38 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     const id = (m.application_id || m.vendor_id)
     if (typeof id === 'string') ids.add(id)
   }
-  const vendorMap: Record<string, { name: string; scope: boolean }> = {}
+  const vendorMap: Record<string, { name: string; covert: boolean; proofVisible: boolean }> = {}
   if (ids.size) {
     const { data } = await db.from('vendor_applications').select('id, business_name, contact_name, admin_notes, paid_at').in('id', [...ids])
     for (const v of (data || []) as Array<{ id: string; business_name: string | null; contact_name: string | null; admin_notes: string | null; paid_at: string | null }>) {
-      vendorMap[v.id] = { name: v.business_name || v.contact_name || 'A vendor', scope: vendorInOwnerScope(v.admin_notes, v.paid_at) }
+      vendorMap[v.id] = {
+        name: v.business_name || v.contact_name || 'A vendor',
+        // The ONLY thing hidden from her is the COVERT ...191 lane. Her own
+        // samreen_eft payments and proofs (visible on her EFT Proofs page) are hers.
+        covert: onCovertMasterLane(v.id, v.admin_notes, rail, fullEft),
+        proofVisible: eftProofVisibleToOwner(v.id, v.admin_notes, fullEft),
+      }
     }
   }
 
-  const buckets: Record<string, DayEntry[]> = { received: [], accessories: [], reversed: [], withdrawn: [], plan: [], contract: [], docs: [] }
+  const buckets: Record<string, DayEntry[]> = { received: [], eft_pending: [], accessories: [], reversed: [], withdrawn: [], plan: [], contract: [], docs: [] }
   const add = (k: string, name: string, detail: string, at: string) => buckets[k].push({ name, detail, at })
 
   for (const e of (vae.data || []) as Array<{ application_id: string | null; event_type: string; note: string | null; before_value: unknown; after_value: unknown; created_at: string }>) {
     const v = e.application_id ? vendorMap[e.application_id] : undefined
-    const inScope = v?.scope
     if (!unwalled) {
       if (PAYMENT_EVENTS.has(e.event_type)) {
-        // Payment/EFT events: hide the master lane (out-of-scope), show her own.
-        if (hiddenFromOwner({ event_type: e.event_type, note: e.note, before_value: e.before_value, after_value: e.after_value }, inScope)) continue
-      } else {
-        // Operational: shown for all, but drop any whose text leaks an EFT arrangement.
-        if (revealsPaymentArrangement([e.event_type, e.note, JSON.stringify(e.after_value), JSON.stringify(e.before_value)].join(' '))) continue
+        // Hide ONLY the covert ...191 lane. Her Yoco + her samreen_eft payments
+        // and proofs (which she sees on the EFT Proofs page) are hers to see.
+        if (v?.covert) continue
+      } else if (revealsPaymentArrangement([e.event_type, e.note, JSON.stringify(e.after_value), JSON.stringify(e.before_value)].join(' '))) {
+        continue
       }
     }
     const name = v?.name || 'A vendor'
     const after = asObj(e.after_value)
     if (e.event_type === 'accessories_collected') add('accessories', name, rand(Number(after.amount ?? e.after_value)) || 'Accessories paid', e.created_at)
+    else if (e.event_type === 'eft_proof_uploaded' || e.event_type === 'payment_proof_uploaded') add('eft_pending', name, 'EFT proof uploaded, confirm it', e.created_at)
     else if (RECEIVED.has(e.event_type)) add('received', name, rand(after.total_paid ?? after.amount) || 'Stall fee paid', e.created_at)
     else if (e.event_type === 'payment_reverted') add('reversed', name, 'Payment reverted to unpaid', e.created_at)
     else if (e.event_type === 'vendor_withdrawn') add('withdrawn', name, `Withdrew${asObj(after.withdrawn).reason ? `: ${String(asObj(after.withdrawn).reason).slice(0, 80)}` : ''}`, e.created_at)
@@ -105,7 +111,8 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     const m = asObj(e.metadata)
     const id = (typeof m.application_id === 'string' ? m.application_id : typeof m.vendor_id === 'string' ? m.vendor_id : null)
     const v = id ? vendorMap[id] : undefined
-    if (!unwalled && e.event_type.startsWith('payment_') && siteEventHiddenFromOwner({ event_type: e.event_type, metadata: m }, v?.scope)) continue
+    // Same rule as above: hide only the covert lane's payment events.
+    if (!unwalled && e.event_type.startsWith('payment_') && v?.covert) continue
     const name = v?.name || 'A vendor'
     if (e.event_type === 'contract_signed') add('contract', name, 'Signed their contract', e.created_at)
     else if (e.event_type.startsWith('vendor_doc_')) add('docs', name, 'Uploaded a document', e.created_at)
@@ -128,6 +135,7 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
   const groups: DayGroup[] = [
     { key: 'received', label: 'Stall fees paid', items: dedupe(buckets.received) },
     { key: 'accessories', label: 'Accessories paid', items: dedupe(buckets.accessories) },
+    { key: 'eft_pending', label: 'EFT payments in (awaiting your confirm)', items: dedupe(buckets.eft_pending) },
     { key: 'plan', label: 'Payment plans & extensions', items: dedupe(buckets.plan) },
     { key: 'withdrawn', label: 'Withdrawals', items: dedupe(buckets.withdrawn) },
     { key: 'reversed', label: 'Payments reversed', items: dedupe(buckets.reversed) },

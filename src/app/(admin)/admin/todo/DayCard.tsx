@@ -14,6 +14,7 @@ const PRIMARY: Array<{ key: DayGroup['key']; label: string; tone: string }> = [
   { key: 'contract', label: 'Contracts signed', tone: 'text-neutral-800' },
 ]
 const SECONDARY: Array<{ key: DayGroup['key']; label: string; tone: string }> = [
+  { key: 'eft_pending', label: 'EFT payments in', tone: 'text-emerald-700' },
   { key: 'plan', label: 'Plans & extensions', tone: 'text-blue-700' },
   { key: 'docs', label: 'Documents uploaded', tone: 'text-neutral-800' },
   { key: 'reversed', label: 'Payments reversed', tone: 'text-amber-700' },
