@@ -18,10 +18,7 @@ import { GET as stallChanges } from '@/app/api/admin/stall-changes/route'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
-import { isEftAdmin, rosterPaid, vendorInOwnerScope } from '@/lib/eft'
-import { parsePortalState } from '@/lib/portal-state'
-import { parseAllocation } from '@/lib/stalls'
-import { isTestVendor } from '@/lib/test-vendors'
+import { isEftAdmin } from '@/lib/eft'
 
 export type TodoAction =
   | { type: 'reply'; channel: 'whatsapp'; phone: string }
@@ -79,11 +76,10 @@ export async function loadTodo(): Promise<Todo> {
   // (the reply route picks the right mailbox); only the fallback link changes.
   const { data: { user } } = await (await createClient()).auth.getUser()
   const canSeeGmail = isEftAdmin(user?.email)
-  const [inboxRes, supportRes, proofs, tasks, stallRes] = await Promise.all([
+  const [inboxRes, supportRes, proofs, stallRes] = await Promise.all([
     inboxList(internal('/api/admin/inbox/unified?channel=all')).then(json),
     supportThreads().then(json),
     loadEftProofs().catch(() => ({ ownerEftActive: false, rows: [], totalAmount: 0, paidAmount: 0 })),
-    loadOperationalTasks().catch(() => [] as TodoItem[]),
     stallChanges().then(json).catch(() => null),
   ])
 
@@ -157,7 +153,6 @@ export async function loadTodo(): Promise<Todo> {
 
   const bySince = (a: TodoItem, b: TodoItem) => (a.since || '') < (b.since || '') ? -1 : 1 // oldest first: the longest wait is the most urgent
   const sections: Todo['sections'] = [
-    { key: 'task', label: 'Things to do', items: tasks },
     { key: 'eft_proof', label: 'EFT proofs to confirm', items: eft.sort(bySince) },
     { key: 'whatsapp_reply', label: 'WhatsApp replies owed', items: whatsapp.sort(bySince) },
     { key: 'email_reply', label: 'Email replies owed', items: email.sort(bySince) },
@@ -206,42 +201,4 @@ async function emailsAwaitingReply(emails: string[]): Promise<Set<string>> {
 }
 
 
-/**
- * Operational tasks the owner must DO (not messages): a single her-scoped scan of
- * vendor_applications, turned into count-cards that link to the page where she
- * acts. Scoped exactly like every owner page (vendorInOwnerScope), so a
- * master-lane vendor never becomes her task. Counts drop as she clears them.
- */
-async function loadOperationalTasks(): Promise<TodoItem[]> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('vendor_applications')
-    .select('id, business_name, admin_notes, paid_at, status, contract_signed_at, is_duplicate')
-    .neq('status', 'rejected')
-  const rows = (data || []) as Array<{ id: string; business_name: string | null; admin_notes: string | null; paid_at: string | null; status: string | null; contract_signed_at: string | null; is_duplicate: boolean | null }>
-  let stalls = 0, docs = 0, contracts = 0, overdue = 0, allocatedAnyone = 0
-  const now = Date.now()
-  for (const v of rows) {
-    if (v.is_duplicate) continue
-    if (isTestVendor({ business_name: v.business_name })) continue
-    if (!vendorInOwnerScope(v.admin_notes, v.paid_at)) continue // only her vendors
-    const paid = rosterPaid(v.admin_notes, v.paid_at)
-    const portal = parsePortalState(v.admin_notes || '')
-    const codes = parseAllocation(v.admin_notes).stalls
-    if (codes.length > 0) allocatedAnyone++
-    if (paid && codes.length === 0) stalls++
-    if ((portal.docs || []).some((d) => d.status === 'pending')) docs++
-    if (paid && !v.contract_signed_at) contracts++
-    const due = portal.payment?.due
-    if (!paid && v.status === 'approved' && due && new Date(due).getTime() < now) overdue++
-  }
-  const tasks: TodoItem[] = []
-  const push = (n: number, title: string, whatsNeeded: string, href: string) => {
-    if (n > 0) tasks.push({ kind: 'task', title, ask: '', whatsNeeded, since: null, count: n, action: { type: 'navigate', href }, href })
-  }
-  push(overdue, `${overdue} vendor${overdue === 1 ? '' : 's'} overdue on payment`, 'Follow up with vendors whose payment date has passed. Opens Finance.', '/admin/finance?payment=none')
-  if (allocatedAnyone > 0) push(stalls, `${stalls} paid vendor${stalls === 1 ? '' : 's'} still need a stall`, 'Allocate a stall to each paid vendor who does not have one yet. Opens Allocation.', '/admin/allocation')
-  push(docs, `${docs} vendor${docs === 1 ? '' : 's'} with documents to review`, 'Approve or reject the documents these vendors uploaded. Opens Documents.', '/admin/documents')
-  push(contracts, `${contracts} paid vendor${contracts === 1 ? '' : 's'} without a signed contract`, 'Chase or resend the contract to paid vendors who have not signed. Opens Vendors.', '/admin/vendors')
-  return tasks
-}
+
