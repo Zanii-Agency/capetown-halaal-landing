@@ -15,6 +15,9 @@ import { NextRequest } from 'next/server'
 import { GET as inboxList } from '@/app/api/admin/inbox/unified/route'
 import { GET as supportThreads } from '@/app/api/admin/support/route'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient } from '@/lib/supabase/server'
+import { isEftAdmin } from '@/lib/eft'
 
 export type TodoAction =
   | { type: 'reply'; channel: 'whatsapp'; phone: string }
@@ -63,6 +66,11 @@ const clip = (s: string | null | undefined, n = 160) => (s || '').replace(/⟦[^
 const rand = (n: number) => `R${n.toLocaleString('en-ZA')}`
 
 export async function loadTodo(): Promise<Todo> {
+  // Gmail is master/dev only, so a non-eftAdmin viewer's email items must not
+  // deep-link into the Gmail inbox she cannot open. The inline reply still works
+  // (the reply route picks the right mailbox); only the fallback link changes.
+  const { data: { user } } = await (await createClient()).auth.getUser()
+  const canSeeGmail = isEftAdmin(user?.email)
   const [inboxRes, supportRes, proofs] = await Promise.all([
     inboxList(internal('/api/admin/inbox/unified?channel=all')).then(json),
     supportThreads().then(json),
@@ -88,12 +96,21 @@ export async function loadTodo(): Promise<Todo> {
   // Email: no bot answers it, so a human owes every real one, but "real" means a
   // VENDOR (linked to an application). Cold marketing and outside senders have no
   // application; they stay in the full Inbox and never nag her from To Do.
-  const email: TodoItem[] = needs.filter((c) => c.last_channel === 'email' && c.application_id && c.email).map((c) => ({
+  //
+  // "Waiting" must be TRUE, not the inbox's needs_response flag, which over-reports
+  // (its per-thread last-message lookup is capped at the 4000 newest support rows
+  // and then falls back to a stale unread_count, so a thread we already replied to
+  // still reads inbound — measured 2026-09-07: 7 of 10 were already answered). So
+  // we re-derive it from the peer's genuine latest message: an email is owed only
+  // if the newest message across that vendor's threads is INBOUND.
+  const emailCandidates = needs.filter((c) => c.last_channel === 'email' && c.application_id && c.email)
+  const stillWaiting = await emailsAwaitingReply(emailCandidates.map((c) => (c.email as string).toLowerCase()))
+  const email: TodoItem[] = emailCandidates.filter((c) => stillWaiting.has((c.email as string).toLowerCase())).map((c) => ({
     kind: 'email_reply', title: who(c), ask: clip(c.last_preview),
     whatsNeeded: `Reply by email to ${who(c)}, a vendor waiting on an answer.`,
     since: c.last_message_at ?? null,
     action: { type: 'reply', channel: 'email', email: c.email as string },
-    href: c.mailbox === 'gmail' ? '/admin/inbox/gmail' : '/admin/inbox/support', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
+    href: (c.mailbox === 'gmail' && canSeeGmail) ? '/admin/inbox/gmail' : '/admin/inbox/support', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
   }))
 
   const threads: SupportThread[] = Array.isArray(supportRes?.threads) ? supportRes.threads : []
@@ -122,4 +139,42 @@ export async function loadTodo(): Promise<Todo> {
     { key: 'portal_support', label: 'Vendor questions from the portal or bot', items: portal.sort(bySince) },
   ]
   return { generatedAt: new Date().toISOString(), total: sections.reduce((s, x) => s + x.items.length, 0), sections }
+}
+
+
+/**
+ * Which of these vendor emails genuinely still await a reply: the newest message
+ * across all of a peer's support threads is INBOUND. Authoritative, unlike the
+ * inbox needs_response flag. Two queries, whatever the number of candidates.
+ */
+async function emailsAwaitingReply(emails: string[]): Promise<Set<string>> {
+  const waiting = new Set<string>()
+  const uniq = Array.from(new Set(emails.filter(Boolean)))
+  if (uniq.length === 0) return waiting
+  const db = createAdminClient()
+  const { data: threads } = await db
+    .from('support_inbox_threads')
+    .select('id, peer_email')
+    .in('peer_email', uniq)
+  const rows = (threads || []) as Array<{ id: string; peer_email: string | null }>
+  const emailByThread = new Map<string, string>()
+  for (const t of rows) if (t.peer_email) emailByThread.set(t.id, t.peer_email.toLowerCase())
+  const threadIds = rows.map((t) => t.id)
+  if (threadIds.length === 0) return waiting
+  const { data: msgs } = await db
+    .from('support_inbox_messages')
+    .select('thread_id, direction, received_at, created_at')
+    .in('thread_id', threadIds)
+  // newest message per email by the true event time (received_at is the sender's
+  // header and can be null/skewed on our own outbound, so coalesce to created_at).
+  const newest = new Map<string, { dir: string; ts: string }>()
+  for (const m of (msgs || []) as Array<{ thread_id: string; direction: string | null; received_at: string | null; created_at: string | null }>) {
+    const email = emailByThread.get(m.thread_id)
+    if (!email) continue
+    const ts = m.received_at || m.created_at || ''
+    const cur = newest.get(email)
+    if (!cur || ts > cur.ts) newest.set(email, { dir: m.direction === 'in' ? 'in' : 'out', ts })
+  }
+  for (const [email, v] of newest) if (v.dir === 'in') waiting.add(email)
+  return waiting
 }

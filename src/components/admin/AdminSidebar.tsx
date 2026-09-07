@@ -101,13 +101,16 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
   const badgeCls = isMaster
     ? 'bg-purple-50 text-purple-700 border-purple-200'
     : badge.cls
-  const groups: NavGroup[] = eftAdmin
-    ? navGroups.map((g) =>
-        g.label === 'MONEY'
-          ? { ...g, items: [...g.items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }] }
-          : g,
-      )
-    : navGroups
+  // Gmail (capetownhalaal@ personal mailbox) is master/dev only. The festival
+  // owner works WhatsApp + Support Email, so strip the Gmail item for anyone who
+  // is not the EFT admin (dev@ / taona@). Master Lane stays an eftAdmin add.
+  const groups: NavGroup[] = navGroups.map((g) => {
+    let items = g.label === 'COMMUNICATIONS' && !eftAdmin
+      ? g.items.filter((it) => it.href !== '/admin/inbox/gmail')
+      : g.items
+    if (g.label === 'MONEY' && eftAdmin) items = [...items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }]
+    return { ...g, items }
+  })
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
   const [channelCounts, setChannelCounts] = useState<Record<string, number>>({})
