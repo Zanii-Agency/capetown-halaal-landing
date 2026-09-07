@@ -6,8 +6,10 @@ import { listAnnouncements } from '@/lib/announcements'
 import Link from 'next/link'
 import {
   Calendar, MapPin, FileCheck, Users, CreditCard, Store, CheckCircle2, Circle,
-  ArrowRight, Megaphone, Upload, Share2, type LucideIcon,
+  ArrowRight, Megaphone, Upload, Share2, AlertCircle, type LucideIcon,
 } from 'lucide-react'
+import { vendorBill } from '@/lib/payments/vendor-bill'
+import { formatRand } from '@/lib/payments/pricing'
 import { vendorSlug } from '@/lib/slugify'
 import { Gauge } from '@/components/exhibitor/Gauge'
 import { PageShell, PageHeader, Card } from '@/components/chrome/PageChrome'
@@ -138,6 +140,23 @@ export default async function Overview() {
   const contactName = (app?.contact_name as string) || ''
   const firstName = (contactName.trim().split(/\s+/)[0]) || business
 
+  // Accessories electricity still owing after the stall fee settled: surface it
+  // on login. The /payments page carries the full itemised breakdown + pay flow;
+  // this banner just makes sure a paid vendor sees the outstanding power charge
+  // the moment they land, not only if they open Payments. Vendor's own view, same
+  // rule the payments page uses (accessories state 'owing').
+  const accBill = app
+    ? vendorBill({
+        id: app.id as string,
+        preferred_booth_tier: app.preferred_booth_tier as string,
+        special_requirements: app.special_requirements,
+        admin_notes: notes,
+        paid_at: (app as { paid_at?: string | null }).paid_at ?? null,
+      })
+    : null
+  const accDue = !!accBill && accBill.settled && accBill.accessories.state === 'owing' && accBill.accessories.owing > 0
+  const accOwing = accBill?.accessories.owing ?? 0
+
   return (
     <PageShell>
       {/* First-login welcome modal. Client component, gated by localStorage flag
@@ -156,6 +175,19 @@ export default async function Overview() {
         title={business}
         subtitle={`${tier} · application ${String(app?.status ?? 'pending')}`}
       />
+
+      {accDue && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 mb-6 flex items-start gap-4 text-amber-800">
+          <AlertCircle className="w-6 h-6 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-bold">Accessories electricity due: {formatRand(accOwing)}</p>
+            <p className="text-sm mt-1 opacity-90">
+              Your stall fee is paid and your booth is confirmed. The electricity for the appliances you selected is billed separately, and {formatRand(accOwing)} is still due for it.{' '}
+              <Link href="/exhibitor/portal/payments" className="font-semibold underline underline-offset-2">Pay it now</Link>, where you can see exactly what you selected.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-7">
         {/* Self-service checklist. Mounted ABOVE the existing dashboard so the
