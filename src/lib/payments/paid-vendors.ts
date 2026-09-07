@@ -10,7 +10,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid, isOwnerVisible } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
-import { nextInstalment } from '@/lib/payments/payment-plan'
+import { nextInstalment, PLAN_LAST_DATE } from '@/lib/payments/payment-plan'
 import { isTestVendor } from '@/lib/test-vendors'
 
 export const METHOD_LABEL: Record<string, string> = {
@@ -31,6 +31,9 @@ export type PaidVendorRow = {
   /** A proof is in that no confirm has consumed yet (proofs > confirms): the next instalment can be confirmed. */
   proofPending: boolean
   proofUrl: string | null
+  /** A committed plan with an instalment dated after the current cap (30 Nov): agreed
+   *  under the old rules, for Samreen to renegotiate earlier with the vendor herself. */
+  overCap: boolean
   stall: number; accTotal: number; accOwing: number; accState: string; totalPaid: number
 }
 
@@ -127,6 +130,7 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       instalments,
       proofPending,
       proofUrl,
+      overCap: instalments.some((i) => i.due > PLAN_LAST_DATE),
       stall: bill.stall.price,
       accTotal: bill.accessories.total,
       accOwing: bill.accessories.owing,
@@ -191,6 +195,7 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       instalments,
       proofPending,
       proofUrl,
+      overCap: (plan.installments as Array<{ date: string }>).some((i) => i.date > PLAN_LAST_DATE),
       stall: bill.stall.price,
       accTotal: bill.accessories.total,
       accOwing: bill.accessories.owing,
@@ -198,8 +203,8 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       totalPaid: bill.paidTotal,
     })
   }
-  // Next instalment soonest first.
-  planRows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1))
+  // Over-cap plans (old rules, need renegotiating) first, then next instalment soonest.
+  planRows.sort((a, b) => (Number(b.overCap) - Number(a.overCap)) || (a.sortKey < b.sortKey ? -1 : 1))
 
   return { rows, confirmedRows, partialRows, pendingRows, planRows, paidTotal, accOwingTotal }
 }

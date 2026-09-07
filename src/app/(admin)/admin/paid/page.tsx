@@ -117,6 +117,11 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
         </div>
       ) : tab === 'partial' || tab === 'plans' ? (
         <div className="space-y-3">
+          {tab === 'plans' && shown.some((r) => r.overCap) && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Plans marked <span className="font-semibold">Over the Nov cap</span> were agreed under the old rules and run past 30 November. Reach out to those vendors yourself to bring the last instalment earlier: paying sooner helps us lock in the marquee, power and marketing and put on the best possible show.
+            </div>
+          )}
           {shown.map((r) => (
             <details key={r.id} className="group rounded-xl border border-neutral-200 bg-white overflow-hidden" open={r.proofPending}>
               <summary className="flex items-center justify-between gap-4 px-5 py-4 cursor-pointer list-none">
@@ -125,6 +130,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                     {r.name}
                     <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Partial payment</span>
                     {r.proofPending && <span className="inline-flex items-center rounded-full bg-neutral-100 border border-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-600">Proof received</span>}
+                    {r.overCap && <span className="inline-flex items-center rounded-full bg-[#cd2653]/10 border border-[#cd2653]/25 px-1.5 py-0.5 text-[10px] font-semibold text-[#cd2653]">Over the Nov cap</span>}
                   </div>
                   {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
                 </div>
