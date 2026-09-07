@@ -13,9 +13,10 @@ import type { VendorSession } from './vendor-session'
 const verified: VendorSession = { status: 'verified', waPhone: '+27821234567', vendorId: 'v1' } as VendorSession
 const unknown: VendorSession = { status: 'unknown', waPhone: '+27821234567' } as VendorSession
 
-test('verified vendor prompt carries the part-payment 31-August policy', () => {
+test('verified vendor prompt carries the part-payment ladder (push this month first)', () => {
   const p = systemPrompt(verified)
-  assert.match(p, /31 August 2026/)
+  assert.match(p, /END OF SEPTEMBER/)
+  assert.match(p, /PUSH FOR PAYMENT THIS MONTH FIRST/)
   assert.match(p, /actually solve it with your tools/) // solve-don't-deflect discipline
 })
 
