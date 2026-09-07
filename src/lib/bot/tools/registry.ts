@@ -29,7 +29,7 @@ import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { proposePaymentPlan } from '@/lib/payments/payment-plan'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
-import { CONTRACT_VERSION } from '@/lib/contract/copy'
+import { CONTRACT_VERSION, cancellationTermsText } from '@/lib/contract/copy'
 import { startVendorVerification } from '@/lib/bot/vendor-session'
 import { buildSendable } from '@/lib/inbox/send-library'
 import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
@@ -62,7 +62,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_invoice',
-    description: "Send THIS vendor their invoice as a PDF over WhatsApp. Call when a verified vendor asks for their invoice, bill, or receipt.",
+    description: "Send THIS vendor their invoice as a PDF over WhatsApp. Call ONLY when a verified vendor asks to see or get their invoice, bill or receipt. When you do, tell them we can provide an invoice though we are not VAT registered (so no VAT is charged), that the PDF is on its way, and that they can also view and download it any time by logging into their portal at cthalaal.co.za/exhibitor under Payments.",
     strict: true,
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
@@ -237,7 +237,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'escalate_to_human',
-    description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call when a verified vendor has a request or question you cannot resolve with the other tools. Pass a one-line summary in `note`.",
+    description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call ONLY after you have restated the request to the vendor in one line and they confirmed it. Pass that confirmed one-line summary in `note`, in the vendor's own words where possible. The team replies on WhatsApp within 24 to 72 hours.",
     strict: true,
     input_schema: {
       type: 'object', additionalProperties: false,
@@ -658,7 +658,7 @@ function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
       })
       if (!pdf) return
       const slug = (row.business_name || 'invoice').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'invoice'
-      const caption = 'Your Cape Town Halaal Festival invoice.'
+      const caption = 'Your Cape Town Halaal Festival invoice. Please note we are not VAT registered, so no VAT is charged.'
       const res = await sendMedia(waPhone, { bytes: pdf, mimeType: 'application/pdf', filename: `CTH-Invoice-${slug}.pdf`, kind: 'document', caption })
       await logBotSend(waPhone, caption, 'invoice', res.messageId)
     } catch (e) {
@@ -1220,7 +1220,9 @@ async function withdrawSelf(session: VendorSession, args: { reason?: string; con
 
   if (!res.ok && res.reason === 'paid_needs_human') {
     await escalateToHuman(session, `WITHDRAWAL from a PAID vendor (${biz}): "${reason}". Needs a refund decision before anything is cancelled.`).catch(() => {})
-    return 'Because your stall fee is already paid, a person needs to handle the refund side with you so nothing goes wrong with your payment. I have passed it to the team and they will come back to you here.'
+    const terms = cancellationTermsText()
+    const termsBlock = terms ? `\n\n${terms}\n` : ' '
+    return `Because your stall fee is already paid, I cannot cancel it here myself. The cancellation terms from the agreement you signed apply, and here is how it works:${termsBlock}\nA person from our team will confirm what applies to you and handle the refund side with you here, so nothing goes wrong with your payment. I have passed this on to them now.`
   }
   if (!res.ok && res.reason === 'already_withdrawn') {
     return 'You are already withdrawn from the festival, so there is nothing further to do. If you are still getting messages from us, tell me and I will get that stopped.'
@@ -1264,7 +1266,7 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
     })
   } catch (e) { console.error('[tool escalate_to_human] notify failed:', (e as Error).message) }
   await flagNeedsHuman(session.waPhone, `asked for a human: "${clean.slice(0, 120)}"`)
-  return `I have passed this to the team: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". Someone will come back to you here.`
+  return `I have passed this to the team: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". They reply here on WhatsApp within 24 to 72 hours. If you need to send them documents, email support@youngatheart.co.za.`
 }
 
 /**
@@ -1310,7 +1312,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
         deferred = getInvoiceDeferred(session)
-        content = 'Sending the vendor their invoice as a PDF now.'
+        content = 'The invoice PDF is on its way to the vendor now. In your reply, tell them we can provide an invoice though we are not VAT registered (so no VAT is charged), and that they can also view and download it any time in their portal at cthalaal.co.za/exhibitor under Payments.'
         break
       default:
         await writeToolReceipt({ waPhone: session.waPhone, tool: name, vendorId: vid, ok: false, detail: 'unknown tool' })

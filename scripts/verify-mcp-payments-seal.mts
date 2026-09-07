@@ -61,6 +61,17 @@ for (const [tool, args] of [['paid_vendors', {}], ['eft_proofs', {}], ['finance_
   if (tool !== 'finance_summary' && rail === 'samreen_eft' && ids.length === 0) failures.push(`${tool}: zero rows on the samreen_eft rail`)
 }
 
+// todo composes the walled sources; it must be as clean as they are
+const todo = await callTool('todo')
+if (todo.isError) failures.push(`todo errored: ${todo.text.slice(0, 120)}`)
+else {
+  if (todo.text.includes('⟦')) failures.push('todo: lane marker in owner payload')
+  for (const sec of masterSecrets) if (todo.text.includes(sec)) failures.push('todo: master bank detail in owner payload')
+  const eftSection = (todo.data.sections ?? []).find((s: { key: string }) => s.key === 'eft_proof')
+  for (const it of eftSection?.items ?? []) if (it.applicationId && covert.has(it.applicationId)) failures.push(`todo: covert vendor ${it.applicationId} in EFT section`)
+  console.log(`todo: ${todo.data.total} items across ${(todo.data.sections ?? []).filter((s: { items: unknown[] }) => s.items.length).length} sections`)
+}
+
 const covertId = [...covert][0]
 if (covertId) {
   const r = await callTool('eft_proof_confirm', { applicationId: covertId })

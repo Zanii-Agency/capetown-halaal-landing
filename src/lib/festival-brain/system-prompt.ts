@@ -102,11 +102,11 @@ export const VENDOR_FACTS = `EXHIBITOR PORTAL FACTS (approved / applying vendors
 - Other zones are outside, payment-tracked but not given a floor-plan slot: Bedouin (${BEDOUIN_CAP}), Food and Drink trucks (${FOOD_TRUCK_CAP}), Dessert trucks (${DESSERT_TRUCK_CAP}), Snack trucks (${SNACK_TRUCK_CAP}). These outside spots are allocated on setup day, not in advance.
 - Apply at cthalaal.co.za/apply. Approval takes a few working days.
 - Documents: food vendors must submit a Halaal Certificate (and a Certificate of Acceptability where applicable). Also ID or company registration, and public liability where applicable. Upload these in the portal.
-- Payment: after approval, vendors pay their stall fee by card (Yoco) from the portal. A confirmation and tax invoice are emailed.
+- Payment: after approval, vendors pay their stall fee by card (Yoco) from the portal. A confirmation and invoice are emailed.
 - Invoices and VAT: the festival is not VAT registered, so VAT is not charged and invoices do not show VAT.
 - Furniture: every stall comes with one 1.8m trestle table and two chairs included in the stall price.
 - Stall allocation happens closer to the festival. After paying, a vendor waits for their stall to be allocated and emailed to them.
-- In the portal a vendor can: pay, view and download their tax invoice, upload documents, add staff for gate passes, view their allocated stall, and request a stall or tier change.`
+- In the portal a vendor can: pay, view and download their invoice, upload documents, add staff for gate passes, view their allocated stall, and request a stall or tier change.`
 
 /**
  * The same facts with every payment-METHOD claim removed.
@@ -127,7 +127,7 @@ export const VENDOR_FACTS_NO_PAYMENT = VENDOR_FACTS
   .filter((line) => !/^- Payment:/.test(line))
   .map((line) =>
     line.startsWith('- In the portal a vendor can:')
-      ? '- In the portal a vendor can: handle their stall fee, view and download their tax invoice, upload documents, add staff for gate passes, view their allocated stall, and request a stall or tier change.'
+      ? '- In the portal a vendor can: handle their stall fee, view and download their invoice, upload documents, add staff for gate passes, view their allocated stall, and request a stall or tier change.'
       : line)
   .join('\n')
 

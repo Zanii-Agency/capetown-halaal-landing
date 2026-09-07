@@ -18,6 +18,8 @@ import { sendToAdmin } from '@/lib/bot/notify'
 import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, EMAIL_MIRROR, type InboundEmail } from '@/lib/email-concierge'
 import { parseAttachmentMarker } from '@/lib/email/attachments'
 import { getEftMode, revealsPaymentArrangement } from '@/lib/eft'
+import { runPlanAutoReplies } from '@/lib/payments/plan-email-autoreply'
+import { runInvoiceAutoReplies } from '@/lib/payments/invoice-email-autoreply'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -27,8 +29,17 @@ export async function GET(req: Request) {
   if (!verifyCronAuth(req.headers.get('authorization'))) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
+  // PLAN-REQUEST AUTO-REPLY (Taona 2026-09-07): push payment-plan emails to
+  // WhatsApp automatically. Runs BEFORE the draft-confirm flag gate so it works
+  // even when EMAIL_CONCIERGE is off, and marks the emails handled so the
+  // confirm flow never re-drafts them.
+  const planAuto = await runPlanAutoReplies(createAdminClient())
+  // Invoice requests: attach the themed invoice PDF (not VAT registered) or point
+  // them to their portal. After plan, so a plan request wins if an email asks both.
+  const invoiceAuto = await runInvoiceAutoReplies(createAdminClient())
+
   if (!emailConciergeEnabled()) {
-    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)' })
+    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)', planAuto, invoiceAuto })
   }
 
   const db = createAdminClient()

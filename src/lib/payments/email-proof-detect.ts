@@ -18,9 +18,24 @@ export interface ProofAttachment {
   content?: Buffer
 }
 
-const PROOF_WORDS_RE = /proof\s*of\s*payment|proof\s*of\s*deposit|payment\s*proof|proof\s*of\s*transfer|\bpop\b|payment\s*(?:made|sent|done|completed)|paid\s*(?:today|yesterday|now|via)|\beft\b|bank\s*transfer|direct\s*deposit/i
+// \bpop\b(?![-\s]*up\b): "POP" / "POP attached" (proof of payment) match, but
+// "pop up" / "pop-up" (a signage/display term) do NOT — that token, buried in a
+// quoted signage thread, is what false-flagged the maspark agreement (2026-09-07).
+const PROOF_WORDS_RE = /proof\s*of\s*payment|proof\s*of\s*deposit|payment\s*proof|proof\s*of\s*transfer|\bpop\b(?![-\s]*up\b)|payment\s*(?:made|sent|done|completed)|paid\s*(?:today|yesterday|now|via)|\beft\b|bank\s*transfer|direct\s*deposit/i
 
 const PROOF_FILENAME_RE = /proof|payment|pop|deposit|eft|bank|receipt|statement|notification|transfer/i
+
+/** The sender's OWN message, with any quoted reply / forwarded chain removed. A
+ *  long quotes/agreement/signage thread carries payment words ("EFT", "bank", a
+ *  "pop-up") in its HISTORY that say nothing about a proof the sender is making
+ *  now. Proof WORDS are matched only against this (subject + new text); the
+ *  filename check and alreadyLane are unaffected, so real proofs still detect.
+ *  (maspark signed-agreement false alert, 2026-09-07.) */
+export function stripQuotedReply(body: string): string {
+  if (!body) return ''
+  const cut = body.search(/\n\s*(_{6,}|From:\s|On\s.{0,80}\bwrote:|-{2,}\s*(Original Message|Forwarded message)|Sent from my )/i)
+  return (cut >= 0 ? body.slice(0, cut) : body).trim()
+}
 
 const IMAGE_OR_PDF_RE = /^(application\/pdf|image\/(png|jpe?g|webp))$/i
 
@@ -69,7 +84,17 @@ export function looksLikeProofEmail(args: {
   const real = args.attachments.filter(isRealAttachment)
   if (!real.length) return false
   if (real.some((a) => a.filename && PROOF_FILENAME_RE.test(a.filename))) return true
-  const text = `${args.subject || ''}\n${args.body || ''}`
+  // Words are matched against the subject + the sender's OWN message only, never
+  // the quoted history (that is where a signage/agreement thread hides "eft" /
+  // "pop-up" and false-flags as a proof).
+  const text = `${args.subject || ''}\n${stripQuotedReply(args.body || '')}`
+  // KNOW THE DIFFERENCE (Taona, 2026-09-07): a quotes / agreement / artwork /
+  // signage business thread is NOT a stall-fee proof, no matter how many payment
+  // words it drags along, UNLESS the sender's own text explicitly says a payment
+  // was made. A proof-ish attachment FILENAME already returned true above, so an
+  // actual "ProofOfPayment.pdf" on such a thread still counts.
+  const saysPaid = /proof\s*of\s*payment|payment\s*proof|proof\s*of\s*(?:deposit|transfer)|\bpop\b(?![-\s]*up\b)|payment\s*(?:made|sent|done|completed)|paid\s*(?:today|yesterday|now|via|the\s|R\d)/i.test(text)
+  if (!saysPaid && /\b(quotations?|quotes?|estimate|proposal|agreement|contract|sponsorship|artwork|signage)\b/i.test(args.subject || '')) return false
   if (PROOF_WORDS_RE.test(text)) return true
   if (args.alreadyLane) return true
   return false

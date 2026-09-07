@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -22,6 +22,7 @@ const navGroups: NavGroup[] = [
     label: null,
     items: [
       { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
+      { name: 'To Do', href: '/admin/todo', icon: ClipboardCheck },
     ],
   },
   {

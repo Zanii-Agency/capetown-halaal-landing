@@ -117,11 +117,6 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
         </div>
       ) : tab === 'partial' || tab === 'plans' ? (
         <div className="space-y-3">
-          {tab === 'plans' && shown.some((r) => r.overCap) && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              Plans marked <span className="font-semibold">Over the Nov cap</span> were agreed under the old rules and run past 30 November. Reach out to those vendors yourself to bring the last instalment earlier: paying sooner helps us lock in the marquee, power and marketing and put on the best possible show.
-            </div>
-          )}
           {shown.map((r) => (
             <details key={r.id} className="group rounded-xl border border-neutral-200 bg-white overflow-hidden" open={r.proofPending}>
               <summary className="flex items-center justify-between gap-4 px-5 py-4 cursor-pointer list-none">

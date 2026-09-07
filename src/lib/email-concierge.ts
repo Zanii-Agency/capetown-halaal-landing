@@ -58,7 +58,7 @@ export function accountForRow(r: Record<string, unknown>): 'gmail' | 'primary' {
   return r.mailbox === 'gmail' ? 'gmail' : 'primary'
 }
 
-function rowToEmail(r: Record<string, unknown>): InboundEmail {
+export function rowToEmail(r: Record<string, unknown>): InboundEmail {
   return {
     id: String(r.id),
     account: accountForRow(r),
@@ -172,7 +172,7 @@ export function fromAddressFor(account: string): string {
 }
 
 /** Send a reply via SMTP from the mailbox the email arrived on. */
-export async function sendEmailReply(email: InboundEmail, replyText: string): Promise<{ ok: boolean; error?: string }> {
+export async function sendEmailReply(email: InboundEmail, replyText: string, opts?: { attachment?: { filename: string; content: Buffer; contentType: string } }): Promise<{ ok: boolean; error?: string }> {
   const from = fromAddressFor(email.account)
   if (!from) return { ok: false, error: `no SMTP from-address for account ${email.account}` }
   const subjectRaw = email.subject || 'your message'
@@ -182,6 +182,7 @@ export async function sendEmailReply(email: InboundEmail, replyText: string): Pr
     await t.sendMail({
       from, to: email.from_address, subject, text: stripEmDashes(replyText.trim()),
       ...(email.message_id ? { inReplyTo: email.message_id, references: email.message_id } : {}),
+      ...(opts?.attachment ? { attachments: [{ filename: opts.attachment.filename, content: opts.attachment.content, contentType: opts.attachment.contentType }] } : {}),
     })
     // MIRROR IT INTO THE THREAD. This sent via raw nodemailer and returned, so
     // the reply reached the vendor and appeared NOWHERE in the admin inbox: the

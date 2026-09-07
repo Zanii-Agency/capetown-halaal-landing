@@ -51,6 +51,12 @@ Start a new chat, click the **+** (or the tools / connectors icon) in the messag
 - "What are the dashboard numbers today?"
 - "Mark the thread with Amc cookware as done."
 
+## Your To Do, in Claude
+
+Ask "What needs me today?" and Claude reads the same list as the new *To Do* tab in the portal (under Dashboard): EFT proofs to confirm, WhatsApp replies owed, email replies owed, vendor questions that came through the portal or the WhatsApp assistant, and applications waiting for review. Oldest first. Items disappear on their own once you have handled them. From there: "open the first one", "reply to her: ...", "confirm that proof".
+
+When the WhatsApp assistant cannot solve something for a vendor, it restates the request in one line, gets the vendor's yes, logs it, and tells them the team replies on WhatsApp within 24 to 72 hours. Those land in your To Do under "Vendor questions". The 24 to 72 hours is a promise made in your name, so clear that section daily.
+
 ## Payments, in Claude's words
 
 - **Paid** = money settled: a card payment through Yoco, or an EFT you confirmed.
