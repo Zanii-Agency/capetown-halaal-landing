@@ -27,6 +27,7 @@ import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { proposePaymentPlan } from '@/lib/payments/payment-plan'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
 import { CONTRACT_VERSION, cancellationTermsText } from '@/lib/contract/copy'
@@ -76,7 +77,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_electrical_setup',
-    description: "Report the electrical power, appliances and gas THIS vendor booked for their stall, and how it affects their total. Call whenever a verified vendor asks about power, electricity, plug points, whether they have power for a freezer/fridge/appliance, a generator, load-in setup, or gas at their stall. If they booked no power, this says so plainly so they are not caught out on the day.",
+    description: "Report the electrical power, appliances and gas THIS vendor booked for their stall, how it affects their total, and whether an accessory-electricity balance is still owing. Call whenever a verified vendor asks about power, electricity, plug points, whether they have power for a freezer/fridge/appliance, a generator, load-in setup, gas at their stall, OR asks to ADD more appliances / more power. Vendors can add more appliances themselves on the Payments page of their portal (the same appliance list and prices they saw at signup); the cost is added to their accessory balance to pay there. If they booked no power, this says so plainly so they are not caught out on the day.",
     // NOT strict: no-arg tool, keeps total strict tools <= 20 (see get_badge_allocation).
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
@@ -383,7 +384,7 @@ async function getPaymentStatus(vendorId: string): Promise<string> {
   try {
     const bill = vendorBill({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null })
     if (bill.settled && bill.accessories.state === 'owing' && bill.accessories.owing > 0) {
-      return `Your stall fee of R${bill.stall.price.toLocaleString('en-ZA')} is paid and your booth is confirmed. The electricity for the appliances you booked is billed separately, and R${bill.accessories.owing.toLocaleString('en-ZA')} is still due for it. You can settle it on the Payments page of your portal at ${PORTAL_LOGIN}.`
+      return `Your stall fee of R${bill.stall.price.toLocaleString('en-ZA')} is paid and your booth is confirmed. The electricity for the appliances you booked is billed separately, and R${bill.accessories.owing.toLocaleString('en-ZA')} is still due for it. You can settle it on the Payments page of your portal at ${PORTAL_LOGIN}. You can also add more appliances there any time if you need extra power, and the cost is added to that balance.`
     }
     if (bill.settled && bill.accessories.state === 'pending') {
       return `Your stall fee is paid, and we have your proof for the accessory electricity balance. Please allow up to 24 hours for the team to confirm it.`
@@ -936,6 +937,8 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   if (until > CAP) until = CAP
   const { grantExtension } = await import('@/lib/eft')
   await grantExtension(vendorId, until, `extension to ${until} granted via WhatsApp`)
+  // Dated event so 'who got more time to pay' shows in the day digest / activity feed.
+  await recordVendorAction({ applicationId: vendorId, eventType: 'payment_extension_granted', note: `Extension to ${until} granted via WhatsApp`, afterValue: until }).catch(() => {})
   const nice = new Date(`${until}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
   return `Done, you have until ${nice} to settle your stall fee in full. Your spot stays reserved until then, just pay through Payments in your portal when you're ready.`
 }

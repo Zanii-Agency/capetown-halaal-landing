@@ -32,6 +32,7 @@ import { POST as eftProofConfirm } from '@/app/api/admin/eft-proofs/confirm/rout
 import { loadPaidVendors } from '@/lib/payments/paid-vendors'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
 import { loadTodo } from '@/lib/todo'
+import { loadDayDigest } from '@/lib/day-digest'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -158,6 +159,11 @@ const TOOLS: Record<string, { description: string; inputSchema: Json; run: (a: J
     description: 'What needs the operator right now: a "Things to do" section of operational tasks (vendors overdue on payment, paid vendors still needing a stall, documents to review, paid vendors without a signed contract) each with a count and a page link, then EFT proofs to confirm, WhatsApp replies owed (only chats a human is handling), email replies owed (vendors only), vendor questions from the portal or bot. Same list as the To Do tab. Each item carries `whatsNeeded` (say this to her in plain words), `ask` (what the vendor wants), and an `action` telling you the tool to run in place. Use for "what needs me", "what is outstanding", "what should I do today".',
     inputSchema: { type: 'object', properties: {} },
     run: async () => ({ status: 200, data: await loadTodo() }),
+  },
+  day_activity: {
+    description: 'What happened on a given day, scoped to her vendors: payments received, payment plans & extensions, withdrawals, payments reversed, contracts signed, documents uploaded. Pass `date` as YYYY-MM-DD (SAST); omit for today. Use for "what happened today", "who paid today", "who withdrew", "what happened on the 12th".',
+    inputSchema: { type: 'object', properties: { date: str('YYYY-MM-DD, omit for today') } },
+    run: async (a) => ({ status: 200, data: await loadDayDigest(typeof a.date === 'string' ? a.date : undefined) }),
   },
   eft_proof_confirm: {
     description: 'Confirm an EFT proof: marks the vendor PAID and sends them the payment-received message. Irreversible. Before calling: show the operator the vendor name, reference and amount from eft_proofs and get an explicit yes for THAT vendor. Never call it for a vendor whose proof the operator has not seen.',

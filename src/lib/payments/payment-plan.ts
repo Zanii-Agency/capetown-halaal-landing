@@ -9,6 +9,7 @@
 // mirrors the LAST instalment date so the reminder/chase suppression already
 // honours the whole plan (same field grant_payment_extension uses), plus the
 // instalment list and a plan_status the cron flips from 'pending' to 'approved'.
+import { recordVendorAction } from '@/lib/vendor-action-log'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
@@ -154,6 +155,8 @@ export async function proposePaymentPlan(vendorId: string, installments: unknown
       },
     },
   }))
+  // Dated event so 'who enrolled in a payment plan' shows in the day digest.
+  await recordVendorAction({ applicationId: vendorId, eventType: 'payment_plan_proposed', note: planSummary(v.plan) }).catch(() => {})
 
   // Master heads-up (finance concern, walled from the festival owner). The
   // operator chose no veto, but still sees every plan and can intervene by hand.

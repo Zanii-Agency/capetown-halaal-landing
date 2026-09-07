@@ -65,6 +65,10 @@ On the To Do tab itself, click any item to expand it: you see what is needed, th
 
 When the WhatsApp assistant cannot solve something for a vendor, it restates the request in one line, gets the vendor's yes, logs it, and tells them the team replies on WhatsApp within 24 to 72 hours. Those land in your To Do under "Vendor questions". The 24 to 72 hours is a promise made in your name, so clear that section daily.
 
+## What happened on a day
+
+Ask "What happened today?" or "What happened on the 12th?" and Claude shows that day, scoped to your vendors: payments received, payment plans and extensions, withdrawals, payments reversed, contracts signed, and documents uploaded. On the To Do tab there is a "What happened" card with a date picker so you can look back at any day. The master EFT lane never appears here.
+
 ## Payments, in Claude's words
 
 - **Paid** = money settled: a card payment through Yoco, or an EFT you confirmed.
