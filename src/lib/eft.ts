@@ -851,13 +851,27 @@ export function eftProofVisibleToOwner(
  *  who is excluded from the owner's EFT-proofs surface, so the money split and the
  *  visibility split can never drift. Pure: the caller passes the rail + fullEft it
  *  already read for the request. Yoco vendors are never covert here (they pay no
- *  EFT), except a ⟦EFT⟧/protected holder who still pays EFT via the carve-out. */
+ *  EFT), except a ⟦EFT⟧/protected holder who still pays EFT via the carve-out.
+ *
+ *  The ⟦OWNERVIS⟧ override below is UNCONDITIONAL (it does not carry the
+ *  money-in-motion guard that vendorInOwnerScope applies to its OWNERVIS branch).
+ *  That is correct for the account/roster split, but it means this predicate is NOT
+ *  an owner-visibility gate for comms or PII: use vendorInOwnerScope for those. */
 export function onCovertMasterLane(
   vendorId: string,
   adminNotes: string | null | undefined,
   rail: PaymentRail,
   fullEft: { protectedIds: Set<string> } | null,
 ): boolean {
+  // ⟦OWNERVIS⟧ is the deliberate per-vendor "this vendor is Samreen's" hand-back. It
+  // already overrides the covert lane on the proofs fence (eftProofVisibleToOwner), the
+  // paid roster and accessory-chase; honour it HERE too so the vendor's PAYMENT PAGE
+  // shows HER ...629 account, not the master ...191. Without this a handed-back frozen
+  // member still saw the master account and paid into it (Cakes & Crumbs, 2026-09-07:
+  // frozen at the 08-31 cutover for merely opening the EFT panel, then routed to master
+  // when they finally paid weeks later on the samreen_eft rail). First, so it wins even
+  // under the master-rail sweep.
+  if (isOwnerVisible(adminNotes)) return false
   if (rail === 'master') return true
   if (hasEftMarker(adminNotes)) return true
   return !!fullEft && fullEft.protectedIds.has(vendorId)

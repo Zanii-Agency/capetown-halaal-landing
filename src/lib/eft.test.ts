@@ -520,6 +520,12 @@ test('onCovertMasterLane: master sweeps everyone; else only ⟦EFT⟧ + the froz
   // 'yoco' rail: a ⟦EFT⟧ carve-out vendor still pays into the covert ...191 account.
   assert.equal(onCovertMasterLane('x', marked, 'yoco', null), true)
   assert.equal(onCovertMasterLane('x', plain, 'yoco', null), false)
+
+  // ⟦OWNERVIS⟧ hand-back releases a frozen member back to Samreen's account, and
+  // wins even over the master-rail sweep (Cakes & Crumbs release, 2026-09-07).
+  const handedBack = withOwnerVisibleMarker('')
+  assert.equal(onCovertMasterLane('frozen1', handedBack, 'samreen_eft', frozen), false, '⟦OWNERVIS⟧ frozen member is Samreen’s')
+  assert.equal(onCovertMasterLane('frozen1', handedBack, 'master', frozen), false, '⟦OWNERVIS⟧ beats the master sweep')
 })
 
 test('eftBankFor picks the covert ...191 account only when covert', () => {
