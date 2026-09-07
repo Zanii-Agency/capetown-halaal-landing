@@ -80,6 +80,16 @@ function Detail({ item, onDone, onClose }: { item: TodoItem; onDone: () => void;
     } finally { setBusy(false) }
   }, [a, text, onDone])
 
+  const stallDecision = useCallback(async (decision: 'approve' | 'reject') => {
+    setBusy(true); setErr(null)
+    try {
+      const act = a as { applicationId: string; changeKind: 'size' | 'move' }
+      const r = await postJSON('/api/admin/stall-changes', { id: act.applicationId, action: decision, kind: act.changeKind })
+      if (!r.ok) { setErr(r.data?.error || 'Could not save.'); return }
+      onDone()
+    } finally { setBusy(false) }
+  }, [a, onDone])
+
   const confirmEft = useCallback(async () => {
     setBusy(true); setErr(null)
     try {
@@ -109,6 +119,12 @@ function Detail({ item, onDone, onClose }: { item: TodoItem; onDone: () => void;
             <button onClick={send} disabled={busy || !text.trim()} className="flex items-center gap-2 rounded-lg bg-[#cd2653] hover:bg-[#b31f48] disabled:opacity-60 text-white text-sm font-medium px-4 py-2">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send</button>
             <a href={item.href} className="text-xs text-neutral-400 hover:text-neutral-600">Full conversation</a>
           </div>
+        </div>
+      ) : a.type === 'stall_change' ? (
+        <div className="mt-3 flex items-center gap-2">
+          <button onClick={() => stallDecision('approve')} disabled={busy} className="flex items-center gap-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Approve</button>
+          <button onClick={() => stallDecision('reject')} disabled={busy} className="rounded-lg bg-white border border-neutral-200 hover:bg-neutral-50 disabled:opacity-60 text-neutral-700 text-sm font-medium px-4 py-2">Decline</button>
+          <a href={item.href} className="text-xs text-neutral-400 hover:text-neutral-600 ml-1">Full details</a>
         </div>
       ) : (
         <a href={item.href} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#cd2653] hover:underline">Open <ChevronRight className="w-3.5 h-3.5" /></a>

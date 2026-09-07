@@ -29,6 +29,7 @@ export type TodoAction =
   | { type: 'reply_portal'; applicationId: string }
   | { type: 'confirm_eft'; applicationId: string; reference: string; amount: number; proofUrl: string | null }
   | { type: 'navigate'; href: string }
+  | { type: 'stall_change'; applicationId: string; changeKind: 'size' | 'move' }
 
 export type TodoItem = {
   kind: 'task' | 'whatsapp_reply' | 'email_reply' | 'portal_support' | 'stall_change' | 'eft_proof'
@@ -140,16 +141,19 @@ export async function loadTodo(): Promise<Todo> {
     href: '/admin/eft-proofs', applicationId: r.id,
   }))
 
-  const stallReqs: Array<{ id: string; business_name: string; fromStall?: string; requestedTierLabel?: string; toStall?: string; reason?: string; requestedAt?: string | null }> =
-    [...(Array.isArray(stallRes?.requests) ? stallRes.requests : []), ...(Array.isArray(stallRes?.moveRequests) ? stallRes.moveRequests : [])]
-  const stall: TodoItem[] = stallReqs.map((r) => ({
+  type SR = { id: string; business_name: string; fromTierLabel?: string; requestedTierLabel?: string; fromStall?: string; toStall?: string; reason?: string; requestedAt?: string | null }
+  const mkStall = (r: SR, changeKind: 'size' | 'move'): TodoItem => ({
     kind: 'stall_change', title: r.business_name || 'Vendor',
-    ask: clip(r.reason) || (r.requestedTierLabel ? `Wants ${r.requestedTierLabel}` : r.toStall ? `Move to ${r.toStall}` : 'Stall change requested'),
-    whatsNeeded: `Approve or decline ${r.business_name || 'this vendor'}'s stall change. Opens Stall Changes.`,
+    ask: clip(r.reason) || (changeKind === 'size' ? `${r.fromTierLabel || 'current'} → ${r.requestedTierLabel || 'new size'}` : `Move ${r.fromStall || ''} → ${r.toStall || 'new spot'}`),
+    whatsNeeded: `Approve or decline ${r.business_name || 'this vendor'}'s ${changeKind === 'size' ? 'stall-size' : 'stall-move'} request, right here.`,
     since: r.requestedAt ?? null,
-    action: { type: 'navigate', href: '/admin/stall-changes' },
+    action: { type: 'stall_change', applicationId: r.id, changeKind },
     href: '/admin/stall-changes', applicationId: r.id,
-  }))
+  })
+  const stall: TodoItem[] = [
+    ...((Array.isArray(stallRes?.requests) ? stallRes.requests : []) as SR[]).map((r) => mkStall(r, 'size')),
+    ...((Array.isArray(stallRes?.moveRequests) ? stallRes.moveRequests : []) as SR[]).map((r) => mkStall(r, 'move')),
+  ]
 
   const bySince = (a: TodoItem, b: TodoItem) => (a.since || '') < (b.since || '') ? -1 : 1 // oldest first: the longest wait is the most urgent
   const sections: Todo['sections'] = [
