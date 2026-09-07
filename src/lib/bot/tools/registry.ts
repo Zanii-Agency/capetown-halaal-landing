@@ -937,6 +937,38 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   if (until > CAP) until = CAP
   const { grantExtension } = await import('@/lib/eft')
   await grantExtension(vendorId, until, `extension to ${until} granted via WhatsApp`)
+  // Record the commitment as a ONE-instalment approved plan so it shows under
+  // Active payment plans and is tracked like any other commitment (Taona
+  // 2026-09-07: "so it shows up and we can track, like anyone who makes a payment
+  // commitment"). loadPaidVendors keys the plans tab on plan_status='approved' +
+  // installments; a single full payment is just a one-instalment plan.
+  try {
+    const owing = Math.max(0, Math.round(vendorBill({
+      id: vendorId,
+      preferred_booth_tier: row.preferred_booth_tier,
+      special_requirements: row.special_requirements,
+      admin_notes: row.admin_notes,
+      paid_at: null,
+    }).owing))
+    if (owing > 0) {
+      const nowIso = new Date().toISOString()
+      await updatePortalState(vendorId, (s) => ({
+        ...s,
+        payment: {
+          ...s.payment,
+          status: 'deferred',
+          arrangement: {
+            ...(s.payment?.arrangement || {}),
+            until,
+            installments: [{ date: until, amount: owing }],
+            plan_status: 'approved',
+            proposed_at: s.payment?.arrangement?.proposed_at || nowIso,
+            approved_at: nowIso,
+          },
+        },
+      }))
+    }
+  } catch (e) { console.error('[grant_payment_extension] plan-track write failed:', (e as Error).message) }
   // Dated event so 'who got more time to pay' shows in the day digest / activity feed.
   await recordVendorAction({ applicationId: vendorId, eventType: 'payment_extension_granted', note: `Extension to ${until} granted via WhatsApp`, afterValue: until }).catch(() => {})
   const nice = new Date(`${until}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
