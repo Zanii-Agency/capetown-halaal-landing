@@ -14,6 +14,7 @@
 import { NextRequest } from 'next/server'
 import { GET as inboxList } from '@/app/api/admin/inbox/unified/route'
 import { GET as supportThreads } from '@/app/api/admin/support/route'
+import { GET as stallChanges } from '@/app/api/admin/stall-changes/route'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
@@ -30,7 +31,7 @@ export type TodoAction =
   | { type: 'navigate'; href: string }
 
 export type TodoItem = {
-  kind: 'task' | 'whatsapp_reply' | 'email_reply' | 'portal_support' | 'eft_proof'
+  kind: 'task' | 'whatsapp_reply' | 'email_reply' | 'portal_support' | 'stall_change' | 'eft_proof'
   /** Operational tasks carry a count of vendors behind the card. */
   count?: number
   title: string
@@ -77,11 +78,12 @@ export async function loadTodo(): Promise<Todo> {
   // (the reply route picks the right mailbox); only the fallback link changes.
   const { data: { user } } = await (await createClient()).auth.getUser()
   const canSeeGmail = isEftAdmin(user?.email)
-  const [inboxRes, supportRes, proofs, tasks] = await Promise.all([
+  const [inboxRes, supportRes, proofs, tasks, stallRes] = await Promise.all([
     inboxList(internal('/api/admin/inbox/unified?channel=all')).then(json),
     supportThreads().then(json),
     loadEftProofs().catch(() => ({ ownerEftActive: false, rows: [], totalAmount: 0, paidAmount: 0 })),
     loadOperationalTasks().catch(() => [] as TodoItem[]),
+    stallChanges().then(json).catch(() => null),
   ])
 
   const contacts: Contact[] = Array.isArray(inboxRes?.contacts) ? inboxRes.contacts : []
@@ -138,13 +140,25 @@ export async function loadTodo(): Promise<Todo> {
     href: '/admin/eft-proofs', applicationId: r.id,
   }))
 
+  const stallReqs: Array<{ id: string; business_name: string; fromStall?: string; requestedTierLabel?: string; toStall?: string; reason?: string; requestedAt?: string | null }> =
+    [...(Array.isArray(stallRes?.requests) ? stallRes.requests : []), ...(Array.isArray(stallRes?.moveRequests) ? stallRes.moveRequests : [])]
+  const stall: TodoItem[] = stallReqs.map((r) => ({
+    kind: 'stall_change', title: r.business_name || 'Vendor',
+    ask: clip(r.reason) || (r.requestedTierLabel ? `Wants ${r.requestedTierLabel}` : r.toStall ? `Move to ${r.toStall}` : 'Stall change requested'),
+    whatsNeeded: `Approve or decline ${r.business_name || 'this vendor'}'s stall change. Opens Stall Changes.`,
+    since: r.requestedAt ?? null,
+    action: { type: 'navigate', href: '/admin/stall-changes' },
+    href: '/admin/stall-changes', applicationId: r.id,
+  }))
+
   const bySince = (a: TodoItem, b: TodoItem) => (a.since || '') < (b.since || '') ? -1 : 1 // oldest first: the longest wait is the most urgent
   const sections: Todo['sections'] = [
     { key: 'task', label: 'Things to do', items: tasks },
     { key: 'eft_proof', label: 'EFT proofs to confirm', items: eft.sort(bySince) },
     { key: 'whatsapp_reply', label: 'WhatsApp replies owed', items: whatsapp.sort(bySince) },
     { key: 'email_reply', label: 'Email replies owed', items: email.sort(bySince) },
-    { key: 'portal_support', label: 'Vendor questions from the portal or bot', items: portal.sort(bySince) },
+    { key: 'stall_change', label: 'Stall changes to approve', items: stall.sort(bySince) },
+    { key: 'portal_support', label: 'Special requests from vendors', items: portal.sort(bySince) },
   ]
   return { generatedAt: new Date().toISOString(), total: sections.reduce((s, x) => s + x.items.length, 0), sections }
 }
