@@ -86,11 +86,11 @@ export function WhatsAppWorkspace() {
     if (!t.phone) return
     if (!opts?.silent) { setMsgLoading(true); setMsgError(null) }
     try {
-      // Include the vendor's email so cross-channel messages (e.g. a payment
-      // reminder email that triggered this WhatsApp reply) appear in the same
-      // thread instead of leaving the operator blind.
-      const emailParam = t.email ? `&email=${encodeURIComponent(t.email)}` : ''
-      const r = await fetch(`/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}${emailParam}`, { cache: 'no-store' })
+      // WhatsApp be WhatsApp (Taona 2026-09-07): this pane shows ONLY WhatsApp.
+      // It used to pass the vendor's email too, which pulled their support/gmail
+      // messages into the WhatsApp thread and read as "email in the WhatsApp tab".
+      // The email lives in the Support Email / Gmail tabs; do not mix it in here.
+      const r = await fetch(`/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}`, { cache: 'no-store' })
       // Same rule as VendorTimeline: a lane refusal renders as an EMPTY
       // conversation, never as a message naming the lane. Telling the viewer
       // "outside your lane" discloses that a wall exists and that this specific
@@ -104,7 +104,8 @@ export function WhatsAppWorkspace() {
       }
       if (!r.ok) throw new Error(`Could not load this conversation (${r.status})`)
       const j = await r.json()
-      const next: CommItem[] = j.messages || []
+      // Belt to the braces above: keep only WhatsApp, never an email item.
+      const next: CommItem[] = (j.messages || []).filter((m: CommItem) => m.channel === 'whatsapp')
       setHasMore(!!j.pagination?.hasMore)
       // Replace only when something actually changed, so a poll does not blow
       // the list away and re-render the whole thread under the cursor.
@@ -127,13 +128,12 @@ export function WhatsAppWorkspace() {
     if (!t?.phone || !oldest || loadingOlder) return
     setLoadingOlder(true)
     try {
-      const emailParam = t.email ? `&email=${encodeURIComponent(t.email)}` : ''
       const r = await fetch(
-        `/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}${emailParam}&before=${encodeURIComponent(oldest)}`,
+        `/api/admin/inbox/unified/messages?phone=${encodeURIComponent(t.phone)}&before=${encodeURIComponent(oldest)}`,
         { cache: 'no-store' })
       if (!r.ok) return
       const j = await r.json()
-      const older: CommItem[] = j.messages || []
+      const older: CommItem[] = (j.messages || []).filter((m: CommItem) => m.channel === 'whatsapp')
       setHasMore(!!j.pagination?.hasMore)
       // Prepending must NOT move the viewport: keep the scroll pinned to the
       // message the operator was looking at.
