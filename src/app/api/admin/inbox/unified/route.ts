@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { withoutMerged } from '@/lib/merge'
+import { cleanEmailText } from '@/lib/inbox/email-body'
 import { vendorCommsInEftLane, isEftAdmin, getEftMode, revealsPaymentArrangement, isOperatorPreviewAddress } from '@/lib/eft'
 import { BOT_ADMINS } from '@/lib/bot/admins'
 
@@ -373,7 +374,10 @@ export async function GET(req: NextRequest) {
         lastMsgByThread.set(m.thread_id, {
           direction: m.direction === 'in' ? 'in' : 'out',
           at: m.created_at,
-          preview: (m.body_text || m.subject || '').trim(),
+          // Clean the raw stored body: drop ⟦ATTACH⟧, unwrap MIME multipart,
+          // strip RFC822 headers, so the list preview reads as plain text and
+          // never shows "--<boundary> Content-Type:" or a base64 blob.
+          preview: (cleanEmailText(m.body_text) || m.subject || '').trim(),
         })
       }
     }
