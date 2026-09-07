@@ -56,22 +56,22 @@ test('the entry can never short-circuit as a canned answer', () => {
   }
 })
 
-test('the stated deadline is 31 August 2026 and carries no stall prices', () => {
+test('the stated deadline is the end of September 2026 and carries no stall prices', () => {
   const { fact, answer } = FAQ.vendor_part_payment
   for (const text of [fact, answer]) {
-    assert.match(text, /31 August 2026/)
+    assert.match(text, /end of September 2026/)
     assert.doesNotMatch(text, /R\s?\d/, 'part-payment copy must not state stall prices')
     assert.doesNotMatch(text, /[—–]/, 'no-em-dashes law (CTH-DOCTRINE 7)')
   }
 })
 
-// 31 August is an on-request concession layered ON TOP of the vendor's own
+// The end-of-September push is an on-request concession layered ON TOP of the vendor's own
 // due date, NOT a replacement for it. The per-vendor due date
 // (reviewed_at + 30 days, api/cron/payment-reminders/route.ts:72) and its
 // reminders keep running untouched. Copy that reads as "your deadline is now
 // August" would contradict the reminder emails those vendors still receive, so
 // both the grounding fact and the prompt must keep the due date alive.
-test('the August date never reads as replacing the vendor due date', () => {
+test('the concession date never reads as replacing the vendor due date', () => {
   const { fact, answer } = FAQ.vendor_part_payment
   for (const text of [fact, answer]) {
     assert.match(text, /still (stands|show)|still receive|still get/i)
@@ -111,11 +111,11 @@ test('the reminder email promises nothing the system will not honour', () => {
 
 test('the reply-shape rule is present and bans notice language', () => {
   assert.match(BASE_PROMPT, /PART PAYMENTS/)
-  assert.match(BASE_PROMPT, /31 August 2026/)
+  assert.match(BASE_PROMPT, /end of September 2026/)
   // The banned words appear only inside the NEVER-use instruction itself.
   assert.match(BASE_PROMPT, /NEVER use the words "policy", "rules", "not allowed"/)
   // Reactive-only, and the due date must survive the concession.
-  assert.match(BASE_PROMPT, /never mention 31 August to anyone who has not asked/)
+  assert.match(BASE_PROMPT, /ALWAYS PUSH FOR THIS MONTH FIRST/)
   assert.match(BASE_PROMPT, /NEVER tell them to ignore a reminder/)
   assert.match(BASE_PROMPT, /the due date on their account stays as it is/)
 })

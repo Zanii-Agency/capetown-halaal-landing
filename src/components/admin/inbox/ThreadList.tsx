@@ -96,7 +96,7 @@ export function ThreadList({
       key={t.id}
       onClick={() => onOpen(t)}
       className={`w-full text-left px-3 py-2.5 flex gap-3 border-b border-neutral-100 transition-colors ${
-        t.id === activeId ? 'bg-neutral-100' : 'hover:bg-neutral-50'
+        t.id === activeId ? 'bg-neutral-100' : t.unread ? 'bg-sky-50/60 hover:bg-sky-50' : 'hover:bg-neutral-50'
       }`}
     >
       <div className={`h-9 w-9 shrink-0 rounded-full grid place-items-center text-xs font-semibold ${avatarClass}`}>
@@ -104,10 +104,13 @@ export function ThreadList({
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
+          {t.unread && (
+            <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" aria-label="Unread" />
+          )}
           {t.needs_response && (
             <Pin className="h-3 w-3 shrink-0 text-rose-600" aria-label={`Waiting on ${waitingWord}`} />
           )}
-          <span className="truncate text-sm font-medium text-neutral-900">{nameOf(t)}</span>
+          <span className={`truncate text-sm text-neutral-900 ${t.unread ? 'font-bold' : 'font-medium'}`}>{nameOf(t)}</span>
           <span className="ml-auto shrink-0 text-[11px] text-neutral-400">
             {t.last_message_at ? fmtSAST(t.last_message_at) : ''}
           </span>

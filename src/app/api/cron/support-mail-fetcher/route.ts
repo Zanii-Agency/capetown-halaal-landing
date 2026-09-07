@@ -182,7 +182,7 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
           const parsed = await simpleParser(msg.source)
           parsedAttachments = (parsed.attachments || []) as import('@/lib/payments/email-proof-detect').ProofAttachment[]
           const txt = (parsed.text || '').trim()
-          body = txt.slice(0, 4000)
+          body = txt.slice(0, 20000)
           // Capture HTML alternative so the support-inbox renderer can
           // sanitize+display rich formatting instead of leaking raw markup
           // into whitespace-pre-wrap. Capped at 32KB so DB doesn't bloat.
@@ -196,7 +196,7 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
             const raw = msg.source.toString('utf8')
             const splitIdx = raw.search(/\r?\n\r?\n/)
             const tail = splitIdx >= 0 ? raw.slice(splitIdx + 2).trim() : raw.trim()
-            body = tail.slice(0, 4000)
+            body = tail.slice(0, 20000)
           }
           // Real attachments (not embedded signature images) — uploaded to
           // Storage, appended to body as a marker so the unified inbox can
@@ -209,7 +209,7 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
           const raw = msg.source.toString('utf8')
           const splitIdx = raw.search(/\r?\n\r?\n/)
           const tail = splitIdx >= 0 ? raw.slice(splitIdx + 2).trim() : raw.trim()
-          body = tail.slice(0, 4000)
+          body = tail.slice(0, 20000)
         }
       }
 

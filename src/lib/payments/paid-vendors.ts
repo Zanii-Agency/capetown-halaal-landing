@@ -10,7 +10,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid, isOwnerVisible } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
-import { nextInstalment } from '@/lib/payments/payment-plan'
+import { nextInstalment, PLAN_LAST_DATE } from '@/lib/payments/payment-plan'
 import { isTestVendor } from '@/lib/test-vendors'
 
 export const METHOD_LABEL: Record<string, string> = {
@@ -31,10 +31,36 @@ export type PaidVendorRow = {
   /** A proof is in that no confirm has consumed yet (proofs > confirms): the next instalment can be confirmed. */
   proofPending: boolean
   proofUrl: string | null
+  /** A committed plan with an instalment dated after the current cap (30 Nov): agreed
+   *  under the old rules, for Samreen to renegotiate earlier with the vendor herself. */
+  overCap: boolean
   stall: number; accTotal: number; accOwing: number; accState: string; totalPaid: number
 }
 
-export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confirmedRows: PaidVendorRow[]; partialRows: PaidVendorRow[]; pendingRows: PaidVendorRow[]; paidTotal: number; accOwingTotal: number }> {
+/** The instalment ledger for a plan: each instalment marked paid (money so far
+ *  covers it), proof (the next one, a proof is in awaiting confirm), overdue or
+ *  due. Shared by the Partial payments and Active payment plans tabs. */
+function buildLedger(
+  installments: Array<{ date: string; amount: number }>,
+  paidTotal: number,
+  proofPending: boolean,
+  today: string,
+  paidOnRef: string | null,
+): Instalment[] {
+  let cumulative = 0
+  let nextSeen = false
+  return [...installments].sort((a, b) => (a.date < b.date ? -1 : 1)).map((p, i) => {
+    cumulative += Number(p.amount) || 0
+    const covered = cumulative <= paidTotal + 0.005
+    let status: Instalment['status']
+    if (covered) status = 'paid'
+    else if (!nextSeen) { nextSeen = true; status = proofPending ? 'proof' : (p.date < today ? 'overdue' : 'due') }
+    else status = p.date < today ? 'overdue' : 'due'
+    return { n: i + 1, amount: Number(p.amount) || 0, due: p.date, status, paidOn: covered ? paidOnRef : null }
+  })
+}
+
+export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confirmedRows: PaidVendorRow[]; partialRows: PaidVendorRow[]; pendingRows: PaidVendorRow[]; planRows: PaidVendorRow[]; paidTotal: number; accOwingTotal: number }> {
   const db = createAdminClient()
   const rail = await getPaymentRail()
   const fullEft = await getFullEftMode()
@@ -85,18 +111,8 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       proofUrl = signed?.signedUrl ?? null
     }
     const today = new Date().toISOString().slice(0, 10)
-    let cumulative = 0
-    let nextSeen = false
     const instalments: Instalment[] = onPartial && planApproved
-      ? [...(pay!.arrangement!.installments as Array<{ date: string; amount: number }>)].sort((a, b) => (a.date < b.date ? -1 : 1)).map((p, i) => {
-          cumulative += Number(p.amount) || 0
-          const covered = cumulative <= bill.paidTotal + 0.005
-          let status: Instalment['status']
-          if (covered) status = 'paid'
-          else if (!nextSeen) { nextSeen = true; status = proofPending ? 'proof' : (p.date < today ? 'overdue' : 'due') }
-          else status = p.date < today ? 'overdue' : 'due'
-          return { n: i + 1, amount: Number(p.amount) || 0, due: p.date, status, paidOn: covered ? ((pay?.paid_at as string) || paidAt) : null }
-        })
+      ? buildLedger(pay!.arrangement!.installments as Array<{ date: string; amount: number }>, bill.paidTotal, proofPending, today, (pay?.paid_at as string) || paidAt)
       : []
     const paidOn = (pay?.paid_at as string) || (pay?.eft_collected_at as string) || paidAt || ''
     rows.push({
@@ -114,6 +130,7 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       instalments,
       proofPending,
       proofUrl,
+      overCap: instalments.some((i) => i.due > PLAN_LAST_DATE),
       stall: bill.stall.price,
       accTotal: bill.accessories.total,
       accOwing: bill.accessories.owing,
@@ -133,5 +150,61 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
   const accOwingTotal = rows.reduce((s, r) => s + r.accOwing, 0)
   // Total collected counts CONFIRMED money only (full and partial), never unconfirmed proofs.
   const paidTotal = [...confirmedRows, ...partialRows].reduce((s, r) => s + r.totalPaid, 0)
-  return { rows, confirmedRows, partialRows, pendingRows, paidTotal, accOwingTotal }
+
+  // ACTIVE PAYMENT PLANS (Taona 2026-09-07: "a tab to show who has committed to a
+  // plan"). Every vendor with an APPROVED instalment plan that is not yet fully
+  // settled, on Samreen's side, whether or not they have paid an instalment yet.
+  // Independent of the paid/partial/pending scan above: a vendor who agreed a plan
+  // but has paid nothing is not in rows, yet belongs here.
+  const today = new Date().toISOString().slice(0, 10)
+  const planRows: PaidVendorRow[] = []
+  for (const v of vendors ?? []) {
+    if ((v as { is_duplicate?: boolean }).is_duplicate) continue
+    if (isTestVendor(v as { business_name?: string | null; email?: string | null })) continue
+    const notes = (v.admin_notes as string) || null
+    const paidAt = (v.paid_at as string) || null
+    const pay = parsePortalState(notes || '').payment
+    const plan = pay?.arrangement
+    if (plan?.plan_status !== 'approved' || !(plan.installments?.length)) continue
+    if (!(isOwnerVisible(notes) || !onCovertMasterLane(v.id as string, notes, rail, fullEft))) continue
+    let bill: ReturnType<typeof vendorBill>
+    try { bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt }) } catch { continue }
+    const planTotal = plan.installments.reduce((s2, i) => s2 + (Number(i.amount) || 0), 0)
+    if (bill.paidTotal >= planTotal - 0.005) continue // plan completed -> it lives under Paid, not "active"
+    const proofs = (pay?.proofs || []).filter((fp) => fp.kind === 'eft_submission')
+    const confirms = [...(pay?.refs || []), pay?.provider_ref || ''].filter((r) => String(r).startsWith(`eftproof-${v.id}`)).length
+    const proofPending = proofs.length > confirms
+    const newestProof = [...proofs].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
+    let proofUrl: string | null = null
+    if (newestProof) { const { data: signed } = await db.storage.from('vendor-docs').createSignedUrl(newestProof.path, 60 * 60); proofUrl = signed?.signedUrl ?? null }
+    const instalments = buildLedger(plan.installments as Array<{ date: string; amount: number }>, bill.paidTotal, proofPending, today, (pay?.paid_at as string) || paidAt)
+    const inst = nextInstalment(plan, bill.paidTotal)
+    const paidOn = (pay?.paid_at as string) || (pay?.eft_collected_at as string) || paidAt || ''
+    planRows.push({
+      id: v.id as string,
+      name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
+      contact: (v.contact_name as string) || null,
+      paidOn,
+      sortKey: inst?.date || plan.installments[0].date || '',
+      method: METHOD_LABEL[String(pay?.method || '')] || 'EFT',
+      payState: 'Partial payment',
+      due: planTotal,
+      owing: Math.max(0, planTotal - bill.paidTotal),
+      nextAmount: inst ? Math.min(inst.amount, Math.max(0, planTotal - bill.paidTotal)) : null,
+      nextDue: inst?.date ?? null,
+      instalments,
+      proofPending,
+      proofUrl,
+      overCap: (plan.installments as Array<{ date: string }>).some((i) => i.date > PLAN_LAST_DATE),
+      stall: bill.stall.price,
+      accTotal: bill.accessories.total,
+      accOwing: bill.accessories.owing,
+      accState: bill.accessories.state,
+      totalPaid: bill.paidTotal,
+    })
+  }
+  // Over-cap plans (old rules, need renegotiating) first, then next instalment soonest.
+  planRows.sort((a, b) => (Number(b.overCap) - Number(a.overCap)) || (a.sortKey < b.sortKey ? -1 : 1))
+
+  return { rows, confirmedRows, partialRows, pendingRows, planRows, paidTotal, accOwingTotal }
 }

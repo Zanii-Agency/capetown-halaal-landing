@@ -17,7 +17,7 @@
 // both Melonscape rows and both Chocotag rows are is_duplicate=false,
 // duplicate_of_id=null. Phone/email is the only reliable person key.
 
-import { parsePortalState, hasPaid, isWithdrawn, getArrangement } from '@/lib/portal-state'
+import { parsePortalState, hasPaid, isWithdrawn, getArrangement, type PortalState } from '@/lib/portal-state'
 import { onEftLane } from '@/lib/eft'
 import { toE164 } from '@/lib/whatsapp'
 import { normalizeEmail } from '@/lib/email-normalize'
@@ -41,11 +41,23 @@ export function emailKeyOf(email?: string | null): string {
   return normalizeEmail(email || '')
 }
 
+/** They have already sent us a proof of payment: never chase them for it (Taona
+ *  2026-09-07 "stop reminding people who have uploaded proof already"). Independent
+ *  of onEftLane, whose ⟦NOEFT⟧ short-circuit was letting 4 EFT-paid vendors carrying
+ *  a card-only marker (Sataari, Island Way, Telkom, Call-A-Braai) keep getting
+ *  reminders despite a proof on file. A proof means the money is with the operator
+ *  to reconcile, not with the vendor to pay again. */
+export function hasProofUploaded(state: PortalState): boolean {
+  const p = state.payment
+  return !!p?.eft_submitted_at || (p?.proofs || []).some((f) => f.kind === 'eft_submission' || f.kind === 'eft_accessories')
+}
+
 /** A row hard-suppresses its person (silent, never chased) when it is paid,
- *  withdrawn, or carries a paid_at DB column even without a portal marker. */
+ *  withdrawn, carries a paid_at DB column even without a portal marker, or the
+ *  vendor has already uploaded a proof of payment we still owe them a reconcile on. */
 function rowHardSettled(row: ChaseRow): boolean {
   const st = parsePortalState(row.admin_notes || '')
-  return hasPaid(st) || isWithdrawn(st) || !!row.paid_at
+  return hasPaid(st) || isWithdrawn(st) || !!row.paid_at || hasProofUploaded(st)
 }
 
 /**

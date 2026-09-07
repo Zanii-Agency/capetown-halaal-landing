@@ -40,7 +40,7 @@ export const dynamic = 'force-dynamic'
 // Note: onCovertMasterLane short-circuits to true for everyone when the global
 // rail is 'master'; OWNERVIS still overrides, so her hand-backs stay visible.
 
-type Tab = 'paid' | 'partial' | 'pending'
+type Tab = 'paid' | 'partial' | 'plans' | 'pending'
 
 export default async function PaidVendorsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const supabase = await createClient()
@@ -48,9 +48,9 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
   if (!user) redirect('/admin/login')
 
   const { tab: rawTab } = await searchParams
-  const tab: Tab = rawTab === 'partial' || rawTab === 'pending' ? rawTab : 'paid'
+  const tab: Tab = rawTab === 'partial' || rawTab === 'plans' || rawTab === 'pending' ? rawTab : 'paid'
 
-  const { rows, confirmedRows, partialRows, pendingRows, paidTotal, accOwingTotal } = await loadPaidVendors()
+  const { rows, confirmedRows, partialRows, pendingRows, planRows, paidTotal, accOwingTotal } = await loadPaidVendors()
   type Row = PaidVendorRow
 
   const fmtDate = (iso: string | null) =>
@@ -66,9 +66,10 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
   const tabs: Array<{ key: Tab; label: string; count: number }> = [
     { key: 'paid', label: 'Paid', count: confirmedRows.length },
     { key: 'partial', label: 'Partial payments', count: partialRows.length },
+    { key: 'plans', label: 'Active payment plans', count: planRows.length },
     { key: 'pending', label: 'Proof pending', count: pendingRows.length },
   ]
-  const shown: Row[] = tab === 'paid' ? confirmedRows : tab === 'partial' ? partialRows : pendingRows
+  const shown: Row[] = tab === 'paid' ? confirmedRows : tab === 'partial' ? partialRows : tab === 'plans' ? planRows : pendingRows
 
   const instalmentStatus = (s: Row['instalments'][number]['status']) =>
     s === 'paid' ? <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Paid</span>
@@ -78,10 +79,11 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
 
   return (
     <AdminPage title="Paid Vendors" subtitle="Vendors paid via Yoco or Samreen EFT, with payment date, method, and accessories status. Instalment plans sit under Partial payments until the stall fee is covered in full.">
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
         {[
           { label: 'Paid in full', value: String(confirmedRows.length) },
           { label: 'Partial payments', value: String(partialRows.length) },
+          { label: 'Active plans', value: String(planRows.length) },
           { label: 'Proof pending', value: String(pendingRows.length) },
           { label: 'Accessories owing', value: formatRand(accOwingTotal) },
           { label: 'Total collected', value: formatRand(paidTotal) },
@@ -111,10 +113,15 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
         </div>
       ) : shown.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
-          {tab === 'partial' ? 'No partial payments. A vendor on an instalment plan appears here once their first proof is in.' : tab === 'pending' ? 'No proofs waiting for confirmation.' : 'No fully paid vendors yet.'}
+          {tab === 'partial' ? 'No partial payments. A vendor on an instalment plan appears here once their first proof is in.' : tab === 'plans' ? 'No active payment plans. A plan appears here the moment a vendor commits to one, whether or not they have paid an instalment yet.' : tab === 'pending' ? 'No proofs waiting for confirmation.' : 'No fully paid vendors yet.'}
         </div>
-      ) : tab === 'partial' ? (
+      ) : tab === 'partial' || tab === 'plans' ? (
         <div className="space-y-3">
+          {tab === 'plans' && shown.some((r) => r.overCap) && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Plans marked <span className="font-semibold">Over the Nov cap</span> were agreed under the old rules and run past 30 November. Reach out to those vendors yourself to bring the last instalment earlier: paying sooner helps us lock in the marquee, power and marketing and put on the best possible show.
+            </div>
+          )}
           {shown.map((r) => (
             <details key={r.id} className="group rounded-xl border border-neutral-200 bg-white overflow-hidden" open={r.proofPending}>
               <summary className="flex items-center justify-between gap-4 px-5 py-4 cursor-pointer list-none">
@@ -123,6 +130,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                     {r.name}
                     <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Partial payment</span>
                     {r.proofPending && <span className="inline-flex items-center rounded-full bg-neutral-100 border border-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-600">Proof received</span>}
+                    {r.overCap && <span className="inline-flex items-center rounded-full bg-[#cd2653]/10 border border-[#cd2653]/25 px-1.5 py-0.5 text-[10px] font-semibold text-[#cd2653]">Over the Nov cap</span>}
                   </div>
                   {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
                 </div>

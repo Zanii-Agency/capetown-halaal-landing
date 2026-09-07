@@ -24,6 +24,10 @@ const TEXT_MARKERS: RegExp[] = [
   /^_{10,}\s*$/m,                          // Outlook's horizontal rule
   /^From:\s.+\r?\n(Sent|Date):\s/mi,       // Outlook forwarded-header block
   /^--\s*$/m,                              // RFC 3676 signature delimiter
+  /^Sent from my (iPhone|iPad|Samsung|Galaxy|mobile|Huawei|BlackBerry)/mi, // phone footers
+  /^Get Outlook for (iOS|Android)/mi,      // Outlook mobile footer
+  /^(Disclaimer|CONFIDENTIAL(ITY)?( AND PRIVILEGED)?|This (e-?mail|message) (and any|is)|The information (contained|transmitted))/mi, // legal footers
+  /^(Kind regards|Warm regards|Best regards|Regards|Shukran|Jazakallah|Wslm|Wassalam|Thanks and regards)[,\s]*$/mi, // sign-off line, tail below moves to quote
 ]
 
 /** Split a PLAIN TEXT body. */

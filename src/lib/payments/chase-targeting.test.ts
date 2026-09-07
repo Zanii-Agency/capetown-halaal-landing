@@ -98,13 +98,13 @@ test('lane: a collected-EFT vendor is excluded via HARD suppression (hasPaid), n
   assert.equal(buildSuppressedPeople([collected], NOW).hardHas(collected), true)
 })
 
-test('lane: a proof-uploaded, not-yet-collected vendor IS caught by laneHas', () => {
-  // status still unpaid but a POP is in: hardHas is false, so laneHas is what keeps
-  // the pay reminder off them.
+test('a proof-uploaded vendor is HARD-suppressed (proof on file, never chase)', () => {
+  // A POP is in: the money is with the operator to reconcile, not the vendor to
+  // pay again, so hardHas keeps every reminder off them (Taona 2026-09-07). This
+  // now fires BEFORE the lane check, so they never reach laneHas.
   const submitted: ChaseRow = { phone: '0830000008', email: 'pop@x.com', admin_notes: pay({ status: 'pending', eft_submitted_at: '2026-08-20T10:00:00Z' }) }
   const idx = buildSuppressedPeople([submitted], NOW)
-  assert.equal(idx.hardHas(submitted), false)
-  assert.equal(idx.laneHas(submitted), true)
+  assert.equal(idx.hardHas(submitted), true)
 })
 
 test('lane: a ⟦NOEFT⟧ unpaid vendor is Samreen\'s and stays chaseable', () => {
@@ -124,4 +124,17 @@ test('lane person-level: an ⟦EFT⟧ row excludes a ⟦NOEFT⟧ twin that alone
   // The NOEFT twin alone is hers (laneHas false), but sharing a phone with an
   // EFT-lane row puts the PERSON on the lane: do not pay-email them.
   assert.equal(idx.laneHas(noeftTwin), true)
+})
+
+test('a vendor who uploaded a proof is never chased, even carrying ⟦NOEFT⟧', () => {
+  const withProof = (extra = '') => `${extra}\n⟦PORTAL:${Buffer.from(JSON.stringify({ payment: { status: 'pending', eft_submitted_at: '2026-09-06T09:00:00.000Z', proofs: [{ path: 'x/p.png', kind: 'eft_submission', uploaded_at: '2026-09-06T09:00:00.000Z' }] } })).toString('base64')}⟧`
+  const rows = [
+    { email: 'a@x.com', phone: '+27820000001', admin_notes: withProof('⟦NOEFT⟧'), paid_at: null },
+    { email: 'b@x.com', phone: '+27820000002', admin_notes: withProof(), paid_at: null },
+    { email: 'c@x.com', phone: '+27820000003', admin_notes: 'plain unpaid vendor', paid_at: null },
+  ]
+  const idx = buildSuppressedPeople(rows)
+  assert.equal(idx.hardHas(rows[0]), true, 'NOEFT + proof must be suppressed')
+  assert.equal(idx.hardHas(rows[1]), true, 'proof must be suppressed')
+  assert.equal(idx.hardHas(rows[2]), false, 'a genuinely unpaid vendor is still chased')
 })
