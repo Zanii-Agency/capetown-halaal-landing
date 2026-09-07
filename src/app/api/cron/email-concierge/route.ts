@@ -19,6 +19,7 @@ import { emailConciergeEnabled, draftReply, accountForRow, EMAIL_CONFIRMER, EMAI
 import { parseAttachmentMarker } from '@/lib/email/attachments'
 import { getEftMode, revealsPaymentArrangement } from '@/lib/eft'
 import { runPlanAutoReplies } from '@/lib/payments/plan-email-autoreply'
+import { runInvoiceAutoReplies } from '@/lib/payments/invoice-email-autoreply'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -33,9 +34,12 @@ export async function GET(req: Request) {
   // even when EMAIL_CONCIERGE is off, and marks the emails handled so the
   // confirm flow never re-drafts them.
   const planAuto = await runPlanAutoReplies(createAdminClient())
+  // Invoice requests: attach the themed invoice PDF (not VAT registered) or point
+  // them to their portal. After plan, so a plan request wins if an email asks both.
+  const invoiceAuto = await runInvoiceAutoReplies(createAdminClient())
 
   if (!emailConciergeEnabled()) {
-    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)', planAuto })
+    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)', planAuto, invoiceAuto })
   }
 
   const db = createAdminClient()

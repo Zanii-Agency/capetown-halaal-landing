@@ -127,3 +127,11 @@ test('isPlanRequestEmail matches real plan asks and ignores ordinary mail', asyn
   assert.equal(isPlanRequestEmail('Load-in', 'What time can I set up my stall on the Friday?'), false)
   assert.equal(isPlanRequestEmail('Proof of payment', 'Please find my proof of payment attached.'), false)
 })
+
+test('isInvoiceRequestEmail matches invoice asks, not ordinary mail', async () => {
+  const { isInvoiceRequestEmail } = await import('./invoice-email-autoreply')
+  assert.equal(isInvoiceRequestEmail('Invoice request', 'Please can you send me my invoice for my records'), true)
+  assert.equal(isInvoiceRequestEmail(null, 'Can I get a tax invoice for the stall fee?'), true)
+  assert.equal(isInvoiceRequestEmail('Re: stall', 'What time is load-in on the Friday?'), false)
+  assert.equal(isInvoiceRequestEmail('Proof of payment', 'Attached is my proof of payment.'), false)
+})

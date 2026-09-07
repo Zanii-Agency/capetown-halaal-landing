@@ -116,7 +116,7 @@ export function buildInvoiceHtml(data: InvoiceData): string {
 
   <div class="header">
     <div>
-      <div class="kicker">Tax Invoice</div>
+      <div class="kicker">Invoice</div>
       <h1>Vendor Stall, Festival 2026</h1>
       <div class="dates">${escapeHtml(brand.contact.venue)}</div>
     </div>
@@ -157,6 +157,8 @@ export function buildInvoiceHtml(data: InvoiceData): string {
     <div class="label">Total ${isPaid ? 'paid' : 'due'}</div>
     <div class="amount">${formatRand(data.totalAmount)}</div>
   </div>
+
+  <div style="margin-top: 10px; text-align: right; font-size: 11px; color: #737373;">Young at Heart Festival is not registered for VAT. No VAT is charged on this invoice.</div>
 
   ${isPaid ? `<div class="payment">
     <div class="label">Payment</div>
