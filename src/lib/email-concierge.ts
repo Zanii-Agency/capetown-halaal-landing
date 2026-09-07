@@ -58,7 +58,7 @@ export function accountForRow(r: Record<string, unknown>): 'gmail' | 'primary' {
   return r.mailbox === 'gmail' ? 'gmail' : 'primary'
 }
 
-function rowToEmail(r: Record<string, unknown>): InboundEmail {
+export function rowToEmail(r: Record<string, unknown>): InboundEmail {
   return {
     id: String(r.id),
     account: accountForRow(r),

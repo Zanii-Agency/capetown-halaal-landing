@@ -75,3 +75,12 @@ test('referenceFromProofText reads the reference line every SA bank prints', asy
   assert.equal(referenceFromProofText('Reference number 4134150361\nBeneficiary name X'), null)
   assert.equal(referenceFromProofText('You have paid R3 700 to Halal Hub'), null)
 })
+
+test('isPlanRequestEmail matches real plan asks and ignores ordinary mail', async () => {
+  const { isPlanRequestEmail } = await import('./plan-email-autoreply')
+  assert.equal(isPlanRequestEmail('Re: Final notice, stall fee overdue, Bee Pure', 'Is there any arrangement that can be made? R6500 is a bit much. what is the best arrangement that can be made?'), true)
+  assert.equal(isPlanRequestEmail('The Scarf Lab', 'can I do a payment arrange in 3 parts, at least 2 part payment'), true)
+  assert.equal(isPlanRequestEmail(null, 'Could I pay a deposit now and the rest later?'), true)
+  assert.equal(isPlanRequestEmail('Load-in', 'What time can I set up my stall on the Friday?'), false)
+  assert.equal(isPlanRequestEmail('Proof of payment', 'Please find my proof of payment attached.'), false)
+})
