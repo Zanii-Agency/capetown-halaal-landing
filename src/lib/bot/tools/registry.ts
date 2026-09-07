@@ -62,7 +62,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_invoice',
-    description: "Send THIS vendor their invoice as a PDF over WhatsApp. Call when a verified vendor asks for their invoice, bill, or receipt.",
+    description: "Send THIS vendor their invoice as a PDF over WhatsApp. Call ONLY when a verified vendor asks to see or get their invoice, bill or receipt. When you do, tell them we can provide an invoice though we are not VAT registered (so no VAT is charged), that the PDF is on its way, and that they can also view and download it any time by logging into their portal at cthalaal.co.za/exhibitor under Payments.",
     strict: true,
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
@@ -237,7 +237,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'escalate_to_human',
-    description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call when a verified vendor has a request or question you cannot resolve with the other tools. Pass a one-line summary in `note`.",
+    description: "Log a note for the festival team and notify them, when the vendor needs something no other tool covers. Call ONLY after you have restated the request to the vendor in one line and they confirmed it. Pass that confirmed one-line summary in `note`, in the vendor's own words where possible. The team replies on WhatsApp within 24 to 72 hours.",
     strict: true,
     input_schema: {
       type: 'object', additionalProperties: false,
@@ -658,7 +658,7 @@ function getInvoiceDeferred(session: VendorSession): () => Promise<void> {
       })
       if (!pdf) return
       const slug = (row.business_name || 'invoice').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'invoice'
-      const caption = 'Your Cape Town Halaal Festival invoice.'
+      const caption = 'Your Cape Town Halaal Festival invoice. Please note we are not VAT registered, so no VAT is charged.'
       const res = await sendMedia(waPhone, { bytes: pdf, mimeType: 'application/pdf', filename: `CTH-Invoice-${slug}.pdf`, kind: 'document', caption })
       await logBotSend(waPhone, caption, 'invoice', res.messageId)
     } catch (e) {
@@ -1266,7 +1266,7 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
     })
   } catch (e) { console.error('[tool escalate_to_human] notify failed:', (e as Error).message) }
   await flagNeedsHuman(session.waPhone, `asked for a human: "${clean.slice(0, 120)}"`)
-  return `I have passed this to the team: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". Someone will come back to you here.`
+  return `I have passed this to the team: "${clean.slice(0, 120)}${clean.length > 120 ? '…' : ''}". They reply here on WhatsApp within 24 to 72 hours. If you need to send them documents, email support@youngatheart.co.za.`
 }
 
 /**
@@ -1312,7 +1312,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'escalate_to_human': content = await escalateToHuman(session, (args as { note?: string })?.note || ''); break
       case 'get_invoice':
         deferred = getInvoiceDeferred(session)
-        content = 'Sending the vendor their invoice as a PDF now.'
+        content = 'The invoice PDF is on its way to the vendor now. In your reply, tell them we can provide an invoice though we are not VAT registered (so no VAT is charged), and that they can also view and download it any time in their portal at cthalaal.co.za/exhibitor under Payments.'
         break
       default:
         await writeToolReceipt({ waPhone: session.waPhone, tool: name, vendorId: vid, ok: false, detail: 'unknown tool' })

@@ -92,6 +92,7 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     '- Do NOT tell a vendor to "email support@youngatheart.co.za" for something you can do here. Email is a last resort, never your first answer.',
     '- SOLVE FIRST, ESCALATE LAST. Almost everything a verified vendor asks for is covered by your tools. Before you escalate_to_human, try the right tool. Only escalate for: a paid vendor who wants to withdraw (refund decision needed), a request that genuinely has no tool, or a situation where every reasonable tool has failed.',
     '- Before you escalate, call check_application_status: if a request is already logged with the team, tell them it is in hand and do NOT open a duplicate.',
+    '- RECONFIRM BEFORE YOU ESCALATE. When something genuinely needs the team, first restate the request in ONE plain line and ask if that is right, for example "So you need your stall moved next to a power point, correct?". Only after the vendor says yes do you call escalate_to_human with that exact line. Then tell them the team replies here on WhatsApp within 24 to 72 hours, and that support@youngatheart.co.za is only for sending documents. Never promise a faster time.',
     '',
     // ── PAYMENT — the rules INVERT with the lane (Taona 2026-07-26: "the bot
     // should be aware of master lane on or off and speak accordingly"). While the

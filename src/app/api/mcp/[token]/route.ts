@@ -31,6 +31,7 @@ import { GET as finance } from '@/app/api/admin/finance/route'
 import { POST as eftProofConfirm } from '@/app/api/admin/eft-proofs/confirm/route'
 import { loadPaidVendors } from '@/lib/payments/paid-vendors'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
+import { loadTodo } from '@/lib/todo'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -153,6 +154,11 @@ const TOOLS: Record<string, { description: string; inputSchema: Json; run: (a: J
       return { status: 200, data: { eftActive: d.ownerEftActive, rows, totalAmount: d.totalAmount, paidAmount: d.paidAmount } }
     },
   },
+  todo: {
+    description: 'What needs the operator right now, oldest first: EFT proofs to confirm, WhatsApp replies owed, email replies owed, vendor questions from the portal or bot, applications waiting. Same list as the To Do tab. Each item carries phone / email / applicationId so you can open it with inbox_messages, vendor_full or eft_proofs. Use for "what needs me", "what is outstanding", "what should I do today".',
+    inputSchema: { type: 'object', properties: {} },
+    run: async () => ({ status: 200, data: await loadTodo() }),
+  },
   eft_proof_confirm: {
     description: 'Confirm an EFT proof: marks the vendor PAID and sends them the payment-received message. Irreversible. Before calling: show the operator the vendor name, reference and amount from eft_proofs and get an explicit yes for THAT vendor. Never call it for a vendor whose proof the operator has not seen.',
     inputSchema: { type: 'object', required: ['applicationId'], properties: { applicationId: str('vendor application uuid from eft_proofs') } },
@@ -190,7 +196,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   switch (method) {
     case 'initialize':
-      return rpc(id, { result: { protocolVersion: (p?.protocolVersion as string) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'cth-festival-ops', version: '1.0.0' }, instructions: `You are connected to the Young at Heart Festival admin portal as ${actor.email}. Before any tool that sends a message (inbox_reply, support_reply, followup_send), show the exact text to the operator and get a yes. followup_send must be previewed with dry_run=true first. eft_proof_confirm marks a vendor paid: show name, reference and amount first and get a yes for that vendor. Payment vocabulary: Paid = money settled (card via Yoco, or an EFT the operator confirmed); Proof pending = the vendor uploaded an EFT proof that still needs confirming; none = nothing received; pending/deferred = agreed to pay later. The Finance page headline counts card settlements; the Paid Vendors page is the full roster of money in. Amounts are in South African Rand.` } })
+      return rpc(id, { result: { protocolVersion: (p?.protocolVersion as string) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'cth-festival-ops', version: '1.0.0' }, instructions: `You are connected to the Young at Heart Festival admin portal as ${actor.email}. Before any tool that sends a message (inbox_reply, support_reply, followup_send), show the exact text to the operator and get a yes. followup_send must be previewed with dry_run=true first. eft_proof_confirm marks a vendor paid: show name, reference and amount first and get a yes for that vendor. Start a working session with the todo tool when the operator asks what needs them. Payment vocabulary: Paid = money settled (card via Yoco, or an EFT the operator confirmed); Proof pending = the vendor uploaded an EFT proof that still needs confirming; none = nothing received; pending/deferred = agreed to pay later. The Finance page headline counts card settlements; the Paid Vendors page is the full roster of money in. Amounts are in South African Rand.` } })
     case 'ping':
       return rpc(id, { result: {} })
     case 'tools/list':
