@@ -15,6 +15,7 @@ import type { VendorSession } from '@/lib/bot/vendor-session'
 import { TOOL_DEFS, executeTool } from '@/lib/bot/tools/registry'
 import { MEMORY_ON } from '@/lib/bot/vendor-memory'
 import { VENDOR_FACTS, VENDOR_FACTS_NO_PAYMENT } from '@/lib/festival-brain/system-prompt'
+import { joburgClockBlock } from '@/lib/joburg-clock'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
 const MAX_TOOL_ROUNDS = 5
@@ -45,6 +46,12 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     // so it treated the older name as possibly-another-event. It is one festival.
     'ONE FESTIVAL, TWO NAMES: "Young at Heart Festival", "Young at Heart", "Cape Town Halaal", "Cape Town Halaal Market", "CTH" and "the halaal market" ALL mean this same single event. Not two festivals, not a parent and a sub-brand, not an old name and a new one. Many vendors still call it Cape Town Halaal and that is correct. NEVER tell anyone their message landed here by mistake, that they have the wrong number, or that Cape Town Halaal is a different event. Either name means they are in the right place: just help them.',
     who,
+    '',
+    // ── TODAY / PAST DATES (Taona 2026-09-07: "the bot is not aware august 31
+    // has passed"). The clock block is prepended to this prompt, but the model
+    // must be told to READ dates against it, or it repeats a lapsed deadline as
+    // if it were still open. ──
+    'TODAY, AND DATES THAT HAVE PASSED: the "Current trusted datetime" block at the top of this prompt is today. Read every date against it: any date before today has already passed. Never treat a past "pay by" date, deadline or payment arrangement as time the vendor still has. If a vendor refers to one that now falls before today, say plainly it has gone by and move them onto the current ladder (15 October 2026 first), never a date already behind us.',
     '',
     // ── VOICE ────────────────────────────────────────────────────────────────
     // Taona 2026-07-26: "the bot needs to really improve how it speaks to
@@ -218,7 +225,9 @@ export async function runVendorAgent(
   }
 
   const { getEftMode } = await import('@/lib/eft')
-  let system = systemPrompt(session, await getEftMode())
+  // Prepend trusted "now" so the agent knows today's real date (every other LLM
+  // surface in this repo does this via joburgClockBlock; this one was the gap).
+  let system = `${joburgClockBlock()}\n\n${systemPrompt(session, await getEftMode())}`
   // VENDOR MEMORY (flag-gated, inert unless VENDOR_MEMORY=on): prepend this
   // vendor's live state, durable arrangements, and the EMAIL side of the
   // conversation the WhatsApp bot otherwise never sees. Fails open (no memory).

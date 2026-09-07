@@ -56,10 +56,10 @@ test('the entry can never short-circuit as a canned answer', () => {
   }
 })
 
-test('the stated deadline is the end of September 2026 and carries no stall prices', () => {
+test('the stated deadline is 15 October 2026 and carries no stall prices', () => {
   const { fact, answer } = FAQ.vendor_part_payment
   for (const text of [fact, answer]) {
-    assert.match(text, /end of September 2026/)
+    assert.match(text, /15 October 2026/)
     assert.doesNotMatch(text, /R\s?\d/, 'part-payment copy must not state stall prices')
     assert.doesNotMatch(text, /[—–]/, 'no-em-dashes law (CTH-DOCTRINE 7)')
   }
@@ -111,11 +111,22 @@ test('the reminder email promises nothing the system will not honour', () => {
 
 test('the reply-shape rule is present and bans notice language', () => {
   assert.match(BASE_PROMPT, /PART PAYMENTS/)
-  assert.match(BASE_PROMPT, /end of September 2026/)
+  assert.match(BASE_PROMPT, /15 October 2026/)
   // The banned words appear only inside the NEVER-use instruction itself.
   assert.match(BASE_PROMPT, /NEVER use the words "policy", "rules", "not allowed"/)
   // Reactive-only, and the due date must survive the concession.
   assert.match(BASE_PROMPT, /ALWAYS PUSH FOR THIS MONTH FIRST/)
   assert.match(BASE_PROMPT, /NEVER tell them to ignore a reminder/)
   assert.match(BASE_PROMPT, /the due date on their account stays as it is/)
+})
+
+// The bot has the current date (joburgClockBlock is prepended to BASE_PROMPT),
+// but on Haiku it did not USE it: a vendor referring to a 31 August deadline
+// after that date had passed was answered as if the date were still open. The
+// rule below makes the model read every mentioned date against today and treat
+// a past one as lapsed. Without it, the fix is a hope, not an instruction.
+test('BASE_PROMPT tells the bot to read dates against today and treat past ones as lapsed', () => {
+  assert.match(BASE_PROMPT, /DATES THAT HAVE PASSED/)
+  assert.match(BASE_PROMPT, /Any date earlier than today has already passed/)
+  assert.match(BASE_PROMPT, /has passed and is no longer an option/)
 })

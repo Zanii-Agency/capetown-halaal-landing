@@ -15,9 +15,15 @@ const unknown: VendorSession = { status: 'unknown', waPhone: '+27821234567' } as
 
 test('verified vendor prompt carries the part-payment ladder (push this month first)', () => {
   const p = systemPrompt(verified)
-  assert.match(p, /END OF SEPTEMBER/)
+  assert.match(p, /15 OCTOBER 2026/)
   assert.match(p, /PUSH FOR PAYMENT THIS MONTH FIRST/)
   assert.match(p, /actually solve it with your tools/) // solve-don't-deflect discipline
+})
+
+test('vendor-agent prompt tells the bot to read dates against today (Aug-31-has-passed fix)', () => {
+  const p = systemPrompt(verified)
+  assert.match(p, /DATES THAT HAVE PASSED/)
+  assert.match(p, /any date before today has already passed/)
 })
 
 test('persona: support person, not a robot; no ticket-buyer payment line for vendors', () => {
