@@ -44,20 +44,30 @@ function extractReference(text: string): string | null {
   return null
 }
 
-async function isProofMedia(
+export async function isProofMedia(
   media: InboundMedia,
   caption: string,
   seen?: SeenImage | null,
-): Promise<{ yes: boolean; note: string }> {
-  // Images: use vision when available. The caller may already have looked.
-  if (media.kind === 'image') {
+): Promise<{ yes: boolean; note: string; looked: boolean }> {
+  // Stickers, voice notes and videos are NEVER a payment proof. A vendor tapping a
+  // thumbs-up sticker after we confirm their plan is not sending money (2026-09-07:
+  // Bella and Co's emoji sticker was filed as a proof and acked "proof received").
+  // This is a CONFIDENT no (looked:true), so the eager unpaid-vendor net in the
+  // caller cannot override it.
+  if (media.kind === 'sticker' || media.kind === 'video' || media.kind === 'audio') {
+    return { yes: false, note: `${media.kind} is not a payment proof`, looked: true }
+  }
+
+  const imageMime = /^image\//i.test(media.mimeType || '')
+  // A photo, or a photo sent "as a document": LOOK at it with vision.
+  if (media.kind === 'image' || (media.kind === 'document' && imageMime)) {
     const img = seen ?? (await seeImage(media.id, media.mimeType))
-    if (img) {
-      return {
-        yes: img.isPaymentProof,
-        note: img.description,
-      }
-    }
+    // Vision gave a verdict: trust it (a receipt is a proof, a selfie or meme is
+    // not) and mark it looked. Vision unavailable (null): we could NOT look, so
+    // this is not a confident verdict and the caller's eager capture-first net
+    // still applies rather than dropping a proof we simply could not read.
+    if (img) return { yes: img.isPaymentProof, note: img.description, looked: true }
+    return { yes: looksLikePaymentProof(caption), note: caption, looked: false }
   }
 
   // Documents (PDF): try to read any text layer and look for payment signals.
@@ -67,13 +77,16 @@ async function isProofMedia(
       const text = await extractPdfText(bytes.bytes, 8000)
       if (text && (looksLikePaymentProof(text) || looksLikePaymentProof(caption))) {
         const ref = extractReference(text) || extractReference(caption) || null
-        return { yes: true, note: ref ? `reference ${ref}` : 'document text looks like a payment proof' }
+        return { yes: true, note: ref ? `reference ${ref}` : 'document text looks like a payment proof', looked: true }
       }
     }
+    // A PDF we could not read as payment text may still be a scanned-image proof
+    // with no text layer, so this is NOT a confident no: let eager capture it.
+    return { yes: looksLikePaymentProof(caption), note: caption, looked: false }
   }
 
-  // Fall back to caption keywords and existing lane membership.
-  return { yes: looksLikePaymentProof(caption), note: caption }
+  // Any other document (non-PDF, non-image): caption keywords only, not confident.
+  return { yes: looksLikePaymentProof(caption), note: caption, looked: false }
 }
 
 export type EftMediaResult =
@@ -133,8 +146,13 @@ export async function tryHandleEftProofMedia(
   // cutover activated, misfiling their logo as a proof (doctrine review, 2026-09-02).
   const eager = alreadyLane || !vendor.paid_at
 
-  const { yes, note } = await isProofMedia(media, caption, seen)
-  if (!yes && !eager) return { handled: false }
+  const { yes, note, looked } = await isProofMedia(media, caption, seen)
+  // Capture when it is a positive proof, OR the vendor is eager AND we could not
+  // confidently look at what they sent (vision down / ambiguous) so we must not
+  // risk dropping a real proof. A CONFIDENT not-a-proof (a sticker, a voice note,
+  // or an image vision examined and rejected) is NEVER captured, even for an eager
+  // unpaid vendor: that is exactly how an emoji got filed as "proof received".
+  if (!yes && !(eager && !looked)) return { handled: false }
 
   const bytes = await fetchMediaBytes(media.id)
   if (!bytes) {
