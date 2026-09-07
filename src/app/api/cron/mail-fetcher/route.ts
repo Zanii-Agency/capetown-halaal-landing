@@ -254,13 +254,13 @@ export async function GET(req: Request) {
         try {
           const parsed = await simpleParser(msg.source)
           parsedAttachments = (parsed.attachments || []) as ProofAttachment[]
-          body = (parsed.text || '').trim().slice(0, 4000)
+          body = (parsed.text || '').trim().slice(0, 20000)
           const html = typeof parsed.html === 'string' ? parsed.html.trim() : ''
           if (html) bodyHtml = html.slice(0, 32_000)
           if (!body) {
             const raw = msg.source.toString('utf8')
             const splitIdx = raw.search(/\r?\n\r?\n/)
-            body = (splitIdx >= 0 ? raw.slice(splitIdx + 2) : raw).trim().slice(0, 4000)
+            body = (splitIdx >= 0 ? raw.slice(splitIdx + 2) : raw).trim().slice(0, 20000)
           }
           // Real attachments (not embedded signature images) — see attachments.ts.
           body += await captureAttachments(supabase, messageId, parsed.attachments)
