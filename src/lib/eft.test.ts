@@ -332,6 +332,16 @@ test('viewerSafePayment: in-flight EFT money is stripped, her settled payment sh
   assert.equal(p?.reference, 'CH-9')
   assert.equal((p as Record<string, unknown>)?.method, undefined)
 
+  // A SETTLED master-lane EFT (status paid, method eft, paid_at set): to her this
+  // is UNPAID — status masked to 'none', every money field dropped (2026-09-07,
+  // reconciledPaid gate). It only reads paid to the EFT admin.
+  const eNotes = notesFor({ status: 'paid', amount: 5400, reference: 'YAH-12', method: 'eft' })
+  const e = viewerSafePayment(pay(eNotes), eNotes, '2026-08-01T00:00:00Z', SAM)
+  assert.equal(e?.status, 'none')
+  assert.equal(e?.amount, undefined)
+  assert.equal(e?.reference, undefined)
+  assert.equal(viewerSafePayment(pay(eNotes), eNotes, '2026-08-01T00:00:00Z', EFT_ADMIN_EMAIL)?.status, 'paid')
+
   // A plain unpaid vendor: nothing to leak, status passes through.
   const uNotes = notesFor({ status: 'none' })
   assert.equal(viewerSafePayment(pay(uNotes), uNotes, null, SAM)?.status, 'none')
@@ -343,21 +353,33 @@ test('viewerSafePayment: in-flight EFT money is stripped, her settled payment sh
   assert.equal((admin as Record<string, unknown>)?.method, 'eft')
 })
 
-test('rosterPaid + rosterPaymentStatus: SETTLED reads paid; only in-flight EFT masks', () => {
+test('rosterPaymentStatus: owner sees paid ONLY for her-channel settlement; master-lane EFT masks to unpaid', () => {
   const SAM = 'capetownhalaal@gmail.com'
   const notes = (payment: Record<string, unknown>) =>
     updatePortalStateImpl('note', { v: 1, payment } as never)
   const paidAt = '2026-07-05T00:00:00Z'
-  // SETTLED reads paid, method ignored — byte-for-byte the finance total's is_paid.
-  // Taona 2026-08-16: a settled EFT (Islamic Relief SA, Amc cookware, ...) is a
-  // done deal, whoever reconciled it. This reverses the earlier method-based mask.
+  // rosterPaid stays the method-AGNOSTIC true-state label — every settled method is
+  // paid. This is the EFT admin's export column and never changed.
   for (const method of ['eft', 'manual', 'manual_card', 'yoco', 'cash']) {
     assert.equal(rosterPaid(notes({ status: 'paid', method }), paidAt), true, method)
+  }
+  // To the OWNER, "paid" means reconciled through HER channel. Taona 2026-09-07
+  // ("all vendors on master lane eft should always show as unpaid to her") reverses
+  // the 2026-08-16 call: Yoco/cash read paid, eft/manual/manual_card read unpaid.
+  for (const method of ['yoco', 'cash']) {
     assert.equal(rosterPaymentStatus(notes({ status: 'paid', method }), paidAt, SAM), 'paid', method)
   }
-  assert.equal(rosterPaid('just a note', '2026-07-19T00:00:00Z'), true) // paid_at alone
-  // IN-FLIGHT 'collected' (recorded, not settled) is NOT paid and masks to 'none'
-  // for her — the real EFT-in-progress leak this withholds.
+  for (const method of ['eft', 'manual', 'manual_card']) {
+    assert.equal(rosterPaymentStatus(notes({ status: 'paid', method }), paidAt, SAM), 'none', method)
+  }
+  // The EFT admin still sees the raw truth for every method.
+  for (const method of ['eft', 'manual', 'manual_card', 'yoco', 'cash']) {
+    assert.equal(rosterPaymentStatus(notes({ status: 'paid', method }), paidAt, EFT_ADMIN_EMAIL), 'paid', method)
+  }
+  // paid_at alone (no method) is her-channel by default — nothing master about it.
+  assert.equal(rosterPaid('just a note', '2026-07-19T00:00:00Z'), true)
+  assert.equal(rosterPaymentStatus('just a note', '2026-07-19T00:00:00Z', SAM), 'paid')
+  // IN-FLIGHT 'collected' (recorded, not settled) is NOT paid and masks to 'none'.
   assert.equal(rosterPaid(notes({ status: 'collected' }), null), false)
   assert.equal(rosterPaymentStatus(notes({ status: 'collected' }), null, SAM), 'none')
   // Plain unpaid states pass through untouched.

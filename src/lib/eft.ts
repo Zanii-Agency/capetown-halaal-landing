@@ -98,7 +98,16 @@ export function visiblePaymentStatus(status: string | null | undefined, viewerEm
  *  the 'collected' interim) masks to 'none', exactly as 'collected' already did.
  *  The EFT admin still reads the true state. Method-aware, so it needs the notes
  *  and paid_at, not just the status string. Reuses reconciledPaid so it cannot
- *  drift from the export. */
+ *  drift from the export.
+ *
+ *  2026-09-07: gate restored to reconciledPaid. It had regressed to rosterPaid
+ *  (the method-AGNOSTIC label), which re-showed master-lane EFT (method
+ *  eft/manual/manual_card, paid_at set) as 'paid' to the owner even though their
+ *  comms are walled and their money is excluded from her total — an inconsistent
+ *  half-leak. Taona: "all vendors on master lane eft should always show as unpaid
+ *  to her; this must not affect anyone off the lane." reconciledPaid is exactly
+ *  that: her-channel settlements (Yoco/cash/waived) read paid, master-lane reads
+ *  unpaid, and her 75 own reconciled vendors are untouched. */
 export function rosterPaymentStatus(
   adminNotes: string | null | undefined,
   paidAt: string | null | undefined,
@@ -106,7 +115,7 @@ export function rosterPaymentStatus(
 ): string {
   const raw = parsePortalState(adminNotes).payment?.status || (paidAt ? 'paid' : 'none')
   if (isEftAdmin(viewerEmail)) return raw
-  if (rosterPaid(adminNotes, paidAt)) return 'paid'
+  if (reconciledPaid(adminNotes, paidAt)) return 'paid'
   return raw === 'paid' || raw === 'collected' ? 'none' : raw
 }
 
@@ -115,7 +124,8 @@ export function rosterPaymentStatus(
  *  renders amount, reference, method and the eft_* internals, so those leak the
  *  moment the page is reachable. This is the object-level twin: the EFT admin sees
  *  the raw payment; everyone else sees the money ONLY when it settled through her
- *  channel (rosterPaid) as a clean { status:'paid', amount, reference } — and for
+ *  channel (reconciledPaid: Yoco/cash/waived) as a clean { status:'paid', amount,
+ *  reference } — and for
  *  anything else (in-flight EFT: collected, revealed, submitted, presented-not-
  *  reconciled) EVERY money field is dropped and only the masked status remains.
  *  Display only; same rule the vendor list uses, extended from status to object.
@@ -131,7 +141,9 @@ export function viewerSafePayment(
 ): PortalState['payment'] {
   if (!payment) return payment
   if (isEftAdmin(viewerEmail)) return payment
-  if (rosterPaid(adminNotes, paidAt)) {
+  // reconciledPaid (her channel: Yoco/cash/waived), NOT rosterPaid — a master-lane
+  // EFT/manual settlement must not show the owner an amount+reference (2026-09-07).
+  if (reconciledPaid(adminNotes, paidAt)) {
     return { status: 'paid', amount: payment.amount, reference: payment.reference }
   }
   const masked = rosterPaymentStatus(adminNotes, paidAt, viewerEmail)
