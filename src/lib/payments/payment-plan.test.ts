@@ -37,13 +37,13 @@ test('a past or today date is rejected', () => {
   assert.equal(validatePlan([{ date: '2026-08-01', amount: 3000 }, { date: '2026-10-31', amount: 3500 }], OWING, TODAY).ok, false)
 })
 
-test('a date after the plan cap (30 Nov 2026) is rejected', () => {
-  // The cap moved off the festival (12 Dec) to end of November (Taona 2026-09-07).
-  const r = validatePlan([{ date: '2026-11-15', amount: 3000 }, { date: '2026-12-01', amount: 3500 }], OWING, TODAY)
+test('a date after the plan cap (31 Oct 2026) is rejected', () => {
+  // The cap moved to END OF OCTOBER (Taona 2026-09-09): no instalment past 31 Oct.
+  const r = validatePlan([{ date: '2026-10-15', amount: 3000 }, { date: '2026-11-30', amount: 3500 }], OWING, TODAY)
   assert.equal(r.ok, false)
   if (!r.ok) assert.match(r.error, /before the festival/i)
-  // the last valid day is 30 Nov: a plan that lands exactly on it still passes
-  assert.equal(validatePlan([{ date: '2026-10-31', amount: 3000 }, { date: '2026-11-30', amount: 3500 }], OWING, TODAY).ok, true)
+  // the last valid day is 31 Oct: a plan that lands exactly on it still passes
+  assert.equal(validatePlan([{ date: '2026-10-10', amount: 3000 }, { date: '2026-10-31', amount: 3500 }], OWING, TODAY).ok, true)
 })
 
 test('out-of-order dates are rejected', () => {

@@ -176,13 +176,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'grant_payment_extension',
-    description: "Give THIS vendor more time to pay their stall fee in full, in ONE payment, by a single agreed date. Push the END OF SEPTEMBER 2026 first (final_date 2026-09-30). Only if that is genuinely tight, the firm fallback for this round is 15 October 2026 (final_date 2026-10-15). Only if the vendor genuinely cannot manage 15 October, move later ONE step at a time, 1 November 2026, then 15 November 2026, then 30 November 2026 at the very latest, never past it. Always steer them to a single payment, or at most two instalments via propose_payment_plan. Call AFTER confirming the date with them; pass it as final_date (default 2026-09-30). If they are already paid, do not call it.",
+    description: "Give THIS vendor more time to pay their stall fee in full, in ONE payment, by a single agreed date. FIRST make at least TWO genuine attempts to get them to pay as much as they can THIS month (September): push the full amount this month first (final_date 2026-09-30). Only if that is genuinely tight, the firm fallback is 15 October 2026 (final_date 2026-10-15), and 31 October 2026 (final_date 2026-10-31) is the very latest, never past it. Always steer them to a single payment, or at most two instalments via propose_payment_plan. Call AFTER confirming the date with them; pass it as final_date (default 2026-09-30). If they are already paid, do not call it.",
     strict: true,
-    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Offer 2026-09-30 first; only if that is tight, 2026-10-15; then only if needed 2026-11-01, then 2026-11-15, then 2026-11-30 at the very latest.' } }, required: ['final_date'] },
+    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Offer 2026-09-30 first; only if that is tight, 2026-10-15; 2026-10-31 at the very latest.' } }, required: ['final_date'] },
   },
   {
     name: 'propose_payment_plan',
-    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into instalments they will pay by their own exact dates. Call ONLY when a verified, unpaid vendor wants to pay in instalments AND has given you the exact DATE and AMOUNT of each instalment (for example 'R3000 on 15 October and R3500 on 15 November'). ALWAYS push for one to two payments: TWO instalments is the most you should normally do (a third only as an absolute last resort, never more than three). Each instalment needs a real future date and a Rand amount; every date must be on or before 30 November 2026, and the amounts must add up to at least their full outstanding fee. A plan is the fallback only after a single full payment is declined: set the final instalment by the date they can reach on the ladder, end of September 2026 first, then 15 October 2026 for this round, then 1 November, 15 November, and 30 November at the very latest. If they have not given exact dates and amounts, ask for them first. Do not invent dates or amounts. For a single full payment with more time, use grant_payment_extension instead.",
+    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into instalments they will pay by their own exact dates. Call ONLY after you have made at least TWO genuine attempts to get them to pay as much as they can THIS month (September), AND a verified, unpaid vendor still wants to pay in instalments, AND has given you the exact DATE and AMOUNT of each instalment (for example 'R3000 on 10 October and R3500 on 31 October'). ALWAYS push for one to two payments: TWO instalments is the most you should normally do (a third only as an absolute last resort, never more than three). Each instalment needs a real future date and a Rand amount; every date must be on or before 31 OCTOBER 2026, and the amounts must add up to at least their full outstanding fee. A plan is the fallback only after a large payment this month is declined: pay as much as possible now, and set the final instalment no later than 31 October 2026. If they have not given exact dates and amounts, ask for them first. Do not invent dates or amounts. For a single full payment with more time, use grant_payment_extension instead.",
     // NOT strict on purpose: a nested-array argument, and claude-sonnet-5 caps
     // strict tools at 20 (adding a 21st 400s every vendor call, see
     // get_badge_allocation). The handler validates every field defensively.
@@ -926,11 +926,12 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   if (st.payment?.status === 'paid' || st.payment?.status === 'collected') {
     return 'Your stall fee is already settled, thank you, so there is nothing to extend.'
   }
-  // Clamp to the policy window: a real future date, no later than 30 Nov 2026
-  // (Taona 2026-09-07 ladder). A missing/invalid/too-late date defaults to the
-  // ladder ceiling so the tool never writes a passed or out-of-policy date.
-  const CAP = '2026-11-30'
-  const DEFAULT = '2026-09-30' // push end of September first; 15 Oct is the fallback (Taona 2026-09-07)
+  // Clamp to the policy window: a real future date, no later than 31 Oct 2026
+  // (Taona 2026-09-09 ladder: end of October is the absolute latest). A
+  // missing/invalid/too-late date defaults to the ladder ceiling so the tool
+  // never writes a passed or out-of-policy date.
+  const CAP = '2026-10-31'
+  const DEFAULT = '2026-09-30' // push as much as possible THIS month first; 15 Oct fallback (Taona 2026-09-09)
   const today = new Date().toISOString().slice(0, 10)
   let until = (finalDate || '').trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || until <= today) until = DEFAULT

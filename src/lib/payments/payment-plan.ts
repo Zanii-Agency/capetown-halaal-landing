@@ -17,10 +17,11 @@ import { recordLedger } from '@/lib/zanii-ledger'
 
 export interface Installment { date: string; amount: number }
 
-// Policy cap (Taona 2026-09-07): every instalment must land by end of November,
-// two weeks before the 11-13 Dec festival, so the books are clear before the event.
-// Was 2026-12-12 (the festival itself).
-export const PLAN_LAST_DATE = '2026-11-30'
+// Policy cap (Taona 2026-09-09): every instalment must land by END OF OCTOBER.
+// No plan is offered until at least two genuine attempts to get the vendor to pay
+// as much as they can THIS month; only then a plan, capped at this date.
+// Was 2026-11-30, and 2026-12-12 before that (the festival itself).
+export const PLAN_LAST_DATE = '2026-10-31'
 const MIN_INSTALMENTS = 2
 const MAX_INSTALMENTS = 6
 const APPROVE_AFTER_MS = 5 * 60 * 1000

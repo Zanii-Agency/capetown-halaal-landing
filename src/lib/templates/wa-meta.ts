@@ -429,7 +429,7 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       'Hi {{1}}, we are checking in on the payment arrangement for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp to confirm or if anything has changed. The YAH Team.',
     params: [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
-      { key: 'message', label: 'Your message', placeholder: 'Your agreed instalment was due on 15 November.', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'Your agreed instalment was due on 15 October.', required: true},
     ],
   },
 ]
