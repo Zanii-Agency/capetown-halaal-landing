@@ -123,11 +123,14 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
   // Both streams can carry the same contract/doc. Drop a generic "A vendor" entry
   // when a NAMED entry shares its second, then de-dupe exact repeats.
   const dedupe = (arr: DayEntry[]) => {
-    const namedSeconds = new Set(arr.filter((x) => x.name !== 'A vendor').map((x) => x.at.slice(0, 19)))
+    // Newest first, then collapse repeats of the SAME vendor + SAME detail
+    // (e.g. two identical extension events a minute apart), keeping the newest.
+    const sorted = [...arr].sort((a, b) => (a.at > b.at ? -1 : 1))
+    const namedSeconds = new Set(sorted.filter((x) => x.name !== 'A vendor').map((x) => x.at.slice(0, 19)))
     const seen = new Set<string>()
-    return arr.filter((x) => {
+    return sorted.filter((x) => {
       if (x.name === 'A vendor' && namedSeconds.has(x.at.slice(0, 19))) return false
-      const k = x.name + x.at.slice(0, 16)
+      const k = x.name + '|' + x.detail
       if (seen.has(k)) return false
       seen.add(k); return true
     })

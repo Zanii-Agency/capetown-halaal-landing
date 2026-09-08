@@ -17,8 +17,6 @@ import { GET as supportThreads } from '@/app/api/admin/support/route'
 import { GET as stallChanges } from '@/app/api/admin/stall-changes/route'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
-import { isEftAdmin } from '@/lib/eft'
 
 export type TodoAction =
   | { type: 'reply'; channel: 'whatsapp'; phone: string }
@@ -71,11 +69,6 @@ const clip = (s: string | null | undefined, n = 160) => (s || '').replace(/⟦[^
 const rand = (n: number) => `R${n.toLocaleString('en-ZA')}`
 
 export async function loadTodo(): Promise<Todo> {
-  // Gmail is master/dev only, so a non-eftAdmin viewer's email items must not
-  // deep-link into the Gmail inbox she cannot open. The inline reply still works
-  // (the reply route picks the right mailbox); only the fallback link changes.
-  const { data: { user } } = await (await createClient()).auth.getUser()
-  const canSeeGmail = isEftAdmin(user?.email)
   const [inboxRes, supportRes, proofs, stallRes] = await Promise.all([
     inboxList(internal('/api/admin/inbox/unified?channel=all')).then(json),
     supportThreads().then(json),
@@ -97,7 +90,7 @@ export async function loadTodo(): Promise<Todo> {
     whatsNeeded: `Reply to ${who(c)} on WhatsApp. This chat is off the bot (a person is handling it), so it is waiting on you.`,
     since: c.last_message_at ?? null,
     action: { type: 'reply', channel: 'whatsapp', phone: c.phone as string },
-    href: '/admin/inbox/whatsapp', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
+    href: '/admin/customer-inbox?view=needs', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
   }))
   // Email: no bot answers it, so a human owes every real one, but "real" means a
   // VENDOR (linked to an application). Cold marketing and outside senders have no
@@ -116,7 +109,7 @@ export async function loadTodo(): Promise<Todo> {
     whatsNeeded: `Reply by email to ${who(c)}, a vendor waiting on an answer.`,
     since: c.last_message_at ?? null,
     action: { type: 'reply', channel: 'email', email: c.email as string },
-    href: (c.mailbox === 'gmail' && canSeeGmail) ? '/admin/inbox/gmail' : '/admin/inbox/support', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
+    href: '/admin/customer-inbox?view=needs', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
   }))
 
   const threads: SupportThread[] = Array.isArray(supportRes?.threads) ? supportRes.threads : []
@@ -152,11 +145,12 @@ export async function loadTodo(): Promise<Todo> {
   ]
 
   const bySince = (a: TodoItem, b: TodoItem) => (a.since || '') < (b.since || '') ? -1 : 1 // oldest first: the longest wait is the most urgent
+  const byRecent = (a: TodoItem, b: TodoItem) => (a.since || '') > (b.since || '') ? -1 : 1 // newest first
   const sections: Todo['sections'] = [
-    { key: 'eft_proof', label: 'EFT proofs to confirm', items: eft.sort(bySince) },
+    { key: 'eft_proof', label: 'EFT proofs to confirm', items: eft.sort(byRecent) },
     { key: 'whatsapp_reply', label: 'WhatsApp replies owed', items: whatsapp.sort(bySince) },
     { key: 'email_reply', label: 'Email replies owed', items: email.sort(bySince) },
-    { key: 'stall_change', label: 'Stall changes to approve', items: stall.sort(bySince) },
+    { key: 'stall_change', label: 'Stall changes to approve', items: stall.sort(byRecent) },
     { key: 'portal_support', label: 'Special requests from vendors', items: portal.sort(bySince) },
   ]
   return { generatedAt: new Date().toISOString(), total: sections.reduce((s, x) => s + x.items.length, 0), sections }

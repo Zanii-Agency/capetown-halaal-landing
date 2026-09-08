@@ -9,12 +9,12 @@ const time = (iso: string) => { try { return new Date(iso).toLocaleTimeString('e
 // 2x2 she can scan. Documents and reversals are appended only when they happened.
 const PRIMARY: Array<{ key: DayGroup['key']; label: string; tone: string }> = [
   { key: 'received', label: 'Stall fees paid', tone: 'text-emerald-700' },
-  { key: 'accessories', label: 'Accessories paid', tone: 'text-teal-700' },
+  { key: 'eft_pending', label: 'EFT payments in', tone: 'text-emerald-700' },
   { key: 'withdrawn', label: 'Withdrawals', tone: 'text-[#cd2653]' },
   { key: 'contract', label: 'Contracts signed', tone: 'text-neutral-800' },
 ]
 const SECONDARY: Array<{ key: DayGroup['key']; label: string; tone: string }> = [
-  { key: 'eft_pending', label: 'EFT payments in', tone: 'text-emerald-700' },
+  { key: 'accessories', label: 'Accessories paid', tone: 'text-teal-700' },
   { key: 'plan', label: 'Plans & extensions', tone: 'text-blue-700' },
   { key: 'docs', label: 'Documents uploaded', tone: 'text-neutral-800' },
   { key: 'reversed', label: 'Payments reversed', tone: 'text-amber-700' },

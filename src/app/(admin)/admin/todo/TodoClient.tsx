@@ -134,22 +134,18 @@ function Detail({ item, onDone, onClose }: { item: TodoItem; onDone: () => void;
   )
 }
 
-const PREVIEW = 5
 function SectionCard({ section, onDone }: { section: Todo['sections'][number]; onDone: () => void }) {
   const [openIdx, setOpenIdx] = useState<number | null>(null)
-  const [showAll, setShowAll] = useState(false)
   const tone = TONE[section.key] ?? TONE.task
   const isNav = section.items[0]?.action.type === 'navigate'
-  const shown = showAll ? section.items : section.items.slice(0, PREVIEW)
-  const hidden = section.items.length - shown.length
   return (
     <div className="card rounded-2xl border border-neutral-200 bg-white p-4 mb-4 break-inside-avoid">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-neutral-900">{section.label}</h3>
         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${tone.pill}`}>{section.items.length}</span>
       </div>
-      <ul className="mt-1 divide-y divide-neutral-100">
-        {shown.map((it, i) => (
+      <ul className="mt-1 divide-y divide-neutral-100 max-h-96 overflow-y-auto">
+        {section.items.map((it, i) => (
           <li key={`${section.key}-${i}`}>
             <button onClick={() => setOpenIdx(openIdx === i ? null : i)} className="w-full flex items-center gap-3 py-2.5 text-left">
               <div className="min-w-0 flex-1">
@@ -163,17 +159,9 @@ function SectionCard({ section, onDone }: { section: Todo['sections'][number]; o
           </li>
         ))}
       </ul>
-      <div className="mt-2 flex items-center gap-4">
-        {hidden > 0 && (
-          <button onClick={() => setShowAll(true)} className="text-xs font-medium text-[#cd2653] hover:underline">Show all {section.items.length} →</button>
-        )}
-        {showAll && section.items.length > PREVIEW && (
-          <button onClick={() => setShowAll(false)} className="text-xs font-medium text-neutral-400 hover:text-neutral-700">Show less</button>
-        )}
-        {isNav && (
-          <a href={section.items[0].href} className="text-xs font-medium text-neutral-500 hover:text-neutral-800">Open page →</a>
-        )}
-      </div>
+      {isNav && (
+        <a href={section.items[0].href} className="mt-2 inline-block text-xs font-medium text-neutral-500 hover:text-neutral-800">Open page →</a>
+      )}
     </div>
   )
 }
