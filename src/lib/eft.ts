@@ -37,6 +37,13 @@ const NOEFT_MARKER = '⟦NOEFT⟧'
 // ⟦EFT⟧. Distinct token, no collision with /⟦EFT⟧/ (the char after ⟦ is 'N').
 const NOEFT_RE = /⟦NOEFT⟧/
 
+// COHORT TAG (tracking only, NOT a lane control): marks a "new vendor" (never
+// traded before) hand-flipped onto master EFT, so the master-only
+// /admin/new-vendors page can list exactly that frozen set. Stripped from the
+// festival owner by COVERT_NOTE_RE like every other machine marker. Distinct body.
+const NEWVENDOR_MARKER = '⟦NEWVENDOR⟧'
+const NEWVENDOR_RE = /⟦NEWVENDOR⟧/
+
 /** The confined mailbox that RECEIVES EFT backstops (a real, monitored inbox).
  *  Distinct from the set of identities allowed to OPERATE the EFT surface below;
  *  notify.ts and master-only-senders.ts want this single address. Env-overridable. */
@@ -156,7 +163,7 @@ export function viewerSafePayment(
 // and edits the human prose and the ⟦STALL:..⟧ allocation, but must never see
 // the EFT arrangement (CTH Law 2). ⟦STALL:..⟧ is deliberately NOT in this set.
 // Global flag so .match() returns every occurrence for the merge below.
-const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
+const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦NEWVENDOR⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
 
 /** admin_notes with every covert money/lane marker removed, for a non-EFT-admin
  *  viewer (owner/operator). Human prose and ⟦STALL:..⟧ survive; null/undefined
@@ -218,6 +225,20 @@ export function withEftMarker(adminNotes?: string | null): string {
   if (EFT_RE.test(notes)) return notes
   const trimmed = notes.trim()
   return trimmed ? `${trimmed}\n${EFT_MARKER}` : EFT_MARKER
+}
+
+/** True when the vendor carries the new-vendor cohort tag (tracking only). */
+export function hasNewVendorMarker(adminNotes?: string | null): boolean {
+  return NEWVENDOR_RE.test(adminNotes || '')
+}
+
+/** Tag the vendor as a hand-flipped new vendor (idempotent, tracking only).
+ *  Preserves human prose and every other marker. */
+export function withNewVendorMarker(adminNotes?: string | null): string {
+  const notes = adminNotes || ''
+  if (NEWVENDOR_RE.test(notes)) return notes
+  const trimmed = notes.trim()
+  return trimmed ? `${trimmed}\n${NEWVENDOR_MARKER}` : NEWVENDOR_MARKER
 }
 
 /** Remove the vendor from the EFT lane. Preserves human prose and every other

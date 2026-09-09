@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck, Sparkles } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -108,7 +108,7 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
     let items = g.label === 'COMMUNICATIONS' && !eftAdmin
       ? g.items.filter((it) => it.href !== '/admin/inbox/gmail')
       : g.items
-    if (g.label === 'MONEY' && eftAdmin) items = [...items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }]
+    if (g.label === 'MONEY' && eftAdmin) items = [...items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }, { name: 'New Vendors', href: '/admin/new-vendors', icon: Sparkles }]
     return { ...g, items }
   })
   const BadgeIcon = badge.Icon
