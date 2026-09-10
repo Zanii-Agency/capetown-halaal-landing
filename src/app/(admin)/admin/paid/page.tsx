@@ -38,7 +38,9 @@ export const dynamic = 'force-dynamic'
 //   Partial payments  instalment plans mid-way (and a plan vendor whose first proof
 //                     is in): each row expands to its instalment ledger, and the
 //                     next instalment is confirmable right there once a proof is in
-//   Proof pending     an EFT proof awaiting confirmation, no plan
+//   Proof pending     an uploaded EFT proof awaiting Samreen's confirmation —
+//                     plan or no plan (2026-09-11: plan vendors with a proof in
+//                     moved here from Partial; they flow back once confirmed)
 //
 // Note: the master-lane SETTLEMENT SCHEDULES on the plans tab still key on the
 // live onCovertMasterLane (they exist only while a vendor is covert NOW); the

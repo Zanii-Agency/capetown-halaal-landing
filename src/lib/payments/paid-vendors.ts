@@ -99,18 +99,30 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     try {
       bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt })
     } catch { continue }
-    //   Partial payment = settled but the stall fee is not fully covered (instalments)
-    //   A plan vendor whose first proof is in (nothing confirmed yet) sits under
-    //   Partial too, so instalment 1 is confirmable from that tab.
-    const onPartial = (settled && bill.partial) || (!settled && planApproved && proofOnly)
-    const payState: PayState = onPartial ? 'Partial payment' : settled ? 'Paid' : collected ? 'EFT received' : 'Proof pending'
-    const inst = onPartial ? nextInstalment(pay?.arrangement, bill.paidTotal) : null
+    //   Proof pending = an uploaded stall proof no confirm has consumed yet
+    //     (proofs > eftproof confirms), whether or not the vendor is on a plan.
+    //     Taona 2026-09-11: "proof pending should show all those that have been
+    //     uploaded but have not been marked paid by Samreen" — plan vendors with
+    //     a proof in move HERE from Partial until Samreen confirms, then flow
+    //     back to Partial (balance owing) or Paid (covered in full).
+    //   Partial payment = settled but not fully covered, or a plan vendor whose
+    //     first proof is in, with NO proof currently awaiting confirmation.
+    //   'EFT received' (collected) always outranks proof-pending: that money is
+    //     operator-confirmed and counted in Total collected.
     const proofs = (pay?.proofs || []).filter((f) => f.kind === 'eft_submission')
     const confirms = [...(pay?.refs || []), pay?.provider_ref || ''].filter((r) => String(r).startsWith(`eftproof-${v.id}`)).length
     const proofPending = proofs.length > confirms
+    const onPartial = ((settled && bill.partial) || (!settled && planApproved && proofOnly)) && !proofPending
+    const payState: PayState =
+      collected ? 'EFT received'
+      : settled && !bill.partial ? 'Paid'
+      : proofPending ? 'Proof pending'
+      : onPartial ? 'Partial payment'
+      : 'Proof pending'
+    const inst = onPartial ? nextInstalment(pay?.arrangement, bill.paidTotal) : null
     const newestProof = [...proofs].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
     let proofUrl: string | null = null
-    if (onPartial && newestProof) {
+    if ((onPartial || payState === 'Proof pending') && newestProof) {
       const { data: signed } = await db.storage.from('vendor-docs').createSignedUrl(newestProof.path, 60 * 60)
       proofUrl = signed?.signedUrl ?? null
     }
