@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, paymentOnOwnerSide, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -536,6 +536,35 @@ test('onCovertMasterLane: master sweeps everyone; else only ⟦EFT⟧ + the froz
   assert.equal(onCovertMasterLane('x', newVendor, 'yoco', null), true, 'new vendor is covert even on yoco')
   assert.equal(onCovertMasterLane('x', withNoEftMarker(newVendor), 'samreen_eft', frozen), true, '⟦NOEFT⟧ cannot pull a new vendor off the master lane')
   assert.equal(onCovertMasterLane('x', withOwnerVisibleMarker(newVendor), 'master', frozen), false, '⟦OWNERVIS⟧ still hands a new vendor back to Samreen')
+})
+
+test('paymentOnOwnerSide: rail-INDEPENDENT whose-money test (the /admin/paid fence)', () => {
+  // 2026-09-11: under the master rail the live onCovertMasterLane swept EVERYONE
+  // covert and /admin/paid collapsed to the 7 ⟦OWNERVIS⟧ hand-backs, hiding every
+  // Yoco payer, Samreen-EFT payer and plan vendor. This predicate must not move
+  // when the rail does.
+  const frozen = { protectedIds: new Set(['frozen1']) }
+  const yocoPaid = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'yoco', amount: 6500 } } as never)
+  const samreenEftPaid = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'samreen_eft', amount: 12000 } } as never)
+  const masterSettled = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'eft', amount: 6500 } } as never)
+  const masterStampedProof = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'x/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'master' }],
+  } } as never)
+  const samreenStampedProof = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'x/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'samreen' }],
+  } } as never)
+
+  assert.equal(paymentOnOwnerSide('x', yocoPaid, frozen), true, 'a Yoco payer is hers on every rail')
+  assert.equal(paymentOnOwnerSide('x', samreenEftPaid, frozen), true, 'a Samreen-EFT payer is hers on every rail')
+  assert.equal(paymentOnOwnerSide('x', samreenStampedProof, frozen), true, 'a proof into her ...629 stays listed')
+  assert.equal(paymentOnOwnerSide('x', masterSettled, frozen), false, 'a master-method settlement is his')
+  assert.equal(paymentOnOwnerSide('x', masterStampedProof, frozen), false, 'a master-stamped proof (...191) never surfaces')
+  assert.equal(paymentOnOwnerSide('x', withEftMarker(''), frozen), false, 'the pinned ⟦EFT⟧ cohort is his')
+  assert.equal(paymentOnOwnerSide('x', withNewVendorMarker(''), frozen), false, 'the ⟦NEWVENDOR⟧ cohort is his')
+  assert.equal(paymentOnOwnerSide('frozen1', 'note', frozen), false, 'the frozen cutover set is his')
+  assert.equal(paymentOnOwnerSide('frozen1', withOwnerVisibleMarker('note'), frozen), true, '⟦OWNERVIS⟧ hands a frozen member back')
 })
 
 test('eftBankFor picks the covert ...191 account only when covert', () => {

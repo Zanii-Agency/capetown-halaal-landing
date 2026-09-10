@@ -15,13 +15,16 @@ export const dynamic = 'force-dynamic'
 // frozen-66 with NO OWNERVIS, un-OWNERVIS ⟦EFT⟧ markers, master-rail) NEVER
 // appears, so the page is safe for the festival owner to open.
 //
-// Scope = onSamreenSide && paidish:
-//   onSamreenSide = isOwnerVisible(⟦OWNERVIS⟧) OR NOT onCovertMasterLane. The
-//     OWNERVIS override is why the earlier `!onCovertMasterLane`-only version
-//     wrongly dropped Africa Muslims Agency, Farfashions, Vanilla Cream, Y&K and
-//     Stubborn Monkey: onCovertMasterLane returns true for ANY frozen member,
-//     ignoring the deliberate per-vendor hand-back marker. OWNERVIS is hand-set
-//     (never blanket), so honouring it cannot leak the covert cohort.
+// Scope = paymentOnOwnerSide && paidish:
+//   paymentOnOwnerSide = whose MONEY this is, rail-INDEPENDENT: ⟦OWNERVIS⟧
+//     hand-backs are hers; master-only methods, master-stamped proofs and the
+//     pinned covert cohort (⟦EFT⟧ / frozen set / ⟦NEWVENDOR⟧) are his; everyone
+//     else — Yoco, Samreen-EFT, plan vendors — is hers on EVERY rail. The live
+//     onCovertMasterLane was wrong here: under the master rail it sweeps everyone
+//     covert (a bank-details decision) and collapsed this page to 7 hand-backs /
+//     R52.6k when master went on (2026-09-11). The earlier `!onCovertMasterLane`-only
+//     version had the mirror bug on the frozen set, dropping Africa Muslims Agency,
+//     Farfashions, Vanilla Cream, Y&K and Stubborn Monkey by ignoring ⟦OWNERVIS⟧.
 //   payment signal (descending confidence): Paid (rosterPaid) > EFT received
 //     (status 'collected') > Proof pending (eft_submitted_at, not yet confirmed).
 //     Proof-pending vendors are shown but chipped, and excluded from Total
@@ -37,8 +40,9 @@ export const dynamic = 'force-dynamic'
 //                     next instalment is confirmable right there once a proof is in
 //   Proof pending     an EFT proof awaiting confirmation, no plan
 //
-// Note: onCovertMasterLane short-circuits to true for everyone when the global
-// rail is 'master'; OWNERVIS still overrides, so her hand-backs stay visible.
+// Note: the master-lane SETTLEMENT SCHEDULES on the plans tab still key on the
+// live onCovertMasterLane (they exist only while a vendor is covert NOW); the
+// paid/partial/pending rosters above use the rail-independent paymentOnOwnerSide.
 
 type Tab = 'paid' | 'partial' | 'plans' | 'pending'
 

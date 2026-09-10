@@ -922,6 +922,40 @@ export function onCovertMasterLane(
   return !!fullEft && fullEft.protectedIds.has(vendorId)
 }
 
+/** WHOSE MONEY IS THIS — the owner side of a HISTORICAL payment, rail-INDEPENDENT.
+ *
+ *  onCovertMasterLane answers "which account would this vendor pay into NOW" and
+ *  so sweeps EVERYONE under the master rail. That is right for choosing bank
+ *  details, and wrong for "who already paid Samreen", which is a fact about the
+ *  past. /admin/paid gated on the live-rail predicate and collapsed to the 7
+ *  ⟦OWNERVIS⟧ hand-backs (R52.6k) the moment the master rail went on
+ *  (2026-09-11), hiding every Yoco payer, every Samreen-EFT payer and every
+ *  self-opted payment plan — exactly as /admin/eft-proofs had emptied behind its
+ *  own rail gate.
+ *
+ *  A payment is HERS unless it is demonstrably the master's:
+ *    - ⟦OWNERVIS⟧ — the deliberate per-vendor hand-back — wins first, as everywhere
+ *    - a master-only settlement method (eft / manual_card / manual) is his
+ *    - a master-stamped proof (paid into ...191 while covert) is his
+ *    - the pinned covert cohort (⟦EFT⟧, the frozen cutover set, ⟦NEWVENDOR⟧) is
+ *      his — onCovertMasterLane WITHOUT the master-rail sweep
+ *  Everyone else — Yoco/cash/waived settlers, Samreen-EFT payers, plan vendors —
+ *  is hers on every rail. */
+export function paymentOnOwnerSide(
+  vendorId: string,
+  adminNotes: string | null | undefined,
+  fullEft: { protectedIds: Set<string> } | null,
+): boolean {
+  if (isOwnerVisible(adminNotes)) return true
+  const p = parsePortalState(adminNotes).payment
+  if (MASTER_ONLY_METHODS.has(String(p?.method || ''))) return false
+  const stallProofs = (p?.proofs || [])
+    .filter((f) => f.kind === 'eft_submission')
+    .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
+  if (stallProofs[0]?.account === 'master') return false
+  return !onCovertMasterLane(vendorId, adminNotes, 'samreen_eft', fullEft)
+}
+
 /** How many payments have been RECEIVED in a tier since the start line: a Yoco
  *  settlement (`paid_at`) or an EFT collection (`payment.eft_collected_at`) that
  *  landed after `startAtIso`. This is the 0-based slot for the next payer. */

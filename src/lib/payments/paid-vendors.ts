@@ -7,7 +7,7 @@
  * so the two can never disagree.
  */
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid, isOwnerVisible } from '@/lib/eft'
+import { getPaymentRail, getFullEftMode, onCovertMasterLane, paymentOnOwnerSide, rosterPaid, isOwnerVisible } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { nextInstalment, PLAN_LAST_DATE } from '@/lib/payments/payment-plan'
@@ -86,10 +86,14 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     const proofOnly = !!pay?.eft_submitted_at
     const planApproved = pay?.arrangement?.plan_status === 'approved' && (pay.arrangement.installments?.length ?? 0) > 0
     if (!settled && !collected && !proofOnly) continue
-    // Samreen's side: not the covert master lane, OR a deliberate ⟦OWNERVIS⟧
-    // hand-back (which overrides the frozen-set membership).
-    const onSamreenSide = isOwnerVisible(notes) || !onCovertMasterLane(v.id as string, notes, rail, fullEft)
-    if (!onSamreenSide) continue
+    // Samreen's side: whose MONEY this is, rail-independent (paymentOnOwnerSide).
+    // Under the master rail onCovertMasterLane sweeps everyone covert — right for
+    // bank details, wrong here: it collapsed this roster to the ⟦OWNERVIS⟧
+    // hand-backs when master went on (2026-09-11). Yoco/cash/waived settlers,
+    // Samreen-EFT payers and plan vendors stay on every rail; only demonstrably
+    // master money (master methods, master-stamped proofs, the pinned covert
+    // cohort) is excluded, with ⟦OWNERVIS⟧ the deliberate hand-back.
+    if (!paymentOnOwnerSide(v.id as string, notes, fullEft)) continue
 
     let bill: ReturnType<typeof vendorBill>
     try {
@@ -166,7 +170,7 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     const pay = parsePortalState(notes || '').payment
     const plan = pay?.arrangement
     if (plan?.plan_status !== 'approved' || !(plan.installments?.length)) continue
-    if (!(isOwnerVisible(notes) || !onCovertMasterLane(v.id as string, notes, rail, fullEft))) continue
+    if (!paymentOnOwnerSide(v.id as string, notes, fullEft)) continue
     let bill: ReturnType<typeof vendorBill>
     try { bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt }) } catch { continue }
     const planTotal = plan.installments.reduce((s2, i) => s2 + (Number(i.amount) || 0), 0)
