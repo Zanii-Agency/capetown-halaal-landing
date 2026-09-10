@@ -177,7 +177,14 @@ export interface PortalState {
      *  by hand. The owner reconciles against THIS, not the reference we
      *  suggested: vendors who paid before 2026-09-01 used the old CTH<id-tail>
      *  code, Telkom used its invoice reference (Taona 2026-09-05). */
-    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string; reference?: string }>
+    /** `account` = which receiving account the vendor was shown when they paid,
+     *  stamped at filing time from onCovertMasterLane ('master' = covert ...191,
+     *  'samreen' = owner-reconciled ...629). Absent on every proof filed before
+     *  2026-09-11, when only ⟦EFT⟧/protected vendors could be covert — so an
+     *  unstamped proof that passes the fence is a Samreen-account proof. This is
+     *  what lets the owner's EFT-proofs list survive a rail flip to 'master': the
+     *  list follows the ACCOUNT the money went to, not the current mode. */
+    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string; reference?: string; account?: 'master' | 'samreen' }>
     /** PRESENT-TO-OWNER (2026-08-23). The operator showed this EFT-collected
      *  payment to the festival owner as a clean "paid via Yoco" entry (her
      *  request: the interim EFT state makes her accounting harder, she knows

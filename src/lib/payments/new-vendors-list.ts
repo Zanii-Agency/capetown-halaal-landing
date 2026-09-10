@@ -1,7 +1,9 @@
 // The frozen "new vendors" cohort: never-traded vendors hand-flipped onto master
 // EFT, tagged ⟦NEWVENDOR⟧. Master-only tracking list for /admin/new-vendors. The
-// tag is stripped from the festival owner by COVERT_NOTE_RE, and every vendor here
-// is already on the master lane (⟦EFT⟧), so nothing about this cohort reaches her.
+// tag is stripped from the festival owner by COVERT_NOTE_RE, and since 2026-09-11
+// the tag ITSELF puts the vendor on the master lane on every rail
+// (onCovertMasterLane / resolveInEftLane / eftProofVisibleToOwner in lib/eft.ts),
+// so nothing about this cohort reaches her — no separate ⟦EFT⟧ marker needed.
 import { createAdminClient } from '@/lib/supabase/admin'
 import { hasNewVendorMarker } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'

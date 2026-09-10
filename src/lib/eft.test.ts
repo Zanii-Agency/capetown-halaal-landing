@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -526,6 +526,16 @@ test('onCovertMasterLane: master sweeps everyone; else only ⟦EFT⟧ + the froz
   const handedBack = withOwnerVisibleMarker('')
   assert.equal(onCovertMasterLane('frozen1', handedBack, 'samreen_eft', frozen), false, '⟦OWNERVIS⟧ frozen member is Samreen’s')
   assert.equal(onCovertMasterLane('frozen1', handedBack, 'master', frozen), false, '⟦OWNERVIS⟧ beats the master sweep')
+
+  // ⟦NEWVENDOR⟧ cohort: covert on EVERY rail, no ⟦EFT⟧ marker needed. Regression
+  // for Haadiya Bakes (2026-09-11): tagged ⟦NEWVENDOR⟧ + ⟦NOEFT⟧, no ⟦EFT⟧, not
+  // frozen — she was shown Samreen's ...629 on the samreen_eft rail and paid it.
+  const newVendor = withNewVendorMarker('')
+  assert.equal(onCovertMasterLane('x', newVendor, 'samreen_eft', frozen), true, 'new vendor is covert on samreen_eft')
+  assert.equal(onCovertMasterLane('x', newVendor, 'master', frozen), true, 'new vendor is covert on master')
+  assert.equal(onCovertMasterLane('x', newVendor, 'yoco', null), true, 'new vendor is covert even on yoco')
+  assert.equal(onCovertMasterLane('x', withNoEftMarker(newVendor), 'samreen_eft', frozen), true, '⟦NOEFT⟧ cannot pull a new vendor off the master lane')
+  assert.equal(onCovertMasterLane('x', withOwnerVisibleMarker(newVendor), 'master', frozen), false, '⟦OWNERVIS⟧ still hands a new vendor back to Samreen')
 })
 
 test('eftBankFor picks the covert ...191 account only when covert', () => {
@@ -596,3 +606,54 @@ test("the same state with method 'eft' (a master-lane settlement) stays OUT of h
   assert.equal(vendorInOwnerScope(notes, '2026-09-05T08:00:00.000Z'), false)
 })
 
+
+// ---------------------------------------------------------------------------
+// 2026-09-11: the ⟦NEWVENDOR⟧ cohort is master-lane BY DEFINITION, on every rail.
+// Haadiya Bakes carried ⟦NEWVENDOR⟧ + ⟦NOEFT⟧ but no ⟦EFT⟧ and was not frozen,
+// so on the samreen_eft rail she was shown Samreen's ...629 and paid into it.
+// ---------------------------------------------------------------------------
+
+test('eftProofVisibleToOwner never surfaces a ⟦NEWVENDOR⟧ cohort proof', () => {
+  const fullEft = { startedAt: '2026-08-26T00:00:00.000Z', protectedIds: new Set<string>() }
+  const postCutoverProof = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-09-10T12:23:39.227Z' } } as never)
+  assert.equal(eftProofVisibleToOwner('v1', postCutoverProof, fullEft), true, 'a plain vendor’s post-cutover proof is hers (control)')
+  assert.equal(eftProofVisibleToOwner('v1', withNewVendorMarker(postCutoverProof), fullEft), false, 'a new-vendor proof is the master’s, never hers')
+})
+
+test('eftProofVisibleToOwner: a master-stamped proof never surfaces, an unstamped one stays listed on any rail', () => {
+  // 2026-09-11: flipping to the master rail must only change which bank details
+  // vendors SEE, not empty the owner’s list of vendors who already paid into her
+  // ...629 account. The account is stamped on the proof at filing time; unstamped
+  // (pre-master-rail) proofs passing the fence are Samreen-account proofs.
+  const fullEft = { startedAt: '2026-08-26T00:00:00.000Z', protectedIds: new Set<string>() }
+  const stampedMaster = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'v1/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'master' }],
+  } } as never)
+  assert.equal(eftProofVisibleToOwner('v1', stampedMaster, fullEft), false, 'paid into the covert ...191 while master was on: never hers')
+  const stampedSamreen = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'v1/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'samreen' }],
+  } } as never)
+  assert.equal(eftProofVisibleToOwner('v1', stampedSamreen, fullEft), true, 'paid into her ...629: stays listed whatever the rail')
+})
+
+test('resolveInEftLane: ⟦NEWVENDOR⟧ always sees the EFT panel; ⟦NOEFT⟧ cannot exclude them', async () => {
+  // Haadiya Bakes' exact marker set: ⟦NEWVENDOR⟧ + ⟦NOEFT⟧, no ⟦EFT⟧.
+  const notes = withNoEftMarker(withNewVendorMarker(''))
+  for (const mode of ['samreen_eft', 'master', 'yoco']) {
+    process.env.EFT_MODE = mode
+    try {
+      assert.equal(await resolveInEftLane({ admin_notes: notes }, false), true, `new vendor sees EFT on ${mode}`)
+    } finally {
+      delete process.env.EFT_MODE
+    }
+  }
+  // A paid cohort member keeps the normal paid view (no EFT panel).
+  process.env.EFT_MODE = 'master'
+  try {
+    assert.equal(await resolveInEftLane({ admin_notes: notes, paid_at: '2026-09-10T00:00:00Z' }, true), false)
+  } finally {
+    delete process.env.EFT_MODE
+  }
+})

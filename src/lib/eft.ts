@@ -37,10 +37,14 @@ const NOEFT_MARKER = '⟦NOEFT⟧'
 // ⟦EFT⟧. Distinct token, no collision with /⟦EFT⟧/ (the char after ⟦ is 'N').
 const NOEFT_RE = /⟦NOEFT⟧/
 
-// COHORT TAG (tracking only, NOT a lane control): marks a "new vendor" (never
-// traded before) hand-flipped onto master EFT, so the master-only
-// /admin/new-vendors page can list exactly that frozen set. Stripped from the
-// festival owner by COVERT_NOTE_RE like every other machine marker. Distinct body.
+// COHORT TAG: marks a "new vendor" (never traded before) hand-flipped onto master
+// EFT, so the master-only /admin/new-vendors page can list exactly that frozen set.
+// Since 2026-09-11 it is ALSO a lane control: onCovertMasterLane, resolveInEftLane
+// and eftProofVisibleToOwner all treat the cohort as definitionally master-lane on
+// every rail, so a member can never be shown Samreen's ...629 account again (the
+// Haadiya Bakes leak: tagged ⟦NEWVENDOR⟧ without ⟦EFT⟧, paid ...629 on the
+// samreen_eft rail). Stripped from the festival owner by COVERT_NOTE_RE like every
+// other machine marker. Distinct body.
 const NEWVENDOR_MARKER = '⟦NEWVENDOR⟧'
 const NEWVENDOR_RE = /⟦NEWVENDOR⟧/
 
@@ -850,20 +854,35 @@ export function eftProofVisibleToOwner(
   // account on 2026-08-25 (bank letter), before the re-activation bumped started_at
   // to 31 Aug; dating the proof truthfully must not hide it (Taona 2026-09-05).
   if (isOwnerVisible(adminNotes)) return true
+  // A proof stamped 'master' at filing time was paid into the covert ...191
+  // account (the vendor was on the covert lane when they paid — e.g. an ordinary
+  // vendor uploading via the portal while the master rail is on). It NEVER
+  // surfaces here, whatever the current rail is. This per-proof stamp is what
+  // replaces the old blanket "on the covert rail nothing may surface" gate, so
+  // flipping to master no longer hides the vendors who paid into HER account.
+  // Unstamped proofs (everything filed before 2026-09-11) fall through to the
+  // gates below, which already exclude every historically-covert cohort.
+  const stallProofs = (parsePortalState(adminNotes).payment?.proofs || [])
+    .filter((f) => f.kind === 'eft_submission')
+    .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
+  if (stallProofs[0]?.account === 'master') return false
   // Uploaded AFTER the cutover. This floor is what stops an old covert proof
   // surfacing automatically; only the hand-set marker above bypasses it.
   if (new Date(submitted).getTime() < new Date(fullEft.startedAt).getTime()) return false
-  // A hand-picked covert vendor (⟦EFT⟧) or a member of the frozen cutover cohort is
-  // on the master lane by definition and must NEVER surface to the owner. Safe to
+  // A hand-picked covert vendor (⟦EFT⟧), a member of the frozen cutover cohort, or
+  // a ⟦NEWVENDOR⟧ cohort member (master-lane by definition since 2026-09-11) is on
+  // the master lane and must NEVER surface to the owner. Safe to
   // over-freeze (module doctrine): hiding one extra can never leak, missing one can.
   if (fullEft.protectedIds.has(vendorId)) return false
   if (hasEftMarker(adminNotes)) return false
+  if (hasNewVendorMarker(adminNotes)) return false
   return true
 }
 
 /** Is THIS vendor on the COVERT master lane, i.e. their EFT money goes to the
  *  ...191 account and the whole arrangement is walled from the festival owner?
  *
+ *    - ⟦NEWVENDOR⟧        → the new-vendor cohort is covert on EVERY rail
  *    - rail === 'master'  → the whole unpaid population is covert (sweep everyone)
  *    - otherwise          → only the pinned cohort: hand-picked ⟦EFT⟧ vendors and
  *                           the frozen protected set captured at the full-EFT cutover
@@ -893,6 +912,11 @@ export function onCovertMasterLane(
   // when they finally paid weeks later on the samreen_eft rail). First, so it wins even
   // under the master-rail sweep.
   if (isOwnerVisible(adminNotes)) return false
+  // ⟦NEWVENDOR⟧ is a LANE CONTROL since 2026-09-11: the new-vendor cohort pays the
+  // master ...191 on EVERY rail. Until then it was tracking-only and the list assumed
+  // each member also held ⟦EFT⟧ — Haadiya Bakes didn't (she carried ⟦NOEFT⟧ instead)
+  // and paid Samreen's ...629 on the samreen_eft rail. Never again.
+  if (hasNewVendorMarker(adminNotes)) return true
   if (rail === 'master') return true
   if (hasEftMarker(adminNotes)) return true
   return !!fullEft && fullEft.protectedIds.has(vendorId)
@@ -943,14 +967,19 @@ export async function resolveInEftLane(
 ): Promise<boolean> {
   if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator
   if (app.paid_at) return false                                                   // already paid
+  const p = parsePortalState(app.admin_notes).payment
+  if (p?.status === 'paid') return false
+  // ⟦NEWVENDOR⟧ cohort: ALWAYS the master-lane EFT panel, on every rail — the list
+  // is defined as master-EFT since 2026-09-11, so the tag wins over ⟦NOEFT⟧ below
+  // (a mis-tagged member like Haadiya Bakes must never see a dead card button or
+  // Samreen's account again) and over the rotation/master switch.
+  if (hasNewVendorMarker(app.admin_notes)) return true
   // ⟦NOEFT⟧ means "not on the covert master push, pay by card". On the samreen_eft
   // rail there is no card (Yoco is off) and EFT goes to HER account, so the marker
   // has nothing to exclude them from: they pay Samreen EFT like everyone else.
   // Before 2026-09-06 this returned false unconditionally and 19 unpaid ⟦NOEFT⟧
   // vendors (11 on approved payment plans) saw a dead card button.
   if (hasNoEftMarker(app.admin_notes) && (await getPaymentRail()) !== 'samreen_eft') return false // ⟦NOEFT⟧ excluded
-  const p = parsePortalState(app.admin_notes).payment
-  if (p?.status === 'paid') return false
   if (hasEftMarker(app.admin_notes)) return true                                  // ⟦EFT⟧ hand-picked
   // Money is already on the EFT rail (proof uploaded, or an operator marked it
   // collected): NEVER flip these to Yoco, they have paid by EFT. Independent of
