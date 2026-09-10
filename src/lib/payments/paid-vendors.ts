@@ -203,6 +203,54 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       totalPaid: bill.paidTotal,
     })
   }
+  // MASTER-LANE SETTLEMENT SCHEDULES (Taona 2026-09-10): covert master-lane
+  // vendors whose EFT already collected into ...191, shown HERE ONLY as vendors
+  // on an instalment plan through Oct–Nov with NOTHING paid on her side (the
+  // master money stays hidden). The authorized inverse of the wall above: they
+  // appear on the plans tab and NOWHERE else (the main rows scan excludes them
+  // via onSamreenSide, and no other surface reads payment.settlement). Stored in
+  // payment.settlement, NOT arrangement, so the vendor portal/chase/digest never
+  // dun a vendor who has in fact already paid.
+  for (const v of vendors ?? []) {
+    if ((v as { is_duplicate?: boolean }).is_duplicate) continue
+    if (isTestVendor(v as { business_name?: string | null; email?: string | null })) continue
+    const notes = (v.admin_notes as string) || null
+    const paidAtVal = (v.paid_at as string) || null
+    const sched = parsePortalState(notes || '').payment?.settlement
+    if (!(sched?.installments?.length)) continue
+    // Only the covert master lane. A ⟦OWNERVIS⟧ hand-back is genuinely hers, not
+    // a covert schedule, so it never carries one.
+    if (isOwnerVisible(notes)) continue
+    if (!onCovertMasterLane(v.id as string, notes, rail, fullEft)) continue
+    let bill: ReturnType<typeof vendorBill> | null = null
+    try { bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAtVal }) } catch { bill = null }
+    const planTotal = sched.installments.reduce((s2, i) => s2 + (Number(i.amount) || 0), 0)
+    const instalments = buildLedger(sched.installments, 0, false, today, null)
+    const first = [...sched.installments].sort((a, b) => (a.date < b.date ? -1 : 1))[0]
+    planRows.push({
+      id: v.id as string,
+      name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
+      contact: (v.contact_name as string) || null,
+      paidOn: '',
+      sortKey: first?.date || '',
+      method: 'EFT',
+      payState: 'Partial payment',
+      due: planTotal,
+      owing: planTotal,
+      nextAmount: first ? first.amount : null,
+      nextDue: first?.date ?? null,
+      instalments,
+      proofPending: false,
+      proofUrl: null,
+      overCap: false,
+      stall: bill?.stall.price ?? 0,
+      accTotal: bill?.accessories.total ?? 0,
+      accOwing: 0,
+      accState: 'none',
+      totalPaid: 0,
+    })
+  }
+
   // Over-cap plans (old rules, need renegotiating) first, then next instalment soonest.
   planRows.sort((a, b) => (Number(b.overCap) - Number(a.overCap)) || (a.sortKey < b.sortKey ? -1 : 1))
 
