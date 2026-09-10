@@ -26,7 +26,7 @@ import { computeVendorPricing } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
-import { proposePaymentPlan } from '@/lib/payments/payment-plan'
+import { proposePaymentPlan, planLastDateFor } from '@/lib/payments/payment-plan'
 import { recordVendorAction } from '@/lib/vendor-action-log'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
@@ -926,11 +926,11 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   if (st.payment?.status === 'paid' || st.payment?.status === 'collected') {
     return 'Your stall fee is already settled, thank you, so there is nothing to extend.'
   }
-  // Clamp to the policy window: a real future date, no later than 31 Oct 2026
-  // (Taona 2026-09-09 ladder: end of October is the absolute latest). A
-  // missing/invalid/too-late date defaults to the ladder ceiling so the tool
-  // never writes a passed or out-of-policy date.
-  const CAP = '2026-10-31'
+  // Clamp to the policy window: a real future date, no later than the vendor's
+  // ceiling (Taona 2026-09-09 ladder: 31 Oct general, 10 Oct for the flipped
+  // new-vendor cohort). A missing/invalid/too-late date defaults to the ladder
+  // floor so the tool never writes a passed or out-of-policy date.
+  const CAP = planLastDateFor(row.admin_notes)
   const DEFAULT = '2026-09-30' // push as much as possible THIS month first; 15 Oct fallback (Taona 2026-09-09)
   const today = new Date().toISOString().slice(0, 10)
   let until = (finalDate || '').trim()

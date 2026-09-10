@@ -13,6 +13,7 @@ import { recordVendorAction } from '@/lib/vendor-action-log'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
+import { hasNewVendorMarker } from '@/lib/eft'
 import { recordLedger } from '@/lib/zanii-ledger'
 
 export interface Installment { date: string; amount: number }
@@ -22,6 +23,16 @@ export interface Installment { date: string; amount: number }
 // as much as they can THIS month; only then a plan, capped at this date.
 // Was 2026-11-30, and 2026-12-12 before that (the festival itself).
 export const PLAN_LAST_DATE = '2026-10-31'
+
+// The flipped new-vendor cohort (⟦NEWVENDOR⟧, /admin/new-vendors) is capped tighter
+// (Taona 2026-09-10): every plan instalment or single extension lands by 10 October,
+// not the general 31 October ceiling. Keyed on the SAME marker that defines the
+// cohort, so there is no new state and the whole fresher cohort moves together.
+export const NEW_VENDOR_PLAN_LAST_DATE = '2026-10-10'
+export function planLastDateFor(adminNotes: string | null | undefined): string {
+  return hasNewVendorMarker(adminNotes) ? NEW_VENDOR_PLAN_LAST_DATE : PLAN_LAST_DATE
+}
+
 const MIN_INSTALMENTS = 2
 const MAX_INSTALMENTS = 6
 const APPROVE_AFTER_MS = 5 * 60 * 1000
@@ -72,6 +83,7 @@ export function validatePlan(
   installments: unknown,
   owing: number,
   todayStr: string = todayISO(),
+  lastDate: string = PLAN_LAST_DATE,
 ): { ok: true; plan: Installment[] } | { ok: false; error: string } {
   if (!Array.isArray(installments) || installments.length < MIN_INSTALMENTS) {
     return { ok: false, error: `A payment plan needs at least ${MIN_INSTALMENTS} instalments, each with a date and an amount. Tell me the amount and exact date for each one.` }
@@ -96,8 +108,8 @@ export function validatePlan(
     if (plan[i].date <= today) {
       return { ok: false, error: `Every instalment must be a future date. ${fmt(plan[i].date)} is today or past, so please give a later date.` }
     }
-    if (plan[i].date > PLAN_LAST_DATE) {
-      return { ok: false, error: `Every instalment must be paid by ${fmt(PLAN_LAST_DATE)}, before the festival. ${fmt(plan[i].date)} is too late, please bring it earlier.` }
+    if (plan[i].date > lastDate) {
+      return { ok: false, error: `Every instalment must be paid by ${fmt(lastDate)}. ${fmt(plan[i].date)} is too late, please bring it earlier.` }
     }
     if (i > 0 && plan[i].date <= plan[i - 1].date) {
       return { ok: false, error: `The instalment dates need to be in order, each one later than the one before. Please put them in date order.` }
@@ -136,7 +148,7 @@ export async function proposePaymentPlan(vendorId: string, installments: unknown
   const owing = Math.max(0, Math.round(bill.owing))
   if (owing <= 0) return 'There is nothing outstanding on your account right now, so a payment plan is not needed.'
 
-  const v = validatePlan(installments, owing)
+  const v = validatePlan(installments, owing, undefined, planLastDateFor(row.admin_notes as string | null))
   if (!v.ok) return v.error
 
   const now = new Date().toISOString()
