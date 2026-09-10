@@ -56,11 +56,12 @@ function mulberry32(seed: number) {
 function seedFrom(id: string): number { let h = 2166136261; for (const c of id) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) } return h >>> 0 }
 const iso = (d: Date) => d.toISOString().slice(0, 10)
 
-// Deterministic per-vendor schedule (seed from id). 2..5 instalments summing
-// EXACTLY to total, ascending dates spread across the window.
+// Deterministic per-vendor schedule (seed from id). Instalment count scales with
+// the amount (Taona 2026-09-10: 5 chunks on a small stall reads silly): totals
+// under R5 000 get 2, R5 000+ get 2 or 3. Sums EXACTLY to total, ascending dates.
 function planFor(row: Row): { date: string; amount: number }[] {
   const rnd = mulberry32(seedFrom(row.id))
-  const n = 2 + Math.floor(rnd() * 4)
+  const n = row.total < 5000 ? 2 : 2 + Math.floor(rnd() * 2)
   const weights = Array.from({ length: n }, () => 0.6 + rnd())
   const wsum = weights.reduce((s, w) => s + w, 0)
   const amts: number[] = []
