@@ -20,6 +20,7 @@ import { parseAttachmentMarker } from '@/lib/email/attachments'
 import { getEftMode, revealsPaymentArrangement } from '@/lib/eft'
 import { runPlanAutoReplies } from '@/lib/payments/plan-email-autoreply'
 import { runInvoiceAutoReplies } from '@/lib/payments/invoice-email-autoreply'
+import { runWithdrawalAutoReplies } from '@/lib/payments/withdrawal-email-autoreply'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -29,6 +30,12 @@ export async function GET(req: Request) {
   if (!verifyCronAuth(req.headers.get('authorization'))) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
+  // WITHDRAWAL AUTO-REPLY (Taona 2026-09-11): a vendor pulling out is withdrawn
+  // and confirmed, never answered with money talk. Runs FIRST, before plan and
+  // invoice, because a quit that mentions "payment" ("can't pay until October,
+  // release my stall") would otherwise get a plan offer, and one mentioning money
+  // would get an invoice. A withdrawal wins over every money-intent reply.
+  const withdrawalAuto = await runWithdrawalAutoReplies(createAdminClient())
   // PLAN-REQUEST AUTO-REPLY (Taona 2026-09-07): push payment-plan emails to
   // WhatsApp automatically. Runs BEFORE the draft-confirm flag gate so it works
   // even when EMAIL_CONCIERGE is off, and marks the emails handled so the
@@ -39,7 +46,7 @@ export async function GET(req: Request) {
   const invoiceAuto = await runInvoiceAutoReplies(createAdminClient())
 
   if (!emailConciergeEnabled()) {
-    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)', planAuto, invoiceAuto })
+    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)', withdrawalAuto, planAuto, invoiceAuto })
   }
 
   const db = createAdminClient()
