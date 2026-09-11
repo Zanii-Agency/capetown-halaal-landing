@@ -63,11 +63,12 @@ test('vendorCommsInEftLane routes by payment status: unpaid + collected -> maste
   const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-23T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(submitted, null), true)
   assert.equal(vendorCommsInEftLane(submitted, null, false), true)
-  // NEW RULE: while global EFT mode is ON, ANY unpaid non-excluded vendor -> master,
-  // even with no marker/proof/reveal. Self-reverts when global is off.
-  assert.equal(vendorCommsInEftLane('just a note', null, true), true)   // global on  -> master
+  // NEW RULE (2026-09-11): a MERELY-UNPAID vendor with no EFT trace is HERS even
+  // while global EFT mode is ON — the globalOn blanket no longer sweeps them to
+  // master. Only a real EFT involvement (marker / proof / collection) hides them.
+  assert.equal(vendorCommsInEftLane('just a note', null, true), false)   // clean unpaid -> owner even with global on
   assert.equal(vendorCommsInEftLane('just a note', null, false), false) // global off -> owner
-  // 'collected' (EFT interim, paid_at null, status !== 'paid') -> master while global on.
+  // 'collected' (EFT interim, paid_at null, status 'collected') -> hidden (real EFT money).
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected', eft_collected_at: '2026-07-25T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(collected, null, true), true)
   // A truly PAID vendor (Yoco-settled) is NEVER on the master lane.
@@ -219,19 +220,19 @@ test('reconciledPaid: the roster reads PAID only for a Yoco-reconcilable channel
   assert.equal(reconciledPaid('just a note', '2026-07-19T00:00:00Z'), true)
 })
 
-test('vendorInOwnerScope: every unpaid state is outside her world', () => {
-  assert.equal(vendorInOwnerScope('just a note', null), false, 'plain unpaid')
-  assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, 'on the EFT lane')
-  // ⟦NOEFT⟧ deliberately NOT asserted here any more. 2026-07-26 it handed an
-  // unpaid vendor to the master ("excluded from EFT is not the same as paid").
-  // 2026-07-28 Taona reversed it: "If excluded on master lane, it belongs to
-  // samreen." The master lane hides an EFT arrangement and an excluded vendor
-  // has none. Covered by its own tests below, including the guard that keeps an
-  // EFT-touched vendor on the master lane regardless of the marker.
-  // 'collected' is the EFT interim state and never sets paid_at: still not hers.
+test('vendorInOwnerScope: unpaid is HERS unless there is a real master-EFT trace (2026-09-11 rule)', () => {
+  // The new rule: "only hide vendors who paid into EFT or uploaded a proof." A
+  // merely-UNPAID vendor with no EFT involvement is visible to Samreen.
+  assert.equal(vendorInOwnerScope('just a note', null), true, 'plain unpaid is hers now')
+  assert.equal(vendorInOwnerScope(null, null), true, 'empty notes, unpaid -> hers')
+  // The EFT-touched stay hidden:
+  assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, '⟦EFT⟧ marker stays hidden')
+  // 'collected' is the EFT interim state: still not hers.
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })
-  assert.equal(vendorInOwnerScope(collected, null), false)
-  assert.equal(vendorInOwnerScope(null, null), false)
+  assert.equal(vendorInOwnerScope(collected, null), false, 'collected stays hidden')
+  // An uploaded proof (not yet reconciled her way) stays hidden.
+  const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-09-01T00:00:00Z' } })
+  assert.equal(vendorInOwnerScope(submitted, null), false, 'proof uploaded stays hidden')
 })
 
 // ---------------------------------------------------------------------------

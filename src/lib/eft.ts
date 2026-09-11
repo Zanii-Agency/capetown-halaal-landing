@@ -604,10 +604,28 @@ export function vendorInOwnerScope(
   // so the two hand-overs cannot drift apart.
   if (hasNoEftMarker(adminNotes) && !hasRealEftPayment) return true
 
-  // 'collected' is the EFT interim state and never sets paid_at, so it correctly
-  // fails this test and stays with the master until a real settlement lands.
-  if (!paidAt && p?.status !== 'paid') return false
-  return !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+  // Settled HER way wins over any EFT trace. A vendor she reconciled (Yoco, cash,
+  // waived, or samreen_eft — her own EFT-proofs confirmation) is HERS and visible,
+  // even though the proof she confirmed leaves an eft_submitted_at behind. Must run
+  // BEFORE the touchedMasterEft test below, or her own confirmed EFT vendors get
+  // re-hidden by their own proof (the 2026-09-11 regression the suite caught).
+  if (settledHerWay) return true
+
+  // REDEFINED 2026-09-11 (Taona): "It doesn't make sense to hide everyone just
+  // because I turned on master EFT. Only those who paid into EFT, or uploaded a
+  // proof via email or WhatsApp, must be hidden from her. Everyone else she can
+  // access." The OLD rule here was `if (!paidAt && status !== 'paid') return false`
+  // — every unpaid vendor hidden. Now a merely-UNPAID vendor with NO real EFT
+  // involvement is HERS: she can see and chase them (their payment page still
+  // points at master, so they cannot actually pay her). Only a REAL master-lane
+  // EFT trace hides a vendor: an interim collection, an uploaded proof, an
+  // EFT/manual settlement, or a presented-Eft awaiting reconcile. This is the
+  // MASTER lane (...191) that hides; her own reconciled EFT already returned above.
+  const touchedMasterEft =
+    hasRealEftPayment
+    || hasEftMarker(adminNotes)
+    || presentedCommsPending(adminNotes)
+  return !touchedMasterEft
 }
 
 /** A PRESENTED EFT payment (shown to the owner as paid-Yoco via /admin/eft/present)
@@ -714,6 +732,22 @@ export function isOwnerVisible(adminNotes: string | null | undefined): boolean {
  *  NEVER in the lane; ⟦NOEFT⟧ and internal/operator accounts are explicit
  *  exclusions. The globalOn sweep self-reverts when EFT mode is switched off, so it
  *  cannot permanently strand the owner's inbox (the concern behind b886ff5). */
+/** Whose CONVERSATIONS hide from the festival owner (route to the master EFT tab).
+ *
+ *  REDEFINED 2026-09-11 (Taona): "It doesn't make sense to hide everyone just
+ *  because I turned on master EFT. Only those who paid into EFT, or uploaded a
+ *  proof via email or WhatsApp, must be hidden from her. Everyone else she can
+ *  access." So the OLD globalOn blanket — every unpaid vendor routed to the
+ *  master lane during the outage — is REMOVED. The wall now keys ONLY on a real
+ *  EFT involvement, never on "is unpaid while the rail is master":
+ *    - ⟦EFT⟧ marker, an uploaded proof (eft_submitted_at), a collection
+ *      (status collected / eft_collected_at), presented-Eft, or an accessory EFT
+ *      → hidden from her.
+ *    - a merely-UNPAID vendor with none of those → hers to see and talk to.
+ *  `globalOn` is kept in the signature for callers but no longer sweeps the
+ *  merely-unpaid onto the lane. A truly PAID vendor, ⟦NOEFT⟧ and internal accounts
+ *  are never hidden. The payment rail itself is unchanged: new money still routes
+ *  to master; only Samreen's VIEW of clean vendors opened up. */
 export function vendorCommsInEftLane(
   adminNotes: string | null | undefined,
   paidAt?: string | null,
@@ -732,9 +766,10 @@ export function vendorCommsInEftLane(
   if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins
   const p = parsePortalState(adminNotes).payment
   if (p?.status === 'paid') return false
-  // 'collected' (EFT interim) has no paid_at and status !== 'paid', so it falls
-  // through to globalOn below and correctly stays on the master lane.
-  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at || globalOn
+  // 'collected' (EFT interim) has no paid_at and status !== 'paid', so it is
+  // caught by the collected check below and stays hidden. A merely-unpaid vendor
+  // with NO EFT trace is now HERS (2026-09-11 rule) — globalOn no longer hides them.
+  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at || p?.status === 'collected' || !!p?.eft_collected_at
 }
 
 /** True when the vendor sees EFT details on their PAYMENT view: global mode on,
