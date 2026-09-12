@@ -16,7 +16,7 @@
 //   SEND=1 node --env-file=.env.local --import tsx scripts/chase-update-checkin-2026-09-12.mts     # live all
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, updatePortalStateImpl, isWithdrawn, getArrangement } from '@/lib/portal-state'
-import { buildSuppressedPeople } from '@/lib/payments/chase-targeting'
+import { buildSuppressedPeople, hasProofUploaded } from '@/lib/payments/chase-targeting'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { sendEmail } from '@/lib/email/resend'
 import { isTestVendor } from '@/lib/test-vendors'
@@ -67,7 +67,16 @@ async function main() {
     const st = parsePortalState(r.admin_notes || '')
     if (isWithdrawn(st)) return false
     if (hardIdx.hardHas(r as never)) return false
+    // NEVER chase anyone who uploaded a proof of payment (Taona 2026-09-13): the
+    // money is with us to reconcile, not with them to pay again. (hardHas already
+    // covers this via hasProofUploaded; explicit here so the intent can't drift.)
+    if (hasProofUploaded(st)) return false
     if (getArrangement(st, today)) return false
+    // NEVER chase anyone who genuinely made a payment plan (Taona 2026-09-13),
+    // even one whose in-force window getArrangement reads differently: an APPROVED
+    // instalment arrangement on record is a commitment we honour, not chase.
+    const arr = (st.payment as { arrangement?: { plan_status?: string; installments?: unknown[] } } | undefined)?.arrangement
+    if (arr?.plan_status === 'approved' && (arr.installments?.length ?? 0) > 0) return false
     return true
   })
 
