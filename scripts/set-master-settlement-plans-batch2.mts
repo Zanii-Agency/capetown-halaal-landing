@@ -53,11 +53,11 @@ function mulberry32(seed: number) {
 function seedFrom(id: string): number { let h = 2166136261; for (const c of id) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) } return h >>> 0 }
 const iso = (d: Date) => d.toISOString().slice(0, 10)
 
-// Deterministic per-vendor schedule (seed from id). Count rule (Taona 2026-09-13):
-// R8 000+ gets 5 instalments, everyone else 2 or 3. Sums EXACTLY to total.
+// Deterministic per-vendor schedule (seed from id). Count rule (Taona 2026-09-13,
+// revised): Happy Hour (R8k+) = 3, sub-R4k = 2, everyone else 2 or 3. Sums EXACTLY.
 function planFor(row: Row): { date: string; amount: number }[] {
   const rnd = mulberry32(seedFrom(row.id))
-  const n = row.total >= 8000 ? 5 : 2 + Math.floor(rnd() * 2)
+  const n = row.total >= 8000 ? 3 : row.total < 4000 ? 2 : 2 + Math.floor(rnd() * 2)
   const weights = Array.from({ length: n }, () => 0.6 + rnd())
   const wsum = weights.reduce((s, w) => s + w, 0)
   const amts: number[] = []
