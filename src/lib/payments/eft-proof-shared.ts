@@ -5,7 +5,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState } from '@/lib/portal-state'
-import { getEftMode, getPaymentRail, vendorInEftLane, eftReference } from '@/lib/eft'
+import { getEftMode, getPaymentRail, getFullEftMode, onCovertMasterLane, vendorInEftLane, eftReference } from '@/lib/eft'
 import { notifyOwners } from '@/lib/bot/notify'
 import { sendMedia, toE164 } from '@/lib/whatsapp'
 import { BOT_ADMINS } from '@/lib/bot/admins'
@@ -177,6 +177,15 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   // The reference the vendor actually typed at their bank, read off the proof
   // itself (PDF text layer only; screenshots have none). Best-effort.
   const reference = ext === 'pdf' ? await extractProofReference(file.bytes) : null
+  // WHICH ACCOUNT this proof paid into, frozen at filing time. The rail can flip
+  // later (master on/off), and the owner's EFT-proofs list must keep showing the
+  // vendors who paid into HER ...629 account regardless of the current mode; only
+  // the bank details shown to vendors follow the mode. onCovertMasterLane is the
+  // one predicate that picks the displayed account (eftBankFor), so the stamp can
+  // never disagree with what the vendor saw.
+  const rail = await getPaymentRail()
+  const fullEft = await getFullEftMode()
+  const paidInto: 'master' | 'samreen' = onCovertMasterLane(applicationId, admin_notes, rail, fullEft) ? 'master' : 'samreen'
   const priorState = parsePortalState(admin_notes || '').payment
   const isFirst = forAccessories ? !priorState?.acc?.submitted_at : !priorState?.eft_submitted_at
 
@@ -189,7 +198,7 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
         : { eft_submitted_at: s.payment?.eft_submitted_at || uploaded_at }),
       proofs: [
         ...(s.payment?.proofs || []),
-        { path, kind: (forAccessories ? 'eft_accessories' : 'eft_submission') as 'eft_accessories' | 'eft_submission', note: note || undefined, uploaded_at, ...(reference ? { reference } : {}) },
+        { path, kind: (forAccessories ? 'eft_accessories' : 'eft_submission') as 'eft_accessories' | 'eft_submission', note: note || undefined, uploaded_at, account: paidInto, ...(reference ? { reference } : {}) },
       ],
     },
   }))
@@ -205,10 +214,12 @@ export async function recordEftProof(input: EftProofInput): Promise<EftProofResu
   // rather than at a console that won't list them.
   const offLane = !!input.captureRegardless
     && !vendorInEftLane(admin_notes || '', await getEftMode(), paid_at, { email, phone })
-  // On the samreen_eft rail an unpaid vendor's proof lands on HER page, so "card-only,
-  // not on the EFT lane" would misdirect the master (it read that way for every
-  // owner-rail proof until 2026-09-05). Point at /admin/eft-proofs instead.
-  const ownerRail = !forAccessories && !paid_at && (await getPaymentRail()) === 'samreen_eft'
+  // A proof paid into HER ...629 account (paidInto stamp) lands on HER page, so
+  // "card-only, not on the EFT lane" would misdirect the master (it read that way
+  // for every owner-account proof until 2026-09-05). Point at /admin/eft-proofs
+  // instead. Account-based, not rail-based, since 2026-09-11: a covert vendor on
+  // the samreen_eft rail (⟦EFT⟧/protected/⟦NEWVENDOR⟧) is NOT on her page.
+  const ownerRail = !forAccessories && !paid_at && paidInto === 'samreen'
   try {
     await notifyOwners({
       event: 'system_alert',

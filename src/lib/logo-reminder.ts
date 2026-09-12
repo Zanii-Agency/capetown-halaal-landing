@@ -65,14 +65,13 @@ export async function sendLogoReminder(args: {
     try {
       const res = await sendEmail({
         to: args.email.trim(),
-        subject: 'One step left: add your logo to go live',
+        subject: 'Add your logo',
         react: Campaign({
-          preview: 'Add your logo so shoppers see your brand in the festival listings.',
+          preview: 'Add your logo so your brand shows in the festival listings.',
           heading: 'Upload your logo',
           greeting: `Hi ${name},`,
           paragraphs: [
-            'Your stall at Young at Heart Festival 2026 is paid and confirmed, thank you.',
-            'One step is left to go live on the public festival site: your logo. Vendors with a logo appear with their branding in the sector listings shoppers browse before the show. Vendors without one are easy to scroll past.',
+            'Please upload your logo so your stall shows with your branding in the festival listings shoppers browse.',
             'It takes under a minute in your vendor portal.',
           ],
           cta: { label: 'Upload your logo', href: LOGO_PORTAL_URL },

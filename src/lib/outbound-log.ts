@@ -170,6 +170,23 @@ export async function logEmailOutbound(opts: {
       console.warn('[outbound-log] email insert failed:', msgErr.message)
       return false
     }
+    // SELF-HEAL the webhook race (Taona 2026-09-11: operator replies "disappeared").
+    // The Resend `email.sent` webhook writes a body-less row and usually lands
+    // BEFORE this insert completes. When the webhook's row wins, our insert above
+    // hits the 23505 branch and backfills. But if our insert SUCCEEDED (we won),
+    // the webhook may still be in flight and overwrite nothing (it dedupes on
+    // message_id). The hole: a row we just wrote can sit next to a webhook row
+    // for the SAME email with the body on ours and none on theirs, and any read
+    // that prefers the webhook row shows it empty. Whenever we have a real body,
+    // force-fill every matching message_id row whose body is still empty, so the
+    // body can never be stranded regardless of which row the timeline renders.
+    if (messageId && (opts.text || opts.html)) {
+      await db
+        .from('support_inbox_messages')
+        .update({ body_text: row.body_text, body_html: row.body_html })
+        .eq('message_id', messageId)
+        .is('body_text', null)
+    }
     await broadcastInboxRefresh('outbound-log').catch(() => {})
     return true
   } catch (e) {

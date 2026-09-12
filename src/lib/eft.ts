@@ -37,6 +37,17 @@ const NOEFT_MARKER = '⟦NOEFT⟧'
 // ⟦EFT⟧. Distinct token, no collision with /⟦EFT⟧/ (the char after ⟦ is 'N').
 const NOEFT_RE = /⟦NOEFT⟧/
 
+// COHORT TAG: marks a "new vendor" (never traded before) hand-flipped onto master
+// EFT, so the master-only /admin/new-vendors page can list exactly that frozen set.
+// Since 2026-09-11 it is ALSO a lane control: onCovertMasterLane, resolveInEftLane
+// and eftProofVisibleToOwner all treat the cohort as definitionally master-lane on
+// every rail, so a member can never be shown Samreen's ...629 account again (the
+// Haadiya Bakes leak: tagged ⟦NEWVENDOR⟧ without ⟦EFT⟧, paid ...629 on the
+// samreen_eft rail). Stripped from the festival owner by COVERT_NOTE_RE like every
+// other machine marker. Distinct body.
+const NEWVENDOR_MARKER = '⟦NEWVENDOR⟧'
+const NEWVENDOR_RE = /⟦NEWVENDOR⟧/
+
 /** The confined mailbox that RECEIVES EFT backstops (a real, monitored inbox).
  *  Distinct from the set of identities allowed to OPERATE the EFT surface below;
  *  notify.ts and master-only-senders.ts want this single address. Env-overridable. */
@@ -98,7 +109,16 @@ export function visiblePaymentStatus(status: string | null | undefined, viewerEm
  *  the 'collected' interim) masks to 'none', exactly as 'collected' already did.
  *  The EFT admin still reads the true state. Method-aware, so it needs the notes
  *  and paid_at, not just the status string. Reuses reconciledPaid so it cannot
- *  drift from the export. */
+ *  drift from the export.
+ *
+ *  2026-09-07: gate restored to reconciledPaid. It had regressed to rosterPaid
+ *  (the method-AGNOSTIC label), which re-showed master-lane EFT (method
+ *  eft/manual/manual_card, paid_at set) as 'paid' to the owner even though their
+ *  comms are walled and their money is excluded from her total — an inconsistent
+ *  half-leak. Taona: "all vendors on master lane eft should always show as unpaid
+ *  to her; this must not affect anyone off the lane." reconciledPaid is exactly
+ *  that: her-channel settlements (Yoco/cash/waived) read paid, master-lane reads
+ *  unpaid, and her 75 own reconciled vendors are untouched. */
 export function rosterPaymentStatus(
   adminNotes: string | null | undefined,
   paidAt: string | null | undefined,
@@ -106,7 +126,7 @@ export function rosterPaymentStatus(
 ): string {
   const raw = parsePortalState(adminNotes).payment?.status || (paidAt ? 'paid' : 'none')
   if (isEftAdmin(viewerEmail)) return raw
-  if (rosterPaid(adminNotes, paidAt)) return 'paid'
+  if (reconciledPaid(adminNotes, paidAt)) return 'paid'
   return raw === 'paid' || raw === 'collected' ? 'none' : raw
 }
 
@@ -115,7 +135,8 @@ export function rosterPaymentStatus(
  *  renders amount, reference, method and the eft_* internals, so those leak the
  *  moment the page is reachable. This is the object-level twin: the EFT admin sees
  *  the raw payment; everyone else sees the money ONLY when it settled through her
- *  channel (rosterPaid) as a clean { status:'paid', amount, reference } — and for
+ *  channel (reconciledPaid: Yoco/cash/waived) as a clean { status:'paid', amount,
+ *  reference } — and for
  *  anything else (in-flight EFT: collected, revealed, submitted, presented-not-
  *  reconciled) EVERY money field is dropped and only the masked status remains.
  *  Display only; same rule the vendor list uses, extended from status to object.
@@ -131,7 +152,9 @@ export function viewerSafePayment(
 ): PortalState['payment'] {
   if (!payment) return payment
   if (isEftAdmin(viewerEmail)) return payment
-  if (rosterPaid(adminNotes, paidAt)) {
+  // reconciledPaid (her channel: Yoco/cash/waived), NOT rosterPaid — a master-lane
+  // EFT/manual settlement must not show the owner an amount+reference (2026-09-07).
+  if (reconciledPaid(adminNotes, paidAt)) {
     return { status: 'paid', amount: payment.amount, reference: payment.reference }
   }
   const masked = rosterPaymentStatus(adminNotes, paidAt, viewerEmail)
@@ -144,7 +167,7 @@ export function viewerSafePayment(
 // and edits the human prose and the ⟦STALL:..⟧ allocation, but must never see
 // the EFT arrangement (CTH Law 2). ⟦STALL:..⟧ is deliberately NOT in this set.
 // Global flag so .match() returns every occurrence for the merge below.
-const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
+const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦NEWVENDOR⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
 
 /** admin_notes with every covert money/lane marker removed, for a non-EFT-admin
  *  viewer (owner/operator). Human prose and ⟦STALL:..⟧ survive; null/undefined
@@ -206,6 +229,20 @@ export function withEftMarker(adminNotes?: string | null): string {
   if (EFT_RE.test(notes)) return notes
   const trimmed = notes.trim()
   return trimmed ? `${trimmed}\n${EFT_MARKER}` : EFT_MARKER
+}
+
+/** True when the vendor carries the new-vendor cohort tag (tracking only). */
+export function hasNewVendorMarker(adminNotes?: string | null): boolean {
+  return NEWVENDOR_RE.test(adminNotes || '')
+}
+
+/** Tag the vendor as a hand-flipped new vendor (idempotent, tracking only).
+ *  Preserves human prose and every other marker. */
+export function withNewVendorMarker(adminNotes?: string | null): string {
+  const notes = adminNotes || ''
+  if (NEWVENDOR_RE.test(notes)) return notes
+  const trimmed = notes.trim()
+  return trimmed ? `${trimmed}\n${NEWVENDOR_MARKER}` : NEWVENDOR_MARKER
 }
 
 /** Remove the vendor from the EFT lane. Preserves human prose and every other
@@ -567,10 +604,28 @@ export function vendorInOwnerScope(
   // so the two hand-overs cannot drift apart.
   if (hasNoEftMarker(adminNotes) && !hasRealEftPayment) return true
 
-  // 'collected' is the EFT interim state and never sets paid_at, so it correctly
-  // fails this test and stays with the master until a real settlement lands.
-  if (!paidAt && p?.status !== 'paid') return false
-  return !MASTER_ONLY_METHODS.has(String(p?.method || ''))
+  // Settled HER way wins over any EFT trace. A vendor she reconciled (Yoco, cash,
+  // waived, or samreen_eft — her own EFT-proofs confirmation) is HERS and visible,
+  // even though the proof she confirmed leaves an eft_submitted_at behind. Must run
+  // BEFORE the touchedMasterEft test below, or her own confirmed EFT vendors get
+  // re-hidden by their own proof (the 2026-09-11 regression the suite caught).
+  if (settledHerWay) return true
+
+  // REDEFINED 2026-09-11 (Taona): "It doesn't make sense to hide everyone just
+  // because I turned on master EFT. Only those who paid into EFT, or uploaded a
+  // proof via email or WhatsApp, must be hidden from her. Everyone else she can
+  // access." The OLD rule here was `if (!paidAt && status !== 'paid') return false`
+  // — every unpaid vendor hidden. Now a merely-UNPAID vendor with NO real EFT
+  // involvement is HERS: she can see and chase them (their payment page still
+  // points at master, so they cannot actually pay her). Only a REAL master-lane
+  // EFT trace hides a vendor: an interim collection, an uploaded proof, an
+  // EFT/manual settlement, or a presented-Eft awaiting reconcile. This is the
+  // MASTER lane (...191) that hides; her own reconciled EFT already returned above.
+  const touchedMasterEft =
+    hasRealEftPayment
+    || hasEftMarker(adminNotes)
+    || presentedCommsPending(adminNotes)
+  return !touchedMasterEft
 }
 
 /** A PRESENTED EFT payment (shown to the owner as paid-Yoco via /admin/eft/present)
@@ -677,6 +732,22 @@ export function isOwnerVisible(adminNotes: string | null | undefined): boolean {
  *  NEVER in the lane; ⟦NOEFT⟧ and internal/operator accounts are explicit
  *  exclusions. The globalOn sweep self-reverts when EFT mode is switched off, so it
  *  cannot permanently strand the owner's inbox (the concern behind b886ff5). */
+/** Whose CONVERSATIONS hide from the festival owner (route to the master EFT tab).
+ *
+ *  REDEFINED 2026-09-11 (Taona): "It doesn't make sense to hide everyone just
+ *  because I turned on master EFT. Only those who paid into EFT, or uploaded a
+ *  proof via email or WhatsApp, must be hidden from her. Everyone else she can
+ *  access." So the OLD globalOn blanket — every unpaid vendor routed to the
+ *  master lane during the outage — is REMOVED. The wall now keys ONLY on a real
+ *  EFT involvement, never on "is unpaid while the rail is master":
+ *    - ⟦EFT⟧ marker, an uploaded proof (eft_submitted_at), a collection
+ *      (status collected / eft_collected_at), presented-Eft, or an accessory EFT
+ *      → hidden from her.
+ *    - a merely-UNPAID vendor with none of those → hers to see and talk to.
+ *  `globalOn` is kept in the signature for callers but no longer sweeps the
+ *  merely-unpaid onto the lane. A truly PAID vendor, ⟦NOEFT⟧ and internal accounts
+ *  are never hidden. The payment rail itself is unchanged: new money still routes
+ *  to master; only Samreen's VIEW of clean vendors opened up. */
 export function vendorCommsInEftLane(
   adminNotes: string | null | undefined,
   paidAt?: string | null,
@@ -695,9 +766,10 @@ export function vendorCommsInEftLane(
   if (hasNoEftMarker(adminNotes)) return false // explicit exclusion wins
   const p = parsePortalState(adminNotes).payment
   if (p?.status === 'paid') return false
-  // 'collected' (EFT interim) has no paid_at and status !== 'paid', so it falls
-  // through to globalOn below and correctly stays on the master lane.
-  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at || globalOn
+  // 'collected' (EFT interim) has no paid_at and status !== 'paid', so it is
+  // caught by the collected check below and stays hidden. A merely-unpaid vendor
+  // with NO EFT trace is now HERS (2026-09-11 rule) — globalOn no longer hides them.
+  return hasEftMarker(adminNotes) || !!p?.eft_submitted_at || p?.status === 'collected' || !!p?.eft_collected_at
 }
 
 /** True when the vendor sees EFT details on their PAYMENT view: global mode on,
@@ -817,20 +889,35 @@ export function eftProofVisibleToOwner(
   // account on 2026-08-25 (bank letter), before the re-activation bumped started_at
   // to 31 Aug; dating the proof truthfully must not hide it (Taona 2026-09-05).
   if (isOwnerVisible(adminNotes)) return true
+  // A proof stamped 'master' at filing time was paid into the covert ...191
+  // account (the vendor was on the covert lane when they paid — e.g. an ordinary
+  // vendor uploading via the portal while the master rail is on). It NEVER
+  // surfaces here, whatever the current rail is. This per-proof stamp is what
+  // replaces the old blanket "on the covert rail nothing may surface" gate, so
+  // flipping to master no longer hides the vendors who paid into HER account.
+  // Unstamped proofs (everything filed before 2026-09-11) fall through to the
+  // gates below, which already exclude every historically-covert cohort.
+  const stallProofs = (parsePortalState(adminNotes).payment?.proofs || [])
+    .filter((f) => f.kind === 'eft_submission')
+    .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
+  if (stallProofs[0]?.account === 'master') return false
   // Uploaded AFTER the cutover. This floor is what stops an old covert proof
   // surfacing automatically; only the hand-set marker above bypasses it.
   if (new Date(submitted).getTime() < new Date(fullEft.startedAt).getTime()) return false
-  // A hand-picked covert vendor (⟦EFT⟧) or a member of the frozen cutover cohort is
-  // on the master lane by definition and must NEVER surface to the owner. Safe to
+  // A hand-picked covert vendor (⟦EFT⟧), a member of the frozen cutover cohort, or
+  // a ⟦NEWVENDOR⟧ cohort member (master-lane by definition since 2026-09-11) is on
+  // the master lane and must NEVER surface to the owner. Safe to
   // over-freeze (module doctrine): hiding one extra can never leak, missing one can.
   if (fullEft.protectedIds.has(vendorId)) return false
   if (hasEftMarker(adminNotes)) return false
+  if (hasNewVendorMarker(adminNotes)) return false
   return true
 }
 
 /** Is THIS vendor on the COVERT master lane, i.e. their EFT money goes to the
  *  ...191 account and the whole arrangement is walled from the festival owner?
  *
+ *    - ⟦NEWVENDOR⟧        → the new-vendor cohort is covert on EVERY rail
  *    - rail === 'master'  → the whole unpaid population is covert (sweep everyone)
  *    - otherwise          → only the pinned cohort: hand-picked ⟦EFT⟧ vendors and
  *                           the frozen protected set captured at the full-EFT cutover
@@ -839,16 +926,69 @@ export function eftProofVisibleToOwner(
  *  who is excluded from the owner's EFT-proofs surface, so the money split and the
  *  visibility split can never drift. Pure: the caller passes the rail + fullEft it
  *  already read for the request. Yoco vendors are never covert here (they pay no
- *  EFT), except a ⟦EFT⟧/protected holder who still pays EFT via the carve-out. */
+ *  EFT), except a ⟦EFT⟧/protected holder who still pays EFT via the carve-out.
+ *
+ *  The ⟦OWNERVIS⟧ override below is UNCONDITIONAL (it does not carry the
+ *  money-in-motion guard that vendorInOwnerScope applies to its OWNERVIS branch).
+ *  That is correct for the account/roster split, but it means this predicate is NOT
+ *  an owner-visibility gate for comms or PII: use vendorInOwnerScope for those. */
 export function onCovertMasterLane(
   vendorId: string,
   adminNotes: string | null | undefined,
   rail: PaymentRail,
   fullEft: { protectedIds: Set<string> } | null,
 ): boolean {
+  // ⟦OWNERVIS⟧ is the deliberate per-vendor "this vendor is Samreen's" hand-back. It
+  // already overrides the covert lane on the proofs fence (eftProofVisibleToOwner), the
+  // paid roster and accessory-chase; honour it HERE too so the vendor's PAYMENT PAGE
+  // shows HER ...629 account, not the master ...191. Without this a handed-back frozen
+  // member still saw the master account and paid into it (Cakes & Crumbs, 2026-09-07:
+  // frozen at the 08-31 cutover for merely opening the EFT panel, then routed to master
+  // when they finally paid weeks later on the samreen_eft rail). First, so it wins even
+  // under the master-rail sweep.
+  if (isOwnerVisible(adminNotes)) return false
+  // ⟦NEWVENDOR⟧ is a LANE CONTROL since 2026-09-11: the new-vendor cohort pays the
+  // master ...191 on EVERY rail. Until then it was tracking-only and the list assumed
+  // each member also held ⟦EFT⟧ — Haadiya Bakes didn't (she carried ⟦NOEFT⟧ instead)
+  // and paid Samreen's ...629 on the samreen_eft rail. Never again.
+  if (hasNewVendorMarker(adminNotes)) return true
   if (rail === 'master') return true
   if (hasEftMarker(adminNotes)) return true
   return !!fullEft && fullEft.protectedIds.has(vendorId)
+}
+
+/** WHOSE MONEY IS THIS — the owner side of a HISTORICAL payment, rail-INDEPENDENT.
+ *
+ *  onCovertMasterLane answers "which account would this vendor pay into NOW" and
+ *  so sweeps EVERYONE under the master rail. That is right for choosing bank
+ *  details, and wrong for "who already paid Samreen", which is a fact about the
+ *  past. /admin/paid gated on the live-rail predicate and collapsed to the 7
+ *  ⟦OWNERVIS⟧ hand-backs (R52.6k) the moment the master rail went on
+ *  (2026-09-11), hiding every Yoco payer, every Samreen-EFT payer and every
+ *  self-opted payment plan — exactly as /admin/eft-proofs had emptied behind its
+ *  own rail gate.
+ *
+ *  A payment is HERS unless it is demonstrably the master's:
+ *    - ⟦OWNERVIS⟧ — the deliberate per-vendor hand-back — wins first, as everywhere
+ *    - a master-only settlement method (eft / manual_card / manual) is his
+ *    - a master-stamped proof (paid into ...191 while covert) is his
+ *    - the pinned covert cohort (⟦EFT⟧, the frozen cutover set, ⟦NEWVENDOR⟧) is
+ *      his — onCovertMasterLane WITHOUT the master-rail sweep
+ *  Everyone else — Yoco/cash/waived settlers, Samreen-EFT payers, plan vendors —
+ *  is hers on every rail. */
+export function paymentOnOwnerSide(
+  vendorId: string,
+  adminNotes: string | null | undefined,
+  fullEft: { protectedIds: Set<string> } | null,
+): boolean {
+  if (isOwnerVisible(adminNotes)) return true
+  const p = parsePortalState(adminNotes).payment
+  if (MASTER_ONLY_METHODS.has(String(p?.method || ''))) return false
+  const stallProofs = (p?.proofs || [])
+    .filter((f) => f.kind === 'eft_submission')
+    .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
+  if (stallProofs[0]?.account === 'master') return false
+  return !onCovertMasterLane(vendorId, adminNotes, 'samreen_eft', fullEft)
 }
 
 /** How many payments have been RECEIVED in a tier since the start line: a Yoco
@@ -896,14 +1036,19 @@ export async function resolveInEftLane(
 ): Promise<boolean> {
   if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator
   if (app.paid_at) return false                                                   // already paid
+  const p = parsePortalState(app.admin_notes).payment
+  if (p?.status === 'paid') return false
+  // ⟦NEWVENDOR⟧ cohort: ALWAYS the master-lane EFT panel, on every rail — the list
+  // is defined as master-EFT since 2026-09-11, so the tag wins over ⟦NOEFT⟧ below
+  // (a mis-tagged member like Haadiya Bakes must never see a dead card button or
+  // Samreen's account again) and over the rotation/master switch.
+  if (hasNewVendorMarker(app.admin_notes)) return true
   // ⟦NOEFT⟧ means "not on the covert master push, pay by card". On the samreen_eft
   // rail there is no card (Yoco is off) and EFT goes to HER account, so the marker
   // has nothing to exclude them from: they pay Samreen EFT like everyone else.
   // Before 2026-09-06 this returned false unconditionally and 19 unpaid ⟦NOEFT⟧
   // vendors (11 on approved payment plans) saw a dead card button.
   if (hasNoEftMarker(app.admin_notes) && (await getPaymentRail()) !== 'samreen_eft') return false // ⟦NOEFT⟧ excluded
-  const p = parsePortalState(app.admin_notes).payment
-  if (p?.status === 'paid') return false
   if (hasEftMarker(app.admin_notes)) return true                                  // ⟦EFT⟧ hand-picked
   // Money is already on the EFT rail (proof uploaded, or an operator marked it
   // collected): NEVER flip these to Yoco, they have paid by EFT. Independent of

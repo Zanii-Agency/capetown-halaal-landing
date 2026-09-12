@@ -8,8 +8,7 @@
 export const EFT_TERMS_HEADING = 'Important, please read before you pay by EFT'
 
 export const EFT_TERMS: string[] = [
-  'Pay the full stall fee in ONE transaction. We are not accepting part payments or deposits.',
-  'A part payment does not secure your stall. Any partial amount will be refunded, and your slot may be released to a vendor on the waiting list.',
+  'Please respect the investment we have made in building this platform. It is here to give you a smoother experience and keep our team efficient, so please use it rather than working around it. Send your proof of payment one way only: upload it on this page, or email support@youngatheart.co.za. Please do not use any other email, or message a team member directly via WhatsApp. Keeping everything here reaches the whole team at once and gets you confirmed the fastest, even while the festival keeps everyone busy.',
   'Use only your own genuine proof of payment. Submitting a fake or altered proof of payment will be reported to the relevant authorities.',
 ]
 

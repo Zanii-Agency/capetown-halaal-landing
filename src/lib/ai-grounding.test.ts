@@ -50,6 +50,10 @@ test('the drafter prompt carries the facts and the rule, not just the guard', ()
 test('the rule is a permission, not another "do not hallucinate"', () => {
   assert.match(SPECIFICS_RULE, /belongs in your reply only when it is written/)
   assert.match(SPECIFICS_RULE, /confirm it with the team/)
+  // Same Aug-31-has-passed fix as the WhatsApp brain: the email + inbox drafters
+  // run on the same Haiku and share this rule, so it must also make them read a
+  // stated date against today and treat a lapsed one as passed.
+  assert.match(SPECIFICS_RULE, /any date before today has already passed/)
 })
 
 test('the festival dates the team really does know are left alone', () => {

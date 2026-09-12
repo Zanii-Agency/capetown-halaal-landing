@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement } from './eft'
+import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, paymentOnOwnerSide, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -63,11 +63,12 @@ test('vendorCommsInEftLane routes by payment status: unpaid + collected -> maste
   const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-07-23T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(submitted, null), true)
   assert.equal(vendorCommsInEftLane(submitted, null, false), true)
-  // NEW RULE: while global EFT mode is ON, ANY unpaid non-excluded vendor -> master,
-  // even with no marker/proof/reveal. Self-reverts when global is off.
-  assert.equal(vendorCommsInEftLane('just a note', null, true), true)   // global on  -> master
+  // NEW RULE (2026-09-11): a MERELY-UNPAID vendor with no EFT trace is HERS even
+  // while global EFT mode is ON — the globalOn blanket no longer sweeps them to
+  // master. Only a real EFT involvement (marker / proof / collection) hides them.
+  assert.equal(vendorCommsInEftLane('just a note', null, true), false)   // clean unpaid -> owner even with global on
   assert.equal(vendorCommsInEftLane('just a note', null, false), false) // global off -> owner
-  // 'collected' (EFT interim, paid_at null, status !== 'paid') -> master while global on.
+  // 'collected' (EFT interim, paid_at null, status 'collected') -> hidden (real EFT money).
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected', eft_collected_at: '2026-07-25T00:00:00Z' } })
   assert.equal(vendorCommsInEftLane(collected, null, true), true)
   // A truly PAID vendor (Yoco-settled) is NEVER on the master lane.
@@ -219,19 +220,19 @@ test('reconciledPaid: the roster reads PAID only for a Yoco-reconcilable channel
   assert.equal(reconciledPaid('just a note', '2026-07-19T00:00:00Z'), true)
 })
 
-test('vendorInOwnerScope: every unpaid state is outside her world', () => {
-  assert.equal(vendorInOwnerScope('just a note', null), false, 'plain unpaid')
-  assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, 'on the EFT lane')
-  // ⟦NOEFT⟧ deliberately NOT asserted here any more. 2026-07-26 it handed an
-  // unpaid vendor to the master ("excluded from EFT is not the same as paid").
-  // 2026-07-28 Taona reversed it: "If excluded on master lane, it belongs to
-  // samreen." The master lane hides an EFT arrangement and an excluded vendor
-  // has none. Covered by its own tests below, including the guard that keeps an
-  // EFT-touched vendor on the master lane regardless of the marker.
-  // 'collected' is the EFT interim state and never sets paid_at: still not hers.
+test('vendorInOwnerScope: unpaid is HERS unless there is a real master-EFT trace (2026-09-11 rule)', () => {
+  // The new rule: "only hide vendors who paid into EFT or uploaded a proof." A
+  // merely-UNPAID vendor with no EFT involvement is visible to Samreen.
+  assert.equal(vendorInOwnerScope('just a note', null), true, 'plain unpaid is hers now')
+  assert.equal(vendorInOwnerScope(null, null), true, 'empty notes, unpaid -> hers')
+  // The EFT-touched stay hidden:
+  assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, '⟦EFT⟧ marker stays hidden')
+  // 'collected' is the EFT interim state: still not hers.
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })
-  assert.equal(vendorInOwnerScope(collected, null), false)
-  assert.equal(vendorInOwnerScope(null, null), false)
+  assert.equal(vendorInOwnerScope(collected, null), false, 'collected stays hidden')
+  // An uploaded proof (not yet reconciled her way) stays hidden.
+  const submitted = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-09-01T00:00:00Z' } })
+  assert.equal(vendorInOwnerScope(submitted, null), false, 'proof uploaded stays hidden')
 })
 
 // ---------------------------------------------------------------------------
@@ -332,6 +333,16 @@ test('viewerSafePayment: in-flight EFT money is stripped, her settled payment sh
   assert.equal(p?.reference, 'CH-9')
   assert.equal((p as Record<string, unknown>)?.method, undefined)
 
+  // A SETTLED master-lane EFT (status paid, method eft, paid_at set): to her this
+  // is UNPAID — status masked to 'none', every money field dropped (2026-09-07,
+  // reconciledPaid gate). It only reads paid to the EFT admin.
+  const eNotes = notesFor({ status: 'paid', amount: 5400, reference: 'YAH-12', method: 'eft' })
+  const e = viewerSafePayment(pay(eNotes), eNotes, '2026-08-01T00:00:00Z', SAM)
+  assert.equal(e?.status, 'none')
+  assert.equal(e?.amount, undefined)
+  assert.equal(e?.reference, undefined)
+  assert.equal(viewerSafePayment(pay(eNotes), eNotes, '2026-08-01T00:00:00Z', EFT_ADMIN_EMAIL)?.status, 'paid')
+
   // A plain unpaid vendor: nothing to leak, status passes through.
   const uNotes = notesFor({ status: 'none' })
   assert.equal(viewerSafePayment(pay(uNotes), uNotes, null, SAM)?.status, 'none')
@@ -343,21 +354,33 @@ test('viewerSafePayment: in-flight EFT money is stripped, her settled payment sh
   assert.equal((admin as Record<string, unknown>)?.method, 'eft')
 })
 
-test('rosterPaid + rosterPaymentStatus: SETTLED reads paid; only in-flight EFT masks', () => {
+test('rosterPaymentStatus: owner sees paid ONLY for her-channel settlement; master-lane EFT masks to unpaid', () => {
   const SAM = 'capetownhalaal@gmail.com'
   const notes = (payment: Record<string, unknown>) =>
     updatePortalStateImpl('note', { v: 1, payment } as never)
   const paidAt = '2026-07-05T00:00:00Z'
-  // SETTLED reads paid, method ignored — byte-for-byte the finance total's is_paid.
-  // Taona 2026-08-16: a settled EFT (Islamic Relief SA, Amc cookware, ...) is a
-  // done deal, whoever reconciled it. This reverses the earlier method-based mask.
+  // rosterPaid stays the method-AGNOSTIC true-state label — every settled method is
+  // paid. This is the EFT admin's export column and never changed.
   for (const method of ['eft', 'manual', 'manual_card', 'yoco', 'cash']) {
     assert.equal(rosterPaid(notes({ status: 'paid', method }), paidAt), true, method)
+  }
+  // To the OWNER, "paid" means reconciled through HER channel. Taona 2026-09-07
+  // ("all vendors on master lane eft should always show as unpaid to her") reverses
+  // the 2026-08-16 call: Yoco/cash read paid, eft/manual/manual_card read unpaid.
+  for (const method of ['yoco', 'cash']) {
     assert.equal(rosterPaymentStatus(notes({ status: 'paid', method }), paidAt, SAM), 'paid', method)
   }
-  assert.equal(rosterPaid('just a note', '2026-07-19T00:00:00Z'), true) // paid_at alone
-  // IN-FLIGHT 'collected' (recorded, not settled) is NOT paid and masks to 'none'
-  // for her — the real EFT-in-progress leak this withholds.
+  for (const method of ['eft', 'manual', 'manual_card']) {
+    assert.equal(rosterPaymentStatus(notes({ status: 'paid', method }), paidAt, SAM), 'none', method)
+  }
+  // The EFT admin still sees the raw truth for every method.
+  for (const method of ['eft', 'manual', 'manual_card', 'yoco', 'cash']) {
+    assert.equal(rosterPaymentStatus(notes({ status: 'paid', method }), paidAt, EFT_ADMIN_EMAIL), 'paid', method)
+  }
+  // paid_at alone (no method) is her-channel by default — nothing master about it.
+  assert.equal(rosterPaid('just a note', '2026-07-19T00:00:00Z'), true)
+  assert.equal(rosterPaymentStatus('just a note', '2026-07-19T00:00:00Z', SAM), 'paid')
+  // IN-FLIGHT 'collected' (recorded, not settled) is NOT paid and masks to 'none'.
   assert.equal(rosterPaid(notes({ status: 'collected' }), null), false)
   assert.equal(rosterPaymentStatus(notes({ status: 'collected' }), null, SAM), 'none')
   // Plain unpaid states pass through untouched.
@@ -498,6 +521,51 @@ test('onCovertMasterLane: master sweeps everyone; else only ⟦EFT⟧ + the froz
   // 'yoco' rail: a ⟦EFT⟧ carve-out vendor still pays into the covert ...191 account.
   assert.equal(onCovertMasterLane('x', marked, 'yoco', null), true)
   assert.equal(onCovertMasterLane('x', plain, 'yoco', null), false)
+
+  // ⟦OWNERVIS⟧ hand-back releases a frozen member back to Samreen's account, and
+  // wins even over the master-rail sweep (Cakes & Crumbs release, 2026-09-07).
+  const handedBack = withOwnerVisibleMarker('')
+  assert.equal(onCovertMasterLane('frozen1', handedBack, 'samreen_eft', frozen), false, '⟦OWNERVIS⟧ frozen member is Samreen’s')
+  assert.equal(onCovertMasterLane('frozen1', handedBack, 'master', frozen), false, '⟦OWNERVIS⟧ beats the master sweep')
+
+  // ⟦NEWVENDOR⟧ cohort: covert on EVERY rail, no ⟦EFT⟧ marker needed. Regression
+  // for Haadiya Bakes (2026-09-11): tagged ⟦NEWVENDOR⟧ + ⟦NOEFT⟧, no ⟦EFT⟧, not
+  // frozen — she was shown Samreen's ...629 on the samreen_eft rail and paid it.
+  const newVendor = withNewVendorMarker('')
+  assert.equal(onCovertMasterLane('x', newVendor, 'samreen_eft', frozen), true, 'new vendor is covert on samreen_eft')
+  assert.equal(onCovertMasterLane('x', newVendor, 'master', frozen), true, 'new vendor is covert on master')
+  assert.equal(onCovertMasterLane('x', newVendor, 'yoco', null), true, 'new vendor is covert even on yoco')
+  assert.equal(onCovertMasterLane('x', withNoEftMarker(newVendor), 'samreen_eft', frozen), true, '⟦NOEFT⟧ cannot pull a new vendor off the master lane')
+  assert.equal(onCovertMasterLane('x', withOwnerVisibleMarker(newVendor), 'master', frozen), false, '⟦OWNERVIS⟧ still hands a new vendor back to Samreen')
+})
+
+test('paymentOnOwnerSide: rail-INDEPENDENT whose-money test (the /admin/paid fence)', () => {
+  // 2026-09-11: under the master rail the live onCovertMasterLane swept EVERYONE
+  // covert and /admin/paid collapsed to the 7 ⟦OWNERVIS⟧ hand-backs, hiding every
+  // Yoco payer, Samreen-EFT payer and plan vendor. This predicate must not move
+  // when the rail does.
+  const frozen = { protectedIds: new Set(['frozen1']) }
+  const yocoPaid = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'yoco', amount: 6500 } } as never)
+  const samreenEftPaid = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'samreen_eft', amount: 12000 } } as never)
+  const masterSettled = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'eft', amount: 6500 } } as never)
+  const masterStampedProof = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'x/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'master' }],
+  } } as never)
+  const samreenStampedProof = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'x/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'samreen' }],
+  } } as never)
+
+  assert.equal(paymentOnOwnerSide('x', yocoPaid, frozen), true, 'a Yoco payer is hers on every rail')
+  assert.equal(paymentOnOwnerSide('x', samreenEftPaid, frozen), true, 'a Samreen-EFT payer is hers on every rail')
+  assert.equal(paymentOnOwnerSide('x', samreenStampedProof, frozen), true, 'a proof into her ...629 stays listed')
+  assert.equal(paymentOnOwnerSide('x', masterSettled, frozen), false, 'a master-method settlement is his')
+  assert.equal(paymentOnOwnerSide('x', masterStampedProof, frozen), false, 'a master-stamped proof (...191) never surfaces')
+  assert.equal(paymentOnOwnerSide('x', withEftMarker(''), frozen), false, 'the pinned ⟦EFT⟧ cohort is his')
+  assert.equal(paymentOnOwnerSide('x', withNewVendorMarker(''), frozen), false, 'the ⟦NEWVENDOR⟧ cohort is his')
+  assert.equal(paymentOnOwnerSide('frozen1', 'note', frozen), false, 'the frozen cutover set is his')
+  assert.equal(paymentOnOwnerSide('frozen1', withOwnerVisibleMarker('note'), frozen), true, '⟦OWNERVIS⟧ hands a frozen member back')
 })
 
 test('eftBankFor picks the covert ...191 account only when covert', () => {
@@ -568,3 +636,54 @@ test("the same state with method 'eft' (a master-lane settlement) stays OUT of h
   assert.equal(vendorInOwnerScope(notes, '2026-09-05T08:00:00.000Z'), false)
 })
 
+
+// ---------------------------------------------------------------------------
+// 2026-09-11: the ⟦NEWVENDOR⟧ cohort is master-lane BY DEFINITION, on every rail.
+// Haadiya Bakes carried ⟦NEWVENDOR⟧ + ⟦NOEFT⟧ but no ⟦EFT⟧ and was not frozen,
+// so on the samreen_eft rail she was shown Samreen's ...629 and paid into it.
+// ---------------------------------------------------------------------------
+
+test('eftProofVisibleToOwner never surfaces a ⟦NEWVENDOR⟧ cohort proof', () => {
+  const fullEft = { startedAt: '2026-08-26T00:00:00.000Z', protectedIds: new Set<string>() }
+  const postCutoverProof = updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: '2026-09-10T12:23:39.227Z' } } as never)
+  assert.equal(eftProofVisibleToOwner('v1', postCutoverProof, fullEft), true, 'a plain vendor’s post-cutover proof is hers (control)')
+  assert.equal(eftProofVisibleToOwner('v1', withNewVendorMarker(postCutoverProof), fullEft), false, 'a new-vendor proof is the master’s, never hers')
+})
+
+test('eftProofVisibleToOwner: a master-stamped proof never surfaces, an unstamped one stays listed on any rail', () => {
+  // 2026-09-11: flipping to the master rail must only change which bank details
+  // vendors SEE, not empty the owner’s list of vendors who already paid into her
+  // ...629 account. The account is stamped on the proof at filing time; unstamped
+  // (pre-master-rail) proofs passing the fence are Samreen-account proofs.
+  const fullEft = { startedAt: '2026-08-26T00:00:00.000Z', protectedIds: new Set<string>() }
+  const stampedMaster = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'v1/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'master' }],
+  } } as never)
+  assert.equal(eftProofVisibleToOwner('v1', stampedMaster, fullEft), false, 'paid into the covert ...191 while master was on: never hers')
+  const stampedSamreen = updatePortalStateImpl('note', { v: 1, payment: {
+    eft_submitted_at: '2026-09-11T12:00:00.000Z',
+    proofs: [{ path: 'v1/eft-proof-1.pdf', kind: 'eft_submission', uploaded_at: '2026-09-11T12:00:00.000Z', account: 'samreen' }],
+  } } as never)
+  assert.equal(eftProofVisibleToOwner('v1', stampedSamreen, fullEft), true, 'paid into her ...629: stays listed whatever the rail')
+})
+
+test('resolveInEftLane: ⟦NEWVENDOR⟧ always sees the EFT panel; ⟦NOEFT⟧ cannot exclude them', async () => {
+  // Haadiya Bakes' exact marker set: ⟦NEWVENDOR⟧ + ⟦NOEFT⟧, no ⟦EFT⟧.
+  const notes = withNoEftMarker(withNewVendorMarker(''))
+  for (const mode of ['samreen_eft', 'master', 'yoco']) {
+    process.env.EFT_MODE = mode
+    try {
+      assert.equal(await resolveInEftLane({ admin_notes: notes }, false), true, `new vendor sees EFT on ${mode}`)
+    } finally {
+      delete process.env.EFT_MODE
+    }
+  }
+  // A paid cohort member keeps the normal paid view (no EFT panel).
+  process.env.EFT_MODE = 'master'
+  try {
+    assert.equal(await resolveInEftLane({ admin_notes: notes, paid_at: '2026-09-10T00:00:00Z' }, true), false)
+  } finally {
+    delete process.env.EFT_MODE
+  }
+})

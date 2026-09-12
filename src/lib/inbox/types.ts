@@ -26,6 +26,11 @@ export interface CommItem {
   direction: 'in' | 'out'
   /** Outbound only: sent by the bot rather than a human operator. */
   bot?: boolean
+  /** Email only, outbound only: a system-generated notification (password reset,
+   *  payment reminder, "Payment confirmed", invoice, logo prompt), NOT a human
+   *  reply. The thread collapses a run of these so the real conversation reads
+   *  first. Set in the unified messages route. */
+  auto?: boolean
   body: string
   /** ARRIVAL time (row insert), not the sender's declared timestamp — both
    *  channels use the same clock so a merged sort is meaningful. */

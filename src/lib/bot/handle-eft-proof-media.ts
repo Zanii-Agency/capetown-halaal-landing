@@ -44,20 +44,30 @@ function extractReference(text: string): string | null {
   return null
 }
 
-async function isProofMedia(
+export async function isProofMedia(
   media: InboundMedia,
   caption: string,
   seen?: SeenImage | null,
-): Promise<{ yes: boolean; note: string }> {
-  // Images: use vision when available. The caller may already have looked.
-  if (media.kind === 'image') {
+): Promise<{ yes: boolean; note: string; looked: boolean }> {
+  // Stickers, voice notes and videos are NEVER a payment proof. A vendor tapping a
+  // thumbs-up sticker after we confirm their plan is not sending money (2026-09-07:
+  // Bella and Co's emoji sticker was filed as a proof and acked "proof received").
+  // This is a CONFIDENT no (looked:true), so the eager unpaid-vendor net in the
+  // caller cannot override it.
+  if (media.kind === 'sticker' || media.kind === 'video' || media.kind === 'audio') {
+    return { yes: false, note: `${media.kind} is not a payment proof`, looked: true }
+  }
+
+  const imageMime = /^image\//i.test(media.mimeType || '')
+  // A photo, or a photo sent "as a document": LOOK at it with vision.
+  if (media.kind === 'image' || (media.kind === 'document' && imageMime)) {
     const img = seen ?? (await seeImage(media.id, media.mimeType))
-    if (img) {
-      return {
-        yes: img.isPaymentProof,
-        note: img.description,
-      }
-    }
+    // Vision gave a verdict: trust it (a receipt is a proof, a selfie or meme is
+    // not) and mark it looked. Vision unavailable (null): we could NOT look, so
+    // this is not a confident verdict and the caller's eager capture-first net
+    // still applies rather than dropping a proof we simply could not read.
+    if (img) return { yes: img.isPaymentProof, note: img.description, looked: true }
+    return { yes: looksLikePaymentProof(caption), note: caption, looked: false }
   }
 
   // Documents (PDF): try to read any text layer and look for payment signals.
@@ -67,13 +77,16 @@ async function isProofMedia(
       const text = await extractPdfText(bytes.bytes, 8000)
       if (text && (looksLikePaymentProof(text) || looksLikePaymentProof(caption))) {
         const ref = extractReference(text) || extractReference(caption) || null
-        return { yes: true, note: ref ? `reference ${ref}` : 'document text looks like a payment proof' }
+        return { yes: true, note: ref ? `reference ${ref}` : 'document text looks like a payment proof', looked: true }
       }
     }
+    // A PDF we could not read as payment text may still be a scanned-image proof
+    // with no text layer, so this is NOT a confident no: let eager capture it.
+    return { yes: looksLikePaymentProof(caption), note: caption, looked: false }
   }
 
-  // Fall back to caption keywords and existing lane membership.
-  return { yes: looksLikePaymentProof(caption), note: caption }
+  // Any other document (non-PDF, non-image): caption keywords only, not confident.
+  return { yes: looksLikePaymentProof(caption), note: caption, looked: false }
 }
 
 export type EftMediaResult =
@@ -133,8 +146,22 @@ export async function tryHandleEftProofMedia(
   // cutover activated, misfiling their logo as a proof (doctrine review, 2026-09-02).
   const eager = alreadyLane || !vendor.paid_at
 
-  const { yes, note } = await isProofMedia(media, caption, seen)
-  if (!yes && !eager) return { handled: false }
+  const { yes, note, looked } = await isProofMedia(media, caption, seen)
+  const name = identity.firstName || vendor.contact_name || vendor.business_name || 'there'
+  // AN EFT PROOF MUST ACTUALLY BE READ FIRST (Taona 2026-09-07). Media is filed as
+  // a proof ONLY when we READ it and it IS one (`yes`), never on the vendor's
+  // unpaid status alone: that is how a thumbs-up sticker became "proof of payment
+  // received".
+  if (!yes) {
+    // Looked and it is clearly NOT a proof (sticker, voice note, selfie, meme), or
+    // nobody is expecting a payment from them: let the normal agent reply.
+    if (looked || !eager) return { handled: false }
+    // We could NOT read it (vision down, HEIC, oversized) and this is a vendor we
+    // expect a payment from. Do not drop a possible real proof and do not claim it
+    // is filed: hand it to a human to read, and say so honestly.
+    await alertMasterProofIssue(vendor.business_name, `sent a file on WhatsApp that could not be read automatically. It may be a proof of payment, check the vendor's WhatsApp thread.`, caption)
+    return { handled: true, laneAdded: false, reply: `Thanks ${name}, I can see you sent a file but I could not open it clearly on my side. I have asked the team to check it here, you do not need to resend.` }
+  }
 
   const bytes = await fetchMediaBytes(media.id)
   if (!bytes) {
@@ -190,8 +217,6 @@ export async function tryHandleEftProofMedia(
     // master; it never adds the ⟦EFT⟧ marker, so the Samreen wall is untouched.
     captureRegardless: true,
   })
-
-  const name = identity.firstName || vendor.contact_name || vendor.business_name || 'there'
 
   if (!result.ok) {
     // With captureRegardless the lane gate can no longer 403, so a failure here is

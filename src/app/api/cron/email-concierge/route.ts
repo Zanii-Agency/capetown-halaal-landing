@@ -20,6 +20,7 @@ import { parseAttachmentMarker } from '@/lib/email/attachments'
 import { getEftMode, revealsPaymentArrangement } from '@/lib/eft'
 import { runPlanAutoReplies } from '@/lib/payments/plan-email-autoreply'
 import { runInvoiceAutoReplies } from '@/lib/payments/invoice-email-autoreply'
+import { runWithdrawalAutoReplies } from '@/lib/payments/withdrawal-email-autoreply'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -29,17 +30,19 @@ export async function GET(req: Request) {
   if (!verifyCronAuth(req.headers.get('authorization'))) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
-  // PLAN-REQUEST AUTO-REPLY (Taona 2026-09-07): push payment-plan emails to
-  // WhatsApp automatically. Runs BEFORE the draft-confirm flag gate so it works
-  // even when EMAIL_CONCIERGE is off, and marks the emails handled so the
-  // confirm flow never re-drafts them.
-  const planAuto = await runPlanAutoReplies(createAdminClient())
-  // Invoice requests: attach the themed invoice PDF (not VAT registered) or point
-  // them to their portal. After plan, so a plan request wins if an email asks both.
-  const invoiceAuto = await runInvoiceAutoReplies(createAdminClient())
+  // VENDOR AUTO-REPLIES DISABLED (Taona 2026-09-11: "stop the automated email,
+  // you are not doing them well"). The withdrawal / plan / invoice auto-responders
+  // misfired (invoice reply to a vendor who was withdrawing, plan offer to a
+  // vendor releasing their stall). They now sit behind EMAIL_VENDOR_AUTOREPLY=on
+  // (default OFF) so no vendor gets an unsupervised email. The human-confirm
+  // concierge below still drafts replies for Samreen to SEND; nothing else changes.
+  const vendorAutoReplyOn = (process.env.EMAIL_VENDOR_AUTOREPLY || '').toLowerCase() === 'on'
+  const withdrawalAuto = vendorAutoReplyOn ? await runWithdrawalAutoReplies(createAdminClient()) : { disabled: true }
+  const planAuto = vendorAutoReplyOn ? await runPlanAutoReplies(createAdminClient()) : { disabled: true }
+  const invoiceAuto = vendorAutoReplyOn ? await runInvoiceAutoReplies(createAdminClient()) : { disabled: true }
 
   if (!emailConciergeEnabled()) {
-    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)', planAuto, invoiceAuto })
+    return NextResponse.json({ ok: true, skipped: 'flag off (EMAIL_CONCIERGE)', withdrawalAuto, planAuto, invoiceAuto })
   }
 
   const db = createAdminClient()

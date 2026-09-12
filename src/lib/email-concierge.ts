@@ -87,7 +87,7 @@ function stripEmDashes(s: string): string {
  * drafter came to tell a vendor her outcome was due "1 June 2026". A model given
  * nothing and asked when something happens does not decline, it answers.
  */
-export function draftSystemPrompt(paymentFacts: string): string {
+export function draftSystemPrompt(paymentFacts: string, statusFacts = ''): string {
   return (
     `You draft email replies on behalf of the Cape Town Halaal Festival team (operator: Samreen). ` +
     `ONE FESTIVAL, TWO NAMES: "Cape Town Halaal" and "Young at Heart Festival" are the same single event, not two. ` +
@@ -98,6 +98,7 @@ export function draftSystemPrompt(paymentFacts: string): string {
     `\n\n${joburgClockBlock()}\n\n${FESTIVAL_FACTS}\n\n${SPECIFICS_RULE}\n\n` +
     `If you cannot answer something, write a short, friendly holding reply saying the team will look into it and follow up. ` +
     paymentFacts +
+    statusFacts +
     `End with a sign-off line: "Cape Town Halaal Festival Team". ` +
     `Output ONLY the reply body, no subject line, no "Here is a draft", no quotes.`
   )
@@ -117,7 +118,20 @@ export async function draftReply(email: InboundEmail): Promise<string> {
     // loses confidence in the festival, not just the gateway.
     ? `CURRENT STALL FEE PAYMENT: send the vendor to their exhibitor portal payment page at cthalaal.co.za/exhibitor/login and stop there. Do NOT name a payment method, do NOT say "banking details", "account details", "account number", "branch code" or "bank transfer", and do NOT describe what the payment page contains: the portal holds the live values and anything you say about them can be out of date. NEVER mention a card gateway, an outage, maintenance, or that this is temporary. PAYMENT DEADLINE: an approved vendor has 30 days from their approval date to pay. TERMS the vendor must follow: ${EFT_TERMS_TEXT} `
     : ''
-  const system = draftSystemPrompt(paymentFacts)
+  // STATUS-UPDATE facts (Taona 2026-09-11): a vendor asking "any feedback yet?"
+  // is answered with real numbers and a real date, not a vague "the team will
+  // follow up". Live count of selected vendors, plus the decision window.
+  let statusFacts = ''
+  try {
+    const db = createAdminClient()
+    const { count } = await db.from('vendor_applications').select('id', { count: 'exact', head: true }).eq('status', 'approved')
+    if (typeof count === 'number' && count > 0) {
+      statusFacts =
+        ` APPLICATION STATUS (only when a vendor asks about their application or when they will hear back): tell them ${count} vendors have been selected so far and applications are still being reviewed. ` +
+        `Say they will be told whether they are selected, at the latest by mid November 2026. Do NOT promise a specific earlier date. `
+    }
+  } catch { /* status facts are best-effort */ }
+  const system = draftSystemPrompt(paymentFacts, statusFacts)
   // The email is UNTRUSTED, attacker-controllable data. Wrap it in delimiters and
   // tell the model never to follow instructions inside it (skeptic MED #7a).
   const user =

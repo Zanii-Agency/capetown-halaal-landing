@@ -26,7 +26,8 @@ import { computeVendorPricing } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
-import { proposePaymentPlan } from '@/lib/payments/payment-plan'
+import { proposePaymentPlan, planLastDateFor } from '@/lib/payments/payment-plan'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
 import { CONTRACT_VERSION, cancellationTermsText } from '@/lib/contract/copy'
@@ -76,7 +77,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_electrical_setup',
-    description: "Report the electrical power, appliances and gas THIS vendor booked for their stall, and how it affects their total. Call whenever a verified vendor asks about power, electricity, plug points, whether they have power for a freezer/fridge/appliance, a generator, load-in setup, or gas at their stall. If they booked no power, this says so plainly so they are not caught out on the day.",
+    description: "Report the electrical power, appliances and gas THIS vendor booked for their stall, how it affects their total, and whether an accessory-electricity balance is still owing. Call whenever a verified vendor asks about power, electricity, plug points, whether they have power for a freezer/fridge/appliance, a generator, load-in setup, gas at their stall, OR asks to ADD more appliances / more power. Vendors can add more appliances themselves on the Payments page of their portal (the same appliance list and prices they saw at signup); the cost is added to their accessory balance to pay there. If they booked no power, this says so plainly so they are not caught out on the day.",
     // NOT strict: no-arg tool, keeps total strict tools <= 20 (see get_badge_allocation).
     input_schema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
   },
@@ -175,13 +176,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'grant_payment_extension',
-    description: "Give THIS vendor more time to pay their stall fee in full, in ONE payment, by a single agreed date. FIRST push for the end of September (2026-09-30), this month. Only if they cannot pay in one go this month, a payment plan (propose_payment_plan) is the next step, not a later single date. The latest this may ever be is 30 November 2026, never past it. Call AFTER confirming the date with them; pass it as final_date (default 2026-09-30). If they are already paid, do not call it.",
+    description: "Give THIS vendor more time to pay their stall fee in full, in ONE payment, by a single agreed date. FIRST make at least TWO genuine attempts to get them to pay as much as they can THIS month (September): push the full amount this month first (final_date 2026-09-30). Only if that is genuinely tight, the firm fallback is 15 October 2026 (final_date 2026-10-15), and 31 October 2026 (final_date 2026-10-31) is the very latest, never past it. Always steer them to a single payment, or at most two instalments via propose_payment_plan. Call AFTER confirming the date with them; pass it as final_date (default 2026-09-30). If they are already paid, do not call it.",
     strict: true,
-    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Push end of September (2026-09-30) first; 2026-11-30 at the very latest.' } }, required: ['final_date'] },
+    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Offer 2026-09-30 first; only if that is tight, 2026-10-15; 2026-10-31 at the very latest.' } }, required: ['final_date'] },
   },
   {
     name: 'propose_payment_plan',
-    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into instalments they will pay by their own exact dates. Call ONLY when a verified, unpaid vendor wants to pay in instalments AND has given you the exact DATE and AMOUNT of each instalment (for example 'R3000 on 30 September and R3500 on 31 October'). Each instalment needs a real future date and a Rand amount, there must be 2 or 3 of them (offer 2 by default, allow a third only if they ask), every date must be on or before 30 November 2026 (a plan is offered only after a full payment by end of September is declined; then offer end of October first, then mid-November, then 30 November at the latest), and the amounts must add up to at least their full outstanding fee. If they have not given exact dates and amounts, ask for them first. Do not invent dates or amounts. For a single full payment with more time, use grant_payment_extension instead.",
+    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into instalments they will pay by their own exact dates. Call ONLY after you have made at least TWO genuine attempts to get them to pay as much as they can THIS month (September), AND a verified, unpaid vendor still wants to pay in instalments, AND has given you the exact DATE and AMOUNT of each instalment (for example 'R3000 on 10 October and R3500 on 31 October'). ALWAYS push for one to two payments: TWO instalments is the most you should normally do (a third only as an absolute last resort, never more than three). Each instalment needs a real future date and a Rand amount; every date must be on or before 31 OCTOBER 2026, and the amounts must add up to at least their full outstanding fee. A plan is the fallback only after a large payment this month is declined: pay as much as possible now, and set the final instalment no later than 31 October 2026. If they have not given exact dates and amounts, ask for them first. Do not invent dates or amounts. For a single full payment with more time, use grant_payment_extension instead.",
     // NOT strict on purpose: a nested-array argument, and claude-sonnet-5 caps
     // strict tools at 20 (adding a 21st 400s every vendor call, see
     // get_badge_allocation). The handler validates every field defensively.
@@ -383,7 +384,7 @@ async function getPaymentStatus(vendorId: string): Promise<string> {
   try {
     const bill = vendorBill({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier as string, special_requirements: row.special_requirements, admin_notes: row.admin_notes || null })
     if (bill.settled && bill.accessories.state === 'owing' && bill.accessories.owing > 0) {
-      return `Your stall fee of R${bill.stall.price.toLocaleString('en-ZA')} is paid and your booth is confirmed. The electricity for the appliances you booked is billed separately, and R${bill.accessories.owing.toLocaleString('en-ZA')} is still due for it. You can settle it on the Payments page of your portal at ${PORTAL_LOGIN}.`
+      return `Your stall fee of R${bill.stall.price.toLocaleString('en-ZA')} is paid and your booth is confirmed. The electricity for the appliances you booked is billed separately, and R${bill.accessories.owing.toLocaleString('en-ZA')} is still due for it. You can settle it on the Payments page of your portal at ${PORTAL_LOGIN}. You can also add more appliances there any time if you need extra power, and the cost is added to that balance.`
     }
     if (bill.settled && bill.accessories.state === 'pending') {
       return `Your stall fee is paid, and we have your proof for the accessory electricity balance. Please allow up to 24 hours for the team to confirm it.`
@@ -925,17 +926,52 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   if (st.payment?.status === 'paid' || st.payment?.status === 'collected') {
     return 'Your stall fee is already settled, thank you, so there is nothing to extend.'
   }
-  // Clamp to the policy window: a real future date, no later than 30 Nov 2026
-  // (Taona 2026-09-07 ladder). A missing/invalid/too-late date defaults to the
-  // ladder ceiling so the tool never writes a passed or out-of-policy date.
-  const CAP = '2026-11-30'
-  const DEFAULT = '2026-09-30' // push this month first (Taona 2026-09-07)
+  // Clamp to the policy window: a real future date, no later than the vendor's
+  // ceiling (Taona 2026-09-09 ladder: 31 Oct general, 10 Oct for the flipped
+  // new-vendor cohort). A missing/invalid/too-late date defaults to the ladder
+  // floor so the tool never writes a passed or out-of-policy date.
+  const CAP = planLastDateFor(row.admin_notes)
+  const DEFAULT = '2026-09-30' // push as much as possible THIS month first; 15 Oct fallback (Taona 2026-09-09)
   const today = new Date().toISOString().slice(0, 10)
   let until = (finalDate || '').trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || until <= today) until = DEFAULT
   if (until > CAP) until = CAP
   const { grantExtension } = await import('@/lib/eft')
   await grantExtension(vendorId, until, `extension to ${until} granted via WhatsApp`)
+  // Record the commitment as a ONE-instalment approved plan so it shows under
+  // Active payment plans and is tracked like any other commitment (Taona
+  // 2026-09-07: "so it shows up and we can track, like anyone who makes a payment
+  // commitment"). loadPaidVendors keys the plans tab on plan_status='approved' +
+  // installments; a single full payment is just a one-instalment plan.
+  try {
+    const owing = Math.max(0, Math.round(vendorBill({
+      id: vendorId,
+      preferred_booth_tier: row.preferred_booth_tier,
+      special_requirements: row.special_requirements,
+      admin_notes: row.admin_notes,
+      paid_at: null,
+    }).owing))
+    if (owing > 0) {
+      const nowIso = new Date().toISOString()
+      await updatePortalState(vendorId, (s) => ({
+        ...s,
+        payment: {
+          ...s.payment,
+          status: 'deferred',
+          arrangement: {
+            ...(s.payment?.arrangement || {}),
+            until,
+            installments: [{ date: until, amount: owing }],
+            plan_status: 'approved',
+            proposed_at: s.payment?.arrangement?.proposed_at || nowIso,
+            approved_at: nowIso,
+          },
+        },
+      }))
+    }
+  } catch (e) { console.error('[grant_payment_extension] plan-track write failed:', (e as Error).message) }
+  // Dated event so 'who got more time to pay' shows in the day digest / activity feed.
+  await recordVendorAction({ applicationId: vendorId, eventType: 'payment_extension_granted', note: `Extension to ${until} granted via WhatsApp`, afterValue: until }).catch(() => {})
   const nice = new Date(`${until}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
   return `Done, you have until ${nice} to settle your stall fee in full. Your spot stays reserved until then, just pay through Payments in your portal when you're ready.`
 }

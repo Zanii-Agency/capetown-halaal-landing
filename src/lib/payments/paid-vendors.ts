@@ -7,7 +7,7 @@
  * so the two can never disagree.
  */
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getPaymentRail, getFullEftMode, onCovertMasterLane, rosterPaid, isOwnerVisible } from '@/lib/eft'
+import { getPaymentRail, getFullEftMode, onCovertMasterLane, paymentOnOwnerSide, rosterPaid, isOwnerVisible } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { nextInstalment, PLAN_LAST_DATE } from '@/lib/payments/payment-plan'
@@ -86,27 +86,43 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     const proofOnly = !!pay?.eft_submitted_at
     const planApproved = pay?.arrangement?.plan_status === 'approved' && (pay.arrangement.installments?.length ?? 0) > 0
     if (!settled && !collected && !proofOnly) continue
-    // Samreen's side: not the covert master lane, OR a deliberate ⟦OWNERVIS⟧
-    // hand-back (which overrides the frozen-set membership).
-    const onSamreenSide = isOwnerVisible(notes) || !onCovertMasterLane(v.id as string, notes, rail, fullEft)
-    if (!onSamreenSide) continue
+    // Samreen's side: whose MONEY this is, rail-independent (paymentOnOwnerSide).
+    // Under the master rail onCovertMasterLane sweeps everyone covert — right for
+    // bank details, wrong here: it collapsed this roster to the ⟦OWNERVIS⟧
+    // hand-backs when master went on (2026-09-11). Yoco/cash/waived settlers,
+    // Samreen-EFT payers and plan vendors stay on every rail; only demonstrably
+    // master money (master methods, master-stamped proofs, the pinned covert
+    // cohort) is excluded, with ⟦OWNERVIS⟧ the deliberate hand-back.
+    if (!paymentOnOwnerSide(v.id as string, notes, fullEft)) continue
 
     let bill: ReturnType<typeof vendorBill>
     try {
       bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt })
     } catch { continue }
-    //   Partial payment = settled but the stall fee is not fully covered (instalments)
-    //   A plan vendor whose first proof is in (nothing confirmed yet) sits under
-    //   Partial too, so instalment 1 is confirmable from that tab.
-    const onPartial = (settled && bill.partial) || (!settled && planApproved && proofOnly)
-    const payState: PayState = onPartial ? 'Partial payment' : settled ? 'Paid' : collected ? 'EFT received' : 'Proof pending'
-    const inst = onPartial ? nextInstalment(pay?.arrangement, bill.paidTotal) : null
+    //   Proof pending = an uploaded stall proof no confirm has consumed yet
+    //     (proofs > eftproof confirms), whether or not the vendor is on a plan.
+    //     Taona 2026-09-11: "proof pending should show all those that have been
+    //     uploaded but have not been marked paid by Samreen" — plan vendors with
+    //     a proof in move HERE from Partial until Samreen confirms, then flow
+    //     back to Partial (balance owing) or Paid (covered in full).
+    //   Partial payment = settled but not fully covered, or a plan vendor whose
+    //     first proof is in, with NO proof currently awaiting confirmation.
+    //   'EFT received' (collected) always outranks proof-pending: that money is
+    //     operator-confirmed and counted in Total collected.
     const proofs = (pay?.proofs || []).filter((f) => f.kind === 'eft_submission')
     const confirms = [...(pay?.refs || []), pay?.provider_ref || ''].filter((r) => String(r).startsWith(`eftproof-${v.id}`)).length
     const proofPending = proofs.length > confirms
+    const onPartial = ((settled && bill.partial) || (!settled && planApproved && proofOnly)) && !proofPending
+    const payState: PayState =
+      collected ? 'EFT received'
+      : settled && !bill.partial ? 'Paid'
+      : proofPending ? 'Proof pending'
+      : onPartial ? 'Partial payment'
+      : 'Proof pending'
+    const inst = onPartial ? nextInstalment(pay?.arrangement, bill.paidTotal) : null
     const newestProof = [...proofs].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
     let proofUrl: string | null = null
-    if (onPartial && newestProof) {
+    if ((onPartial || payState === 'Proof pending') && newestProof) {
       const { data: signed } = await db.storage.from('vendor-docs').createSignedUrl(newestProof.path, 60 * 60)
       proofUrl = signed?.signedUrl ?? null
     }
@@ -166,7 +182,7 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     const pay = parsePortalState(notes || '').payment
     const plan = pay?.arrangement
     if (plan?.plan_status !== 'approved' || !(plan.installments?.length)) continue
-    if (!(isOwnerVisible(notes) || !onCovertMasterLane(v.id as string, notes, rail, fullEft))) continue
+    if (!paymentOnOwnerSide(v.id as string, notes, fullEft)) continue
     let bill: ReturnType<typeof vendorBill>
     try { bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAt }) } catch { continue }
     const planTotal = plan.installments.reduce((s2, i) => s2 + (Number(i.amount) || 0), 0)
@@ -203,6 +219,54 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
       totalPaid: bill.paidTotal,
     })
   }
+  // MASTER-LANE SETTLEMENT SCHEDULES (Taona 2026-09-10): covert master-lane
+  // vendors whose EFT already collected into ...191, shown HERE ONLY as vendors
+  // on an instalment plan through Oct–Nov with NOTHING paid on her side (the
+  // master money stays hidden). The authorized inverse of the wall above: they
+  // appear on the plans tab and NOWHERE else (the main rows scan excludes them
+  // via onSamreenSide, and no other surface reads payment.settlement). Stored in
+  // payment.settlement, NOT arrangement, so the vendor portal/chase/digest never
+  // dun a vendor who has in fact already paid.
+  for (const v of vendors ?? []) {
+    if ((v as { is_duplicate?: boolean }).is_duplicate) continue
+    if (isTestVendor(v as { business_name?: string | null; email?: string | null })) continue
+    const notes = (v.admin_notes as string) || null
+    const paidAtVal = (v.paid_at as string) || null
+    const sched = parsePortalState(notes || '').payment?.settlement
+    if (!(sched?.installments?.length)) continue
+    // Only the covert master lane. A ⟦OWNERVIS⟧ hand-back is genuinely hers, not
+    // a covert schedule, so it never carries one.
+    if (isOwnerVisible(notes)) continue
+    if (!onCovertMasterLane(v.id as string, notes, rail, fullEft)) continue
+    let bill: ReturnType<typeof vendorBill> | null = null
+    try { bill = vendorBill({ id: v.id as string, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: notes, paid_at: paidAtVal }) } catch { bill = null }
+    const planTotal = sched.installments.reduce((s2, i) => s2 + (Number(i.amount) || 0), 0)
+    const instalments = buildLedger(sched.installments, 0, false, today, null)
+    const first = [...sched.installments].sort((a, b) => (a.date < b.date ? -1 : 1))[0]
+    planRows.push({
+      id: v.id as string,
+      name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
+      contact: (v.contact_name as string) || null,
+      paidOn: '',
+      sortKey: first?.date || '',
+      method: 'EFT',
+      payState: 'Partial payment',
+      due: planTotal,
+      owing: planTotal,
+      nextAmount: first ? first.amount : null,
+      nextDue: first?.date ?? null,
+      instalments,
+      proofPending: false,
+      proofUrl: null,
+      overCap: false,
+      stall: bill?.stall.price ?? 0,
+      accTotal: bill?.accessories.total ?? 0,
+      accOwing: 0,
+      accState: 'none',
+      totalPaid: 0,
+    })
+  }
+
   // Over-cap plans (old rules, need renegotiating) first, then next instalment soonest.
   planRows.sort((a, b) => (Number(b.overCap) - Number(a.overCap)) || (a.sortKey < b.sortKey ? -1 : 1))
 

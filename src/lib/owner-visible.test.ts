@@ -2,8 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { vendorInOwnerScope, withOwnerVisibleMarker, withoutOwnerVisibleMarker, isOwnerVisible } from '@/lib/eft'
 
-test('an unpaid vendor is invisible to the owner by default', () => {
-  assert.equal(vendorInOwnerScope('', null), false)
+test('a clean unpaid vendor is visible to the owner by default (2026-09-11 rule)', () => {
+  // New rule: a merely-unpaid vendor with no EFT trace is HERS; only EFT-touched hide.
+  assert.equal(vendorInOwnerScope('', null), true)
+  assert.equal(vendorInOwnerScope('⟦EFT⟧', null), false, 'EFT marker still hides')
 })
 
 test('the marker hands an UNPAID vendor to her, which is its whole purpose', () => {

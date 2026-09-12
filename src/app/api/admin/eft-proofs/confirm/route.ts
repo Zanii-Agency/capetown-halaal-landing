@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { confirmPayment } from '@/lib/payments/confirm'
-import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner } from '@/lib/eft'
+import { getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 import { vendorBill } from '@/lib/payments/vendor-bill'
@@ -44,16 +44,16 @@ export async function POST(req: NextRequest) {
     .maybeSingle()
   if (!app) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
-  // AUTHORIZATION = exactly what makes this row appear on the page. rail must be
-  // samreen_eft (the only rail on which this page shows anything) AND the vendor
-  // must pass the owner fence. The fence already walls off every covert/protected
-  // vendor, so this cannot confirm anyone hidden from her. Deliberately NOT
-  // laneScopeFor (see file header).
-  const [fullEft, rail] = await Promise.all([getFullEftMode(), getPaymentRail()])
+  // AUTHORIZATION = exactly what makes this row appear on the page: the vendor
+  // must pass the owner fence. The fence already walls off every covert /
+  // protected / master-stamped vendor, so this cannot confirm anyone hidden from
+  // her. No rail gate: the list stays populated on the master rail (the rail only
+  // changes which bank details vendors see), so the confirm must work there too
+  // (2026-09-11). Deliberately NOT laneScopeFor (see file header).
+  const fullEft = await getFullEftMode()
   const notes = app.admin_notes as string | null
   if (
     (app as { is_duplicate?: boolean }).is_duplicate ||
-    rail !== 'samreen_eft' ||
     !eftProofVisibleToOwner(id, notes, fullEft)
   ) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })

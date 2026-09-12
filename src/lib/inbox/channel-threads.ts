@@ -34,6 +34,7 @@ import { BOT_ADMINS } from '@/lib/bot/admins'
 import { canPin } from '@/lib/inbox/automated'
 import { loadDoneMarks, isCleared } from '@/lib/inbox/queue-state'
 import { countsAsWaitingInbound } from '@/lib/inbox/waiting-signals'
+import { cleanEmailText } from '@/lib/inbox/email-body'
 
 export type MailBox = 'support' | 'gmail'
 export type ChannelKey = 'whatsapp' | MailBox
@@ -112,9 +113,14 @@ function mediaPreviewLabel(kind: string | undefined): string | null {
   }
 }
 
-/** First readable line of an email. */
+/** One-line, cleaned preview for a mail row. cleanEmailText unwraps leaked MIME
+ *  multipart / RFC822 headers / base64 blobs and drops the ⟦ATTACH⟧ marker; the
+ *  final collapse makes it a single line for the list. The old mailPreview only
+ *  collapsed whitespace, so a row whose body_text was raw MIME (a leaked
+ *  `------=_Part_… Content-Type:` block) or a newsletter's raw source rendered
+ *  verbatim in the inbox list. The thread route already cleans; the list did not. */
 function mailPreview(text: string | null | undefined): string {
-  return (text || '').replace(/\s+/g, ' ').trim()
+  return cleanEmailText(text).replace(/\s+/g, ' ').trim()
 }
 const norm = (p: string) => p.replace(/^\+/, '')
 

@@ -37,6 +37,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Webhook } from 'svix'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getResend } from '@/lib/email/resend'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -180,6 +181,35 @@ export async function POST(req: NextRequest) {
 
   const db = createAdminClient()
 
+  // 0. Fill the body from Resend NOW, while it still has it.
+  //
+  // ROOT CAUSE of the blank sent-record (2026-09-13, Taona): this webhook is the
+  // ONE choke point EVERY send passes through. Paths that call sendEmail also log
+  // the body via logEmailOutbound, but the broadcast console (api/admin/campaign/
+  // send) and one-off blast scripts call resend.emails.send DIRECTLY and never
+  // log a body, so those sends were recorded here with body_text/body_html = null
+  // and nothing ever filled them (the self-heal lives only inside
+  // logEmailOutbound). Result: ~2700 outbound rows (49%) had an empty body, so the
+  // operator could not read what a vendor was emailed.
+  //
+  // Fetching the body HERE fixes every path at once. Resend purges bodies after
+  // its retention window (why the after-the-fact backfill could only recover a
+  // fraction), but this fires seconds after the send, so the body is still there.
+  // Best-effort: on any miss we fall back to null (the prior behaviour) and
+  // logEmailOutbound's self-heal or a backfill can still catch it later.
+  let bodyText: string | null = null
+  let bodyHtml: string | null = null
+  try {
+    const resend = getResend()
+    if (resend) {
+      const full = await resend.emails.get(data.email_id)
+      bodyHtml = (full?.data?.html || '').trim() || null
+      bodyText = (full?.data?.text || '').trim() || null
+    }
+  } catch (e) {
+    console.warn('[resend webhook] body fetch failed:', (e as Error).message)
+  }
+
   // 1. Find or create the thread.
   let threadId: string | null = null
   const { data: existing } = await db
@@ -217,8 +247,8 @@ export async function POST(req: NextRequest) {
     from_name: 'Young at Heart Festival',
     to_address: peerEmail,
     subject,
-    body_text: null,
-    body_html: null,
+    body_text: bodyText,
+    body_html: bodyHtml,
     message_id: messageId,
     provider: 'resend',
     provider_message_id: data.email_id,
@@ -227,7 +257,17 @@ export async function POST(req: NextRequest) {
   if (msgErr) {
     const code = (msgErr as { code?: string }).code
     if (code === '23505') {
-      // Duplicate webhook delivery, fine.
+      // Duplicate delivery (this webhook retried, or logEmailOutbound raced us to
+      // the same message_id). If the existing row is still body-less and we now
+      // have the body, fill it. `.is('body_text', null)` so a real body is never
+      // clobbered.
+      if (bodyText || bodyHtml) {
+        await db
+          .from('support_inbox_messages')
+          .update({ body_text: bodyText, body_html: bodyHtml })
+          .eq('message_id', messageId)
+          .is('body_text', null)
+      }
       return NextResponse.json({ ok: true, deduped: true })
     }
     return NextResponse.json({ error: msgErr.message }, { status: 500 })

@@ -18,7 +18,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parseVendorExtras } from '@/lib/vendor-extras'
-import { rosterPaid } from '@/lib/eft'
+import { rosterPaid, reconciledPaid, isEftAdmin } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 
 export const dynamic = 'force-dynamic'
@@ -57,6 +57,11 @@ export async function GET(req: NextRequest) {
   if (!['owner', 'operator'].includes(role)) {
     return NextResponse.json({ error: `Your role (${role}) cannot export vendor data. Ask the owner for owner/operator access.` }, { status: 403 })
   }
+  // Same viewer rule as the on-screen roster (rosterPaymentStatus): the EFT admin
+  // exports the true paid state; everyone else (Samreen, other operators) sees a
+  // master-lane EFT settlement as UNPAID, so the export can't leak paid posture
+  // the roster hides (2026-09-07).
+  const eftAdmin = isEftAdmin(user.email)
 
   const sp = req.nextUrl.searchParams
   const idsParam = sp.get('ids')
@@ -169,7 +174,7 @@ export async function GET(req: NextRequest) {
       extras.usesGas,
       extras.totalEstimate ?? '',
       stall || '',
-      rosterPaid(notes, r.paid_at as string | null) ? 'paid' : 'unpaid',
+      (eftAdmin ? rosterPaid(notes, r.paid_at as string | null) : reconciledPaid(notes, r.paid_at as string | null)) ? 'paid' : 'unpaid',
       contractSigned ? 'Yes' : 'No',
       (r.status as string) || '',
     ])
