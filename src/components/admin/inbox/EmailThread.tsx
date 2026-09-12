@@ -135,6 +135,35 @@ function EmailMessage({ m, defaultExpanded }: { m: CommItem; defaultExpanded: bo
   )
 }
 
+/** A run of system/auto emails (reminders, confirmations, password resets)
+ *  folded into one line so the real conversation reads first (Taona 2026-09-12:
+ *  "these auto-gen messages are repetitive"). Collapsed by default; one click
+ *  reveals the individual notifications, each still its own collapsible row. */
+function SystemGroup({ items }: { items: CommItem[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full text-left flex items-center gap-2 px-3 py-1.5 rounded-lg border border-dashed border-neutral-200 bg-neutral-50/60 hover:bg-neutral-100 transition text-neutral-500"
+      >
+        <ChevronDown className={`shrink-0 w-3.5 h-3.5 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <span className="text-[12px] font-medium">
+          {items.length} automated message{items.length === 1 ? '' : 's'}
+          <span className="text-neutral-400 font-normal"> · reminders, confirmations, notices</span>
+        </span>
+      </button>
+      {open && (
+        <div className="mt-1.5 flex flex-col gap-1.5 pl-2 border-l-2 border-neutral-100">
+          {items.map((m) => <EmailMessage key={m.id} m={m} defaultExpanded={false} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function EmailThread({ messages }: { messages: CommItem[] }) {
   if (!messages.length) {
     return (
@@ -145,16 +174,32 @@ export function EmailThread({ messages }: { messages: CommItem[] }) {
     )
   }
   const subject = messages.find((m) => m.subject)?.subject
+  // Expand the newest REAL (non-auto) message; a system notice never auto-opens.
+  const lastRealId = [...messages].reverse().find((m) => !m.auto)?.id
+
+  // Fold consecutive auto messages into one SystemGroup; render real messages
+  // individually in place, so chronology is preserved and the conversation shows.
+  const blocks: Array<{ kind: 'real'; m: CommItem } | { kind: 'auto'; items: CommItem[] }> = []
+  for (const m of messages) {
+    if (m.auto) {
+      const last = blocks[blocks.length - 1]
+      if (last && last.kind === 'auto') last.items.push(m)
+      else blocks.push({ kind: 'auto', items: [m] })
+    } else {
+      blocks.push({ kind: 'real', m })
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2 py-2">
       {subject && (
         <h2 className="px-1 text-[15px] font-semibold text-neutral-900 leading-snug break-words">{subject}</h2>
       )}
-      {messages.map((m, i) => (
-        // Newest expanded, the rest collapsed — a single-message thread is
-        // therefore always open.
-        <EmailMessage key={m.id} m={m} defaultExpanded={i === messages.length - 1} />
-      ))}
+      {blocks.map((b, i) =>
+        b.kind === 'auto'
+          ? <SystemGroup key={`sys:${i}`} items={b.items} />
+          : <EmailMessage key={b.m.id} m={b.m} defaultExpanded={b.m.id === lastRealId} />
+      )}
     </div>
   )
 }
