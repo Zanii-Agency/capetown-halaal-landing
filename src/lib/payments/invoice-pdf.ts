@@ -75,6 +75,30 @@ interface InvoiceData {
   bank?: EftBankDetails
   /** The reference the vendor must use when paying (their business-name token). */
   payReference?: string
+  /** Bill the invoice to a THIRD PARTY (e.g. a vendor's booking agency or a
+   *  procurement entity) instead of the vendor. When set, the "Billed to" block
+   *  shows this entity and notes the stall is for the vendor. Stored per-vendor as
+   *  a ⟦BILLTO⟧ marker so the bot's get_invoice reproduces it (Stage Zero / EP
+   *  Exhibitions, 2026-09-13). */
+  billTo?: { name: string; lines: string[] }
+}
+
+const BILLTO_RE = /⟦BILLTO:([A-Za-z0-9+/=]+)⟧/
+
+/** Read a stored third-party bill-to override off admin_notes, if any. */
+export function parseBillTo(adminNotes: string | null | undefined): { name: string; lines: string[] } | null {
+  const m = BILLTO_RE.exec(adminNotes || '')
+  if (!m) return null
+  try {
+    const o = JSON.parse(Buffer.from(m[1], 'base64').toString('utf8'))
+    if (o && typeof o.name === 'string' && Array.isArray(o.lines)) return { name: o.name, lines: o.lines.map(String) }
+  } catch { /* malformed marker, ignore */ }
+  return null
+}
+
+/** Serialise a bill-to override into an admin_notes marker (append this). */
+export function billToMarker(billTo: { name: string; lines: string[] }): string {
+  return `⟦BILLTO:${Buffer.from(JSON.stringify(billTo)).toString('base64')}⟧`
 }
 
 const METHOD_LABEL: Record<NonNullable<InvoiceData['method']>, string> = {
@@ -184,10 +208,12 @@ export function buildInvoiceHtml(data: InvoiceData): string {
   <div class="grid">
     <div>
       <div class="label">Billed to</div>
-      <div class="name">${escapeHtml(data.businessName)}</div>
+      ${data.billTo ? `<div class="name">${escapeHtml(data.billTo.name)}</div>
+      ${data.billTo.lines.map((l) => `<div class="line">${escapeHtml(l)}</div>`).join('\n      ')}
+      <div class="line" style="margin-top: 6px; color: #8a8a8a;">Stall for: ${escapeHtml(data.businessName)}</div>` : `<div class="name">${escapeHtml(data.businessName)}</div>
       <div class="line">${escapeHtml(data.contactName)}</div>
       <div class="line">${escapeHtml(data.email)}</div>
-      ${data.phone ? `<div class="line">${escapeHtml(data.phone)}</div>` : ''}
+      ${data.phone ? `<div class="line">${escapeHtml(data.phone)}</div>` : ''}`}
     </div>
     <div>
       <div class="label">From</div>
@@ -275,6 +301,13 @@ export async function renderInvoicePdf(input: {
   // maybeMoveToSamreenOnInvoice). Single choke point: every issue path and the
   // backfill route through renderInvoicePdf, so none can forget the move.
   if (unpaid) await maybeMoveToSamreenOnInvoice(input.applicationId)
+  // A stored third-party bill-to (⟦BILLTO⟧) makes every issue path, incl. the bot's
+  // get_invoice, bill the vendor's agency/procurement entity (Stage Zero -> EP Exhibitions).
+  let billTo: { name: string; lines: string[] } | undefined
+  try {
+    const { data } = await createAdminClient().from('vendor_applications').select('admin_notes').eq('id', input.applicationId).maybeSingle()
+    billTo = parseBillTo(data?.admin_notes as string | null) ?? undefined
+  } catch { /* no override, bill the vendor */ }
   const html = buildInvoiceHtml({
     businessName: input.businessName,
     contactName: input.contactName,
@@ -287,6 +320,7 @@ export async function renderInvoicePdf(input: {
     providerRef: input.providerRef,
     paidAt: input.paidAt,
     method: input.method,
+    billTo,
     issuedAt: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
     bank: unpaid ? getEftBankDetails() : undefined,
     payReference: unpaid ? eftReference({ id: input.applicationId, business_name: input.businessName }) : undefined,
