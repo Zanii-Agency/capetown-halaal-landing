@@ -63,6 +63,29 @@ test('NESTED multipart (mixed > alternative > plain) is unwrapped', () => {
   assert.equal(cleaned, 'Salaam, is my stall confirmed?')
 })
 
+test('JavaMail ------=_Part_ boundary (the live leak) is unwrapped', () => {
+  // The exact shape that rendered verbatim in the inbox LIST preview on
+  // 2026-09-13: a vendor's "please find attached" mail whose body_text was the
+  // raw MIME because the fetcher fell back to slicing. Boundary token carries
+  // '=' and '.', longer dash run than a Gmail boundary.
+  const raw = [
+    '------=_Part_1977683_1321944931.1789119028263',
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: 7bit',
+    '',
+    'To Whom It May Concern: Please find attached a copy of your invoice.',
+    '------=_Part_1977683_1321944931.1789119028263',
+    'Content-Type: text/html; charset="UTF-8"',
+    '',
+    '<div>To Whom It May Concern: Please find attached a copy of your invoice.</div>',
+    '------=_Part_1977683_1321944931.1789119028263--',
+  ].join('\n')
+  const cleaned = cleanEmailText(raw)
+  assert.ok(!cleaned.includes('=_Part_'), 'no boundary leak')
+  assert.ok(!/Content-Type/i.test(cleaned), 'no part headers')
+  assert.ok(cleaned.startsWith('To Whom It May Concern'), `got: ${cleaned.slice(0, 40)}`)
+})
+
 test('⟦ATTACH:…⟧ marker is dropped from the text', () => {
   const raw = 'Sent from my iPhone\n\n⟦ATTACH:W3siZmlsZW5hbWUiOiJ4In1d⟧'
   const cleaned = cleanEmailText(raw)
