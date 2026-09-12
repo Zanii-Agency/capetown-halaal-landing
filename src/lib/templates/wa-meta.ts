@@ -228,7 +228,7 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
     category: 'utility',
     lang: 'en',
     previewBody:
-      'Hi {{1}}, your stall at Young at Heart Festival 2026 is paid and confirmed. One step left: upload your logo in your vendor portal so you appear with your branding in the public sector listings shoppers browse. It takes under a minute: https://cthalaal.co.za/exhibitor/portal/profile',
+      'Hi {{1}}, please upload your logo so your stall shows with your branding in the festival listings. It takes under a minute: https://cthalaal.co.za/exhibitor/portal/profile',
     params: [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
     ],
