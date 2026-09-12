@@ -42,7 +42,7 @@ function CheckinEmail(first: string) {
     React.createElement(Heading, null, `Salaam ${first},`),
     React.createElement(Paragraph, null, 'We wanted to follow up on the payment for your stall at the Young at Heart Festival 2026.'),
     React.createElement(Paragraph, null, 'Is there any update on your side? If there is anything you need from us to help you get it settled, please just reply and let us know. Your stall is still held for you.'),
-    React.createElement(Button, { href: PORTAL }, 'Pay for my stall'),
+    React.createElement(Button, { href: PORTAL, children: 'Pay for my stall' }),
     React.createElement(Paragraph, null, 'You can settle any time from your portal, whenever it suits you.'),
     React.createElement(Signoff, null),
   )
