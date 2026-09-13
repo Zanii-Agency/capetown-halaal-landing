@@ -15,19 +15,21 @@ export const dynamic = 'force-dynamic'
 // frozen-66 with NO OWNERVIS, un-OWNERVIS ⟦EFT⟧ markers, master-rail) NEVER
 // appears, so the page is safe for the festival owner to open.
 //
-// Scope = onSamreenSide && paidish:
-//   onSamreenSide = isOwnerVisible(⟦OWNERVIS⟧) OR NOT onCovertMasterLane. The
-//     OWNERVIS override is why the earlier `!onCovertMasterLane`-only version
-//     wrongly dropped Africa Muslims Agency, Farfashions, Vanilla Cream, Y&K and
-//     Stubborn Monkey: onCovertMasterLane returns true for ANY frozen member,
-//     ignoring the deliberate per-vendor hand-back marker. OWNERVIS is hand-set
-//     (never blanket), so honouring it cannot leak the covert cohort.
+// Scope = paymentOnOwnerSide && paidish:
+//   paymentOnOwnerSide = whose MONEY this is, rail-INDEPENDENT: ⟦OWNERVIS⟧
+//     hand-backs are hers; master-only methods, master-stamped proofs and the
+//     pinned covert cohort (⟦EFT⟧ / frozen set / ⟦NEWVENDOR⟧) are his; everyone
+//     else — Yoco, Samreen-EFT, plan vendors — is hers on EVERY rail. The live
+//     onCovertMasterLane was wrong here: under the master rail it sweeps everyone
+//     covert (a bank-details decision) and collapsed this page to 7 hand-backs /
+//     R52.6k when master went on (2026-09-11). The earlier `!onCovertMasterLane`-only
+//     version had the mirror bug on the frozen set, dropping Africa Muslims Agency,
+//     Farfashions, Vanilla Cream, Y&K and Stubborn Monkey by ignoring ⟦OWNERVIS⟧.
 //   payment signal (descending confidence): Paid (rosterPaid) > EFT received
-//     (status 'collected') > Proof pending (eft_submitted_at, not yet confirmed).
-//     Proof-pending vendors are shown but chipped, and excluded from Total
-//     collected (unconfirmed money is never summed).
-// Verified live 2026-09-02: 78 confirmed + 6 proof-pending, 0 covert leak (no
-// frozen-non-OWNERVIS surfaced). Unpaid/deferred vendors with no EFT proof stay out.
+//     (status 'collected'). Unconfirmed proofs (Proof pending rows) are computed
+//     but not SHOWN here since 2026-09-11 — see TABS below; unconfirmed money is
+//     never summed into Total collected either way.
+// Unpaid/deferred vendors with no EFT proof stay out.
 //
 // TABS (Taona 2026-09-06: "those who have paid should be under partial payments,
 // make a partial payments tab, you should be able to click on instalments"):
@@ -35,12 +37,18 @@ export const dynamic = 'force-dynamic'
 //   Partial payments  instalment plans mid-way (and a plan vendor whose first proof
 //                     is in): each row expands to its instalment ledger, and the
 //                     next instalment is confirmable right there once a proof is in
-//   Proof pending     an EFT proof awaiting confirmation, no plan
 //
-// Note: onCovertMasterLane short-circuits to true for everyone when the global
-// rail is 'master'; OWNERVIS still overrides, so her hand-backs stay visible.
+// NO "Proof pending" tab (Taona 2026-09-11: "its confusing, just remove that tab,
+// dont temper with the data"). Unconfirmed proofs live on /admin/eft-proofs, the
+// dedicated proofs inbox where they get confirmed. Page-only removal: pendingRows
+// is still computed in loadPaidVendors and still served by the connector's
+// paid_vendors tool; no data or classification changes.
+//
+// Note: the master-lane SETTLEMENT SCHEDULES on the plans tab still key on the
+// live onCovertMasterLane (they exist only while a vendor is covert NOW); the
+// paid/partial rosters above use the rail-independent paymentOnOwnerSide.
 
-type Tab = 'paid' | 'partial' | 'plans' | 'pending'
+type Tab = 'paid' | 'partial' | 'plans'
 
 export default async function PaidVendorsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const supabase = await createClient()
@@ -48,9 +56,9 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
   if (!user) redirect('/admin/login')
 
   const { tab: rawTab } = await searchParams
-  const tab: Tab = rawTab === 'partial' || rawTab === 'plans' || rawTab === 'pending' ? rawTab : 'paid'
+  const tab: Tab = rawTab === 'partial' || rawTab === 'plans' ? rawTab : 'paid'
 
-  const { rows, confirmedRows, partialRows, pendingRows, planRows, paidTotal, accOwingTotal } = await loadPaidVendors()
+  const { rows, confirmedRows, partialRows, planRows, paidTotal, accOwingTotal } = await loadPaidVendors()
   type Row = PaidVendorRow
 
   const fmtDate = (iso: string | null) =>
@@ -67,9 +75,8 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
     { key: 'paid', label: 'Paid', count: confirmedRows.length },
     { key: 'partial', label: 'Partial payments', count: partialRows.length },
     { key: 'plans', label: 'Active payment plans', count: planRows.length },
-    { key: 'pending', label: 'Proof pending', count: pendingRows.length },
   ]
-  const shown: Row[] = tab === 'paid' ? confirmedRows : tab === 'partial' ? partialRows : tab === 'plans' ? planRows : pendingRows
+  const shown: Row[] = tab === 'paid' ? confirmedRows : tab === 'partial' ? partialRows : planRows
 
   const instalmentStatus = (s: Row['instalments'][number]['status']) =>
     s === 'paid' ? <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Paid</span>
@@ -79,12 +86,11 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
 
   return (
     <AdminPage title="Paid Vendors" subtitle="Vendors paid via Yoco or Samreen EFT, with payment date, method, and accessories status. Instalment plans sit under Partial payments until the stall fee is covered in full.">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         {[
           { label: 'Paid in full', value: String(confirmedRows.length) },
           { label: 'Partial payments', value: String(partialRows.length) },
           { label: 'Active plans', value: String(planRows.length) },
-          { label: 'Proof pending', value: String(pendingRows.length) },
           { label: 'Accessories owing', value: formatRand(accOwingTotal) },
           { label: 'Total collected', value: formatRand(paidTotal) },
         ].map((s) => (
@@ -113,7 +119,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
         </div>
       ) : shown.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
-          {tab === 'partial' ? 'No partial payments. A vendor on an instalment plan appears here once their first proof is in.' : tab === 'plans' ? 'No active payment plans. A plan appears here the moment a vendor commits to one, whether or not they have paid an instalment yet.' : tab === 'pending' ? 'No proofs waiting for confirmation.' : 'No fully paid vendors yet.'}
+          {tab === 'partial' ? 'No partial payments. A vendor on an instalment plan appears here once their first proof is in.' : tab === 'plans' ? 'No active payment plans. A plan appears here the moment a vendor commits to one, whether or not they have paid an instalment yet.' : 'No fully paid vendors yet.'}
         </div>
       ) : tab === 'partial' || tab === 'plans' ? (
         <div className="space-y-3">
@@ -212,9 +218,6 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                         {r.payState === 'EFT received' && (
                           <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">EFT received</span>
                         )}
-                        {r.payState === 'Proof pending' && (
-                          <span className="inline-flex items-center rounded-full bg-neutral-100 border border-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-500">Proof pending</span>
-                        )}
                       </div>
                       {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
                     </td>
@@ -229,10 +232,10 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-neutral-200 bg-neutral-50 font-semibold text-neutral-900">
-                  <td className="px-5 py-3" colSpan={4}>{tab === 'paid' ? `Total · ${confirmedRows.length} paid in full` : `${pendingRows.length} proof${pendingRows.length === 1 ? '' : 's'} pending`}</td>
+                  <td className="px-5 py-3" colSpan={4}>Total · {confirmedRows.length} paid in full</td>
                   <td className="px-5 py-3 text-right">{formatRand(shown.reduce((s, r) => s + r.accTotal, 0))}</td>
-                  <td className="px-5 py-3 text-[#cd2653]">{tab === 'paid' ? (accOwingTotal > 0 ? `${formatRand(accOwingTotal)} owing` : 'all settled') : ''}</td>
-                  <td className="px-5 py-3 text-right">{tab === 'paid' ? formatRand(paidTotal) : ''}</td>
+                  <td className="px-5 py-3 text-[#cd2653]">{accOwingTotal > 0 ? `${formatRand(accOwingTotal)} owing` : 'all settled'}</td>
+                  <td className="px-5 py-3 text-right">{formatRand(paidTotal)}</td>
                 </tr>
               </tfoot>
             </table>

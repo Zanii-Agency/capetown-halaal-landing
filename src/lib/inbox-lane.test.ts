@@ -54,16 +54,14 @@ test('the owner can only reach vendors who paid through HER channel', () => {
   }
 })
 
-test('everyone else is blocked — unpaid, EFT-settled, and ⟦NOEFT⟧-but-unpaid alike', () => {
+test('EFT-touched vendors are blocked; a clean unpaid vendor is reachable (2026-09-11 rule)', () => {
+  // The 2026-09-11 rule: hide ONLY vendors with a real master-EFT trace (marker,
+  // proof, collection, EFT/manual settlement, presented). A merely-UNPAID vendor
+  // with none of those is HERS to see and chase.
   const blocked = [
-    v({ id: 'unpaid', email: 'unpaid@x.co', phone: '0111111111' }),
     v({ id: 'eft-lane', admin_notes: '⟦EFT⟧', email: 'lane@x.co', phone: '0222222222' }),
-    // Settled by EFT: used to become hers the moment paid_at was written.
+    // Settled by EFT: never hers even once paid_at was written.
     v({ id: 'eft-paid', admin_notes: paidVia('eft'), paid_at: '2026-07-19T00:00:00Z', email: 'eftpaid@x.co', phone: '0333333333' }),
-    // ⟦NOEFT⟧ moved OUT of this list on 2026-07-28: excluded from EFT now means
-    // hers ("If excluded on master lane, it belongs to samreen"). It has its own
-    // test below. A ⟦NOEFT⟧ vendor who HAS touched EFT still belongs here, which
-    // the next case covers.
     v({ id: 'noeft-but-collected', admin_notes: withNoEftMarker(updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })), email: 'noeftcoll@x.co', phone: '0444444444' }),
     v({ id: 'collected', admin_notes: updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }), email: 'coll@x.co', phone: '0555555555' }),
   ]
@@ -73,8 +71,12 @@ test('everyone else is blocked — unpaid, EFT-settled, and ⟦NOEFT⟧-but-unpa
     assert.equal(s.blocksEmail(r.email), true, `${r.id} email must be blocked`)
     assert.equal(s.blocksPhone(r.phone), true, `${r.id} phone must be blocked`)
   }
-  // Global mode no longer changes this: unpaid is unpaid either way.
-  assert.equal(buildLaneScope([v()], false, false).blocksApplicationId('id-1'), true)
+  // A CLEAN unpaid vendor (no EFT trace) is now reachable, on either global mode.
+  const clean = v({ id: 'clean-unpaid', email: 'clean@x.co', phone: '0666666666' })
+  const s2 = buildLaneScope([clean], true, false)
+  assert.equal(s2.blocksApplicationId('clean-unpaid'), false, 'clean unpaid must be reachable')
+  assert.equal(s2.blocksEmail('clean@x.co'), false)
+  assert.equal(buildLaneScope([v()], false, false).blocksApplicationId('id-1'), false, 'clean unpaid reachable with global off too')
 })
 
 test('a WhatsApp-verified alternate number is blocked too', () => {
@@ -199,9 +201,13 @@ test('an UNCLASSIFIABLE row fails CLOSED, even carrying ⟦EFT⟧', () => {
   }
 })
 
-test('an APPROVED unpaid vendor stays blocked regardless of status widening', () => {
+test('an APPROVED clean unpaid vendor is reachable (2026-09-11 rule); EFT-touched still blocked', () => {
+  // New rule: a merely-unpaid approved vendor with no EFT trace is HERS.
   const s = buildLaneScope([v({ id: 'appr', status: 'approved' })], true, false)
-  assert.equal(s.blocksApplicationId('appr'), true)
+  assert.equal(s.blocksApplicationId('appr'), false, 'clean approved-unpaid is reachable')
+  // But an approved vendor carrying an EFT marker stays blocked.
+  const s2 = buildLaneScope([v({ id: 'appr-eft', status: 'approved', admin_notes: '⟦EFT⟧' })], true, false)
+  assert.equal(s2.blocksApplicationId('appr-eft'), true, 'EFT-touched stays blocked')
 })
 
 test('a ⟦NOEFT⟧ vendor untouched by EFT reaches the festival owner', () => {

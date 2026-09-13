@@ -78,6 +78,21 @@ if (covertId) {
   if (!r.isError) failures.push(`eft_proof_confirm on covert vendor ${covertId} was NOT refused: ${r.text.slice(0, 120)}`)
   else console.log(`eft_proof_confirm on covert vendor refused: ${r.text.slice(0, 60)}`)
 }
+// day_activity must never surface a COVERT-lane vendor's payment to the owner.
+// Probe a recent window; any covert vendor with a payment event today must be
+// absent from the owner's day digest.
+{
+  const { onCovertMasterLane, getPaymentRail, getFullEftMode } = await import('@/lib/eft')
+  const railD = await getPaymentRail(); const fullEftD = await getFullEftMode()
+  const covertIds = new Set((apps ?? []).filter(a => onCovertMasterLane(a.id as string, a.admin_notes as string | null, railD, fullEftD)).map(a => a.id as string))
+  const today = new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10)
+  const da = await callTool('day_activity', { date: today })
+  const names = new Set(((da.data?.groups ?? []) as { key: string; items: { name: string }[] }[]).filter(g => /received|eft_pending|accessories|reversed/.test(g.key)).flatMap(g => g.items.map(i => i.name)))
+  const { data: covertNamed } = await db.from('vendor_applications').select('id, business_name').in('id', [...covertIds])
+  for (const v of covertNamed ?? []) if (v.business_name && names.has(v.business_name)) failures.push(`day_activity leaked covert vendor payment: ${v.business_name}`)
+  console.log(`day_activity payment names today: ${names.size}, covert vendors: ${covertIds.size}`)
+}
+
 const fake = await callTool('eft_proof_confirm', { applicationId: '00000000-0000-4000-8000-000000000000' })
 if (!fake.isError) failures.push('eft_proof_confirm on a fake id succeeded')
 

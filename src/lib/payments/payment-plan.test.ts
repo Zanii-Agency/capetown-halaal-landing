@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validatePlan, planApprovedMsg } from './payment-plan'
+import { validatePlan, planApprovedMsg, planLastDateFor } from './payment-plan'
 
 // Fixed "today" so this never rots like a date-relative test.
 const TODAY = '2026-09-04'
@@ -37,13 +37,26 @@ test('a past or today date is rejected', () => {
   assert.equal(validatePlan([{ date: '2026-08-01', amount: 3000 }, { date: '2026-10-31', amount: 3500 }], OWING, TODAY).ok, false)
 })
 
-test('a date after the plan cap (30 Nov 2026) is rejected', () => {
-  // The cap moved off the festival (12 Dec) to end of November (Taona 2026-09-07).
-  const r = validatePlan([{ date: '2026-11-15', amount: 3000 }, { date: '2026-12-01', amount: 3500 }], OWING, TODAY)
+test('a date after the plan cap (31 Oct 2026) is rejected', () => {
+  // The cap moved to END OF OCTOBER (Taona 2026-09-09): no instalment past 31 Oct.
+  const r = validatePlan([{ date: '2026-10-15', amount: 3000 }, { date: '2026-11-30', amount: 3500 }], OWING, TODAY)
   assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /before the festival/i)
-  // the last valid day is 30 Nov: a plan that lands exactly on it still passes
-  assert.equal(validatePlan([{ date: '2026-10-31', amount: 3000 }, { date: '2026-11-30', amount: 3500 }], OWING, TODAY).ok, true)
+  if (!r.ok) assert.match(r.error, /paid by 31 October 2026/i)
+  // the last valid day is 31 Oct: a plan that lands exactly on it still passes
+  assert.equal(validatePlan([{ date: '2026-10-10', amount: 3000 }, { date: '2026-10-31', amount: 3500 }], OWING, TODAY).ok, true)
+})
+
+test('new-vendor cohort (⟦NEWVENDOR⟧) is capped at 10 Oct, everyone else at 31 Oct', () => {
+  assert.equal(planLastDateFor('⟦NEWVENDOR⟧'), '2026-10-10')
+  assert.equal(planLastDateFor('ordinary notes'), '2026-10-31')
+  assert.equal(planLastDateFor(null), '2026-10-31')
+  const cap = planLastDateFor('⟦NEWVENDOR⟧')
+  // a fresher's 15 Oct instalment is too late and the error names 10 Oct
+  const late = validatePlan([{ date: '2026-09-30', amount: 3000 }, { date: '2026-10-15', amount: 3500 }], OWING, TODAY, cap)
+  assert.equal(late.ok, false)
+  if (!late.ok) assert.match(late.error, /paid by 10 October 2026/i)
+  // all instalments on/before 10 Oct pass for a fresher
+  assert.equal(validatePlan([{ date: '2026-09-30', amount: 3000 }, { date: '2026-10-10', amount: 3500 }], OWING, TODAY, cap).ok, true)
 })
 
 test('out-of-order dates are rejected', () => {

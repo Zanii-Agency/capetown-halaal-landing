@@ -228,7 +228,7 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
     category: 'utility',
     lang: 'en',
     previewBody:
-      'Hi {{1}}, your stall at Young at Heart Festival 2026 is paid and confirmed. One step left: upload your logo in your vendor portal so you appear with your branding in the public sector listings shoppers browse. It takes under a minute: https://cthalaal.co.za/exhibitor/portal/profile',
+      'Hi {{1}}, please upload your logo so your stall shows with your branding in the festival listings. It takes under a minute: https://cthalaal.co.za/exhibitor/portal/profile',
     params: [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
     ],
@@ -429,7 +429,7 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       'Hi {{1}}, we are checking in on the payment arrangement for your stall at Young at Heart Festival 2026:\n\n{{2}}\n\nReply here on WhatsApp to confirm or if anything has changed. The YAH Team.',
     params: [
       { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
-      { key: 'message', label: 'Your message', placeholder: 'Your agreed instalment was due on 15 November.', required: true },
+      { key: 'message', label: 'Your message', placeholder: 'Your agreed instalment was due on 15 October.', required: true},
     ],
   },
 ]

@@ -38,6 +38,15 @@ export function gmailKey(email: string): string {
 export async function resolveVendorForEmail(db: Db, fromAddress: string, exact: IntakeVendor | null): Promise<IntakeVendor | null> {
   if (exact) return exact
   const from = fromAddress.toLowerCase()
+  // 1. exact registered-email match (any domain), case-insensitive. The proof
+  //    fetcher passes its own exact hit as `exact`; the plan/invoice auto-replies
+  //    pass null, so without this they resolved a non-gmail vendor ONLY when a
+  //    thread was already linked. A vendor emailing from their registered address
+  //    must resolve directly. (E2E gap found 2026-09-07.)
+  if (!/@(gmail|googlemail)\.com$/.test(from)) {
+    const { data } = await db.from('vendor_applications').select(VENDOR_COLS).ilike('email', from).limit(1)
+    if (data && data[0]) return data[0] as IntakeVendor
+  }
   // 2. gmail-normalised match. Only gmail senders can differ this way, and the
   //    candidate set is small enough to compare in memory.
   if (/@(gmail|googlemail)\.com$/.test(from)) {

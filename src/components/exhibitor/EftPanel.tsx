@@ -30,6 +30,11 @@ interface Bank {
   accountType?: string
 }
 
+// The bank details sit behind a 15-second read-gate: tapping "Show bank details"
+// shows the anti-bypass message for this long before an acknowledge button unlocks
+// the account number, so nobody gets the details without first seeing where proof goes.
+const GATE_SECONDS = 15
+
 function Row({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -83,6 +88,9 @@ export default function EftPanel({
   // vendor off the festival owner's inbox server-side). A vendor who has already
   // submitted a proof has clearly seen the details, so show them unhidden.
   const [revealed, setRevealed] = useState(submitted)
+  // 15-second read-gate between tapping "Show bank details" and the account number.
+  const [gateActive, setGateActive] = useState(false)
+  const [secondsLeft, setSecondsLeft] = useState(GATE_SECONDS)
   const [showProofPrompt, setShowProofPrompt] = useState(false)
   const uploadRef = useRef<HTMLDivElement>(null)
 
@@ -96,10 +104,27 @@ export default function EftPanel({
     return () => clearTimeout(t)
   }, [revealed, submitted])
 
-  function revealDetails() {
-    setRevealed(true)
-    // Fire-and-forget: the heads-up to the operator must never block the reveal.
+  // Count the read-gate down to zero, one second at a time. At zero the acknowledge
+  // button appears; nothing auto-reveals, the vendor must tap to continue.
+  useEffect(() => {
+    if (!gateActive || secondsLeft <= 0) return
+    const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000)
+    return () => clearTimeout(t)
+  }, [gateActive, secondsLeft])
+
+  // Tap "Show bank details" starts the 15s read-gate, not the reveal itself. The
+  // operator heads-up + inbox seal still fire here, on the intent to pay by EFT.
+  function startReveal() {
+    setGateActive(true)
+    setSecondsLeft(GATE_SECONDS)
+    // Fire-and-forget: the heads-up to the operator must never block the gate.
     fetch('/api/exhibitor/eft-intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose }) }).catch(() => {})
+  }
+
+  // Acknowledge button at the end of the gate: reveal the account number.
+  function confirmReveal() {
+    setGateActive(false)
+    setRevealed(true)
   }
 
   function scrollToUpload() {
@@ -288,10 +313,32 @@ export default function EftPanel({
                 </p>
               </div>
             </div>
+          ) : gateActive ? (
+            <div className="rounded-xl border border-white/15 bg-white/5 px-5 py-5">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="w-4 h-4 text-[#ff7a9c] shrink-0" />
+                <p className="text-sm font-semibold text-white">Please read this before your bank details appear</p>
+              </div>
+              <p className="text-sm text-white/75 leading-relaxed">
+                Please respect the investment we have made in building this platform. It is here to give you a smoother experience and keep our team efficient, so please use it rather than working around it. Send your proof of payment one way only: upload it on this page, or email support@youngatheart.co.za. Please do not use any other email, or message a team member directly via WhatsApp. Keeping everything here reaches the whole team at once and gets you confirmed the fastest, even while the festival keeps everyone busy.
+              </p>
+              <button
+                type="button"
+                onClick={confirmReveal}
+                disabled={secondsLeft > 0}
+                className={`mt-4 w-full rounded-xl font-semibold px-5 py-3 text-sm transition-colors ${
+                  secondsLeft > 0
+                    ? 'bg-white/10 text-white/50 cursor-not-allowed'
+                    : 'bg-[#cd2653] hover:bg-[#b01f45] text-white'
+                }`}
+              >
+                {secondsLeft > 0 ? `I accept (${secondsLeft})` : 'I accept'}
+              </button>
+            </div>
           ) : (
             <button
               type="button"
-              onClick={revealDetails}
+              onClick={startReveal}
               className="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 transition-colors px-5 py-4 text-left flex items-center gap-3"
             >
               <span className="w-9 h-9 rounded-lg flex items-center justify-center bg-white/10 text-[#ff7a9c] shrink-0">

@@ -15,6 +15,7 @@ import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
 import { sendTemplate, toE164 } from '@/lib/whatsapp'
 import { findWaTemplate, buildWaTemplateParams } from '@/lib/templates/wa-meta'
 import { recordLedger } from '@/lib/zanii-ledger'
+import { recordVendorAction } from '@/lib/vendor-action-log'
 import { paymentReference } from '@/lib/payments'
 
 const SITE = 'https://cthalaal.co.za'
@@ -409,6 +410,9 @@ export async function markAccessoriesCollected(applicationId: string, amountOver
   // approved template with an amount slot). Its copy is amount-first and
   // method-free, so it reads correctly for an accessory amount too.
   await sendVendorPaymentWa({ admin, waPhone: (app.phone as string) || '', firstName, amount, stallLabel: bill.stall.label })
+
+  // Dated event so 'who paid for accessories' shows in the day digest.
+  await recordVendorAction({ applicationId, eventType: 'accessories_collected', note: `Accessory electricity ${formatRand(amount)}`, afterValue: String(amount) }).catch(() => {})
 
   return { ok: true, amount }
 }

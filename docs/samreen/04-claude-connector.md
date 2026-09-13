@@ -53,9 +53,21 @@ Start a new chat, click the **+** (or the tools / connectors icon) in the messag
 
 ## Your To Do, in Claude
 
-Ask "What needs me today?" and Claude reads the same list as the new *To Do* tab in the portal (under Dashboard): EFT proofs to confirm, WhatsApp replies owed, email replies owed, vendor questions that came through the portal or the WhatsApp assistant, and applications waiting for review. Oldest first. Items disappear on their own once you have handled them. From there: "open the first one", "reply to her: ...", "confirm that proof".
+Ask "What needs me today?" and Claude reads the same list as the *To Do* tab in the portal (under Dashboard). It opens with **Things to do** (real jobs, not messages: vendors overdue on payment, documents to review, and once you start allocating, paid vendors who still need a stall) each showing a count and taking you straight to the right page when you tap it. Then the message work, oldest first:
+- **EFT proofs to confirm** (a vendor uploaded proof, waiting for your yes)
+- **WhatsApp replies owed** (only chats a person has taken off the bot, so they are actually waiting on you, not the bot)
+- **Email replies owed** (only real vendors, not marketing or cold email)
+- **Vendor questions from the portal or the WhatsApp assistant**
+
+Applications are not here; review those on the Applications page. For each item Claude first tells you in plain words what is needed and what the vendor wants, shows the recent messages, and then replies or confirms right there in the chat, it does not just send you off to the inbox. Try "what needs me", then "open the first one", "reply: ...", "confirm that proof". Items disappear once handled.
+
+On the To Do tab itself, click any item to expand it: you see what is needed, the recent messages newest-first, and a box to reply or a button to confirm, all without leaving the page.
 
 When the WhatsApp assistant cannot solve something for a vendor, it restates the request in one line, gets the vendor's yes, logs it, and tells them the team replies on WhatsApp within 24 to 72 hours. Those land in your To Do under "Vendor questions". The 24 to 72 hours is a promise made in your name, so clear that section daily.
+
+## What happened on a day
+
+Ask "What happened today?" or "What happened on the 12th?" and Claude shows that day, scoped to your vendors: payments received, payment plans and extensions, withdrawals, payments reversed, contracts signed, and documents uploaded. On the To Do tab there is a "What happened" card with a date picker so you can look back at any day. The master EFT lane never appears here.
 
 ## Payments, in Claude's words
 

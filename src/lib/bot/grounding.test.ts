@@ -15,9 +15,15 @@ const unknown: VendorSession = { status: 'unknown', waPhone: '+27821234567' } as
 
 test('verified vendor prompt carries the part-payment ladder (push this month first)', () => {
   const p = systemPrompt(verified)
-  assert.match(p, /END OF SEPTEMBER/)
+  assert.match(p, /15 OCTOBER 2026/)
   assert.match(p, /PUSH FOR PAYMENT THIS MONTH FIRST/)
   assert.match(p, /actually solve it with your tools/) // solve-don't-deflect discipline
+})
+
+test('vendor-agent prompt tells the bot to read dates against today (Aug-31-has-passed fix)', () => {
+  const p = systemPrompt(verified)
+  assert.match(p, /DATES THAT HAVE PASSED/)
+  assert.match(p, /any date before today has already passed/)
 })
 
 test('persona: support person, not a robot; no ticket-buyer payment line for vendors', () => {
@@ -70,6 +76,28 @@ test('pendingRequestsLine surfaces a pending stall-size change', () => {
     stallChangeRequest: { requestedTier: '4x2m double table', currentTier: '2x2m', reason: 'x', status: 'pending', createdAt: '2026-07-20T00:00:00Z' },
   })
   assert.match(line, /pending stall-size change/)
+})
+
+// jimmalos trading regression: a REJECTED size change must read as rejected,
+// never "pending" and never a promise to send a corrected invoice.
+test('pendingRequestsLine states a rejected stall-size change plainly, not pending', () => {
+  const line = pendingRequestsLine({
+    v: 1,
+    stallChangeRequest: { requestedTier: 'outdoor-bedouin-2x3', currentTier: '3x3', reason: 'x', status: 'rejected', createdAt: '2026-09-02T00:00:00Z', adminNote: 'Unfortunately we do not have availability' },
+  })
+  assert.match(line, /NOT approved/)
+  assert.match(line, /Unfortunately we do not have availability/)
+  // Not framed as an open/awaiting request, and not in the "Open with the team" bucket.
+  assert.doesNotMatch(line, /pending stall-size change|Open with the team/i)
+})
+
+test('pendingRequestsLine states an approved stall-size change as confirmed, not pending', () => {
+  const line = pendingRequestsLine({
+    v: 1,
+    stallChangeRequest: { requestedTier: '4x2m double table', currentTier: '2x2m', reason: 'x', status: 'approved', createdAt: '2026-09-02T00:00:00Z' },
+  })
+  assert.match(line, /APPROVED/)
+  assert.doesNotMatch(line, /pending stall-size change|Open with the team/i)
 })
 
 test('pendingRequestsLine is empty when nothing is open (admin already replied)', () => {

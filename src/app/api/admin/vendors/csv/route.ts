@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation } from '@/lib/stalls'
-import { rosterPaid } from '@/lib/eft'
+import { rosterPaid, reconciledPaid, isEftAdmin } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 
 export const dynamic = 'force-dynamic'
@@ -41,6 +41,9 @@ export async function GET(req: NextRequest) {
   if (!['owner', 'operator'].includes(role)) {
     return NextResponse.json({ error: `Your role (${role}) cannot export vendor data. Ask the owner for owner/operator access.` }, { status: 403 })
   }
+  // Viewer rule matches the on-screen roster: EFT admin sees true paid state,
+  // everyone else sees master-lane EFT as UNPAID (2026-09-07).
+  const eftAdmin = isEftAdmin(user.email)
 
   const sp = req.nextUrl.searchParams
   const idsParam = sp.get('ids')
@@ -125,7 +128,7 @@ export async function GET(req: NextRequest) {
   for (const row of rows) {
     const { stall } = parseAllocation(row.admin_notes || '')
     const sector = row.product_categories?.[0] || ''
-    const paymentStatus = rosterPaid(row.admin_notes, row.paid_at) ? 'paid' : 'unpaid'
+    const paymentStatus = (eftAdmin ? rosterPaid(row.admin_notes, row.paid_at) : reconciledPaid(row.admin_notes, row.paid_at)) ? 'paid' : 'unpaid'
     lines.push([
       escapeCsv(row.business_name),
       escapeCsv(row.contact_name),

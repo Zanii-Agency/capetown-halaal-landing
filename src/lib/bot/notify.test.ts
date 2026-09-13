@@ -87,10 +87,10 @@ test('exclude still wins over the mirror, so nobody is alerted about their own r
 const paidVia = (method: string) =>
   updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method } as never })
 
-test('alerts about an UNPAID vendor never reach the festival owner', () => {
+test('alerts about an UNPAID vendor: clean ones reach her, EFT-touched never (2026-09-11 rule)', () => {
   const withheld = (notes: string) => isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: notes }), true)
-  assert.equal(withheld('just a note'), true, 'plain unpaid')
-  assert.equal(withheld('⟦EFT⟧'), true, 'on the EFT lane')
+  assert.equal(withheld('just a note'), false, 'plain unpaid is HERS now')
+  assert.equal(withheld('⟦EFT⟧'), true, 'on the EFT lane stays withheld')
   // ⟦NOEFT⟧ REVERSED TWICE, so the history is worth keeping. 2026-07-26 it was
   // made to withhold ("excluded from the EFT lane is not the same as having
   // paid"). 2026-07-28 Taona reversed it: "If excluded on master lane, it
@@ -104,9 +104,9 @@ test('alerts about an UNPAID vendor never reach the festival owner', () => {
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected', eft_collected_at: PAID_AT } })
   assert.equal(withheld(collected), true, "'collected' is interim, not paid")
   assert.equal(withheld(updatePortalStateImpl('note', { v: 1, payment: { eft_submitted_at: PAID_AT } })), true, 'proof uploaded, not yet settled')
-  // Global mode is now irrelevant to this: an unpaid vendor is the master's
-  // whether or not the lane is switched on.
-  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: 'just a note' }), false), true)
+  // 2026-09-11 rule: global mode no longer hides a clean unpaid vendor. With no
+  // EFT trace, the alert reaches her either way.
+  assert.equal(isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: 'just a note' }), false), false, 'clean unpaid reaches her regardless of mode')
 })
 
 test('a PAID vendor reaches her only if the money came through her channel', () => {

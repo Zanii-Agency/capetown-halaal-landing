@@ -198,7 +198,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
    */
   async function spin() {
     const draft = text.trim()
-    if (!draft) { onError('Type your message first, then spin it.'); return }
+    if (!draft && !aiInstruction.trim()) { onError('Type a message or set an AI direction first, then spin it.'); return }
     setSpinBusy(true)
     try {
       const r = await fetch('/api/admin/inbox/unified/ai', {

@@ -142,6 +142,21 @@ export interface PortalState {
       approved_at?: string
       plan_status?: 'pending' | 'approved'
     }
+    /** MASTER-LANE SETTLEMENT SCHEDULE (Taona 2026-09-10). A covert master-lane
+     *  vendor whose EFT was already collected into ...191, shown to the festival
+     *  owner on the Active Payment Plans tab ONLY as a vendor paying in instalments
+     *  through Oct–Nov with NOTHING paid on her side (the master collection stays
+     *  hidden). `installments` are the dates the master lane actually settles each
+     *  one to her. DELIBERATELY separate from `arrangement`: the vendor portal,
+     *  chase crons and day digest all read `arrangement` and must NEVER see this,
+     *  so the reveal is scoped to exactly one reader (paid-vendors.ts planRows).
+     *  Writer: scripts/set-master-settlement-plans.mts. */
+    settlement?: {
+      installments: Array<{ date: string; amount: number }>
+      total: number
+      created_at: string
+      window: string
+    }
     /** ACCESSORY (electricity/furniture) EFT sub-ledger for vendors whose STALL
      *  fee is already settled but whose accessories were under-billed by the
      *  pre-2026-08-04 pricing bug. Mirrors the stall two-state so revenue counts
@@ -162,7 +177,14 @@ export interface PortalState {
      *  by hand. The owner reconciles against THIS, not the reference we
      *  suggested: vendors who paid before 2026-09-01 used the old CTH<id-tail>
      *  code, Telkom used its invoice reference (Taona 2026-09-05). */
-    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string; reference?: string }>
+    /** `account` = which receiving account the vendor was shown when they paid,
+     *  stamped at filing time from onCovertMasterLane ('master' = covert ...191,
+     *  'samreen' = owner-reconciled ...629). Absent on every proof filed before
+     *  2026-09-11, when only ⟦EFT⟧/protected vendors could be covert — so an
+     *  unstamped proof that passes the fence is a Samreen-account proof. This is
+     *  what lets the owner's EFT-proofs list survive a rail flip to 'master': the
+     *  list follows the ACCOUNT the money went to, not the current mode. */
+    proofs?: Array<{ path: string; kind: 'receipt' | 'refund' | 'eft_submission' | 'eft_accessories'; note?: string; uploaded_at: string; reference?: string; account?: 'master' | 'samreen' }>
     /** PRESENT-TO-OWNER (2026-08-23). The operator showed this EFT-collected
      *  payment to the festival owner as a clean "paid via Yoco" entry (her
      *  request: the interim EFT state makes her accounting harder, she knows

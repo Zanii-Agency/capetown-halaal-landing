@@ -1,9 +1,16 @@
 /**
  * The owner-side EFT proof list: vendors who uploaded proof of an EFT into
  * Samreen's account, with the newest proof file and whether it is confirmed.
- * Fenced by eftProofVisibleToOwner and only populated on the samreen_eft rail
- * (on the covert rail nothing may surface). ONE implementation feeds both the
- * /admin/eft-proofs page and the Claude connector's eft_proofs tool.
+ * Fenced by eftProofVisibleToOwner. Populated on EVERY rail — flipping to the
+ * master rail only changes which bank details vendors see; the vendors who
+ * already paid into HER ...629 account stay listed (2026-09-11: the list used
+ * to empty on the master rail, gated on ownerEftActive). Master-account proofs
+ * filed after 2026-09-11 carry an account:'master' stamp and the fence hides
+ * them; every older proof predates the first master-rail activation, so an
+ * unstamped proof that passes the fence is a Samreen-account proof.
+ * `ownerEftActive` survives for display only (the bank-details banner is hers
+ * only while her account is the one being shown). ONE implementation feeds both
+ * the /admin/eft-proofs page and the Claude connector's eft_proofs tool.
  */
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner, eftReference } from '@/lib/eft'
@@ -23,10 +30,10 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
   const fullEft = await getFullEftMode()
   const ownerEftActive = (await getPaymentRail()) === 'samreen_eft'
 
-  const { data: vendors } = ownerEftActive ? await db
+  const { data: vendors } = await db
     .from('vendor_applications')
     .select('id, business_name, contact_name, email, phone, admin_notes, paid_at, preferred_booth_tier, special_requirements, status, is_duplicate')
-    .neq('status', 'rejected') : { data: [] as Array<Record<string, unknown>> }
+    .neq('status', 'rejected')
 
   const rows: EftProofRow[] = []
   for (const v of (vendors ?? [])) {

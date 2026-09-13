@@ -42,6 +42,21 @@ function fmtDate(d: Date): string {
 }
 const dayWord = (n: number) => `${n} day${n === 1 ? '' : 's'}`
 
+/** WhatsApp body for the ACCESSORIES-electricity chase (festival_announcement
+ *  {{2}}). Same rules as the stall body: no "Hi" lead, portal push, no
+ *  em-dashes. Naming the accessory-electricity charge is allowed (it is the
+ *  charge type, not a payment method). The stall fee is already settled for this
+ *  cohort, so this is only ever about the separate power charge. */
+export function accessoryReminderWaBody(owing: number, seg: ReminderSeg): string {
+  const amt = formatRand(owing)
+  const portal = `Log in to your portal to see the appliances you booked and settle it: ${PORTAL_URL}`
+  const addMore = 'You can also add more appliances in your portal if you need extra power, or reply here for help.'
+  if (seg === 'firm') {
+    return `A reminder that ${amt} for your accessory electricity, the power for the appliances you booked, is still outstanding. Your stall is confirmed, but the power connection can only be guaranteed once this is settled. ${portal} ${addMore}`
+  }
+  return `Your stall fee for Young at Heart is paid, thank you. The electricity for the appliances you booked is a separate charge, and ${amt} is still outstanding for it. ${portal} ${addMore}`
+}
+
 export function reminderWaBody(i: ReminderCopyInput): string {
   const amt = formatRand(i.amount)
   const overdue = i.daysRemaining < 0

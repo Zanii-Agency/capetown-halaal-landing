@@ -121,7 +121,7 @@ function lastInbound(turns: Turn[]): string | null {
 function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean, channel: 'whatsapp' | 'email' = 'email', instruction?: string): { system: string; user: string } | { error: string } {
   const convo = transcript(turns)
   const base = `${hardFacts(eftOn)}\n\n${STYLE}`
-  const dir = instruction?.trim() ? `\n\nOPERATOR DIRECTION: ${instruction.trim()}` : ''
+  const dir = instruction?.trim() ? `\n\nOPERATOR DIRECTION (highest priority: make the reply actually do this, even if it goes beyond their last message): ${instruction.trim()}` : ''
   switch (action) {
     case 'smart_reply': {
       const inbound = lastInbound(turns)
@@ -146,10 +146,33 @@ function promptFor(action: Action, turns: Turn[], draft: string, eftOn: boolean,
     // for each"). A WhatsApp message and an email are not the same message with
     // different padding: one is a chat turn, the other is correspondence.
     case 'spin': {
-      if (!draft.trim()) return { error: 'Type your message first, then spin it.' }
+      const hasDir = !!instruction?.trim()
+      if (!draft.trim() && !hasDir) return { error: 'Type a message or set an AI direction first, then spin it.' }
       const shape = channel === 'whatsapp'
         ? `TARGET: WhatsApp. Write it as a chat message. No subject line, no "Dear", no formal sign-off. Short sentences, one idea per line, blank line between ideas. You may use *single asterisks* for emphasis, which is how WhatsApp renders bold. Contractions are fine. Aim under 90 words.`
         : `TARGET: email. Write it as correspondence. Open with a greeting on its own line, close with "Warm regards," then "The Young at Heart Festival Team" on the next line. Full sentences and complete paragraphs. Never use WhatsApp markup like *asterisks*. Aim under 160 words.`
+      // WITH a direction, the operator is AUTHORING the message via the draft plus the
+      // direction together, so the direction's asks (offer a plan, name a date the
+      // operator gave, set a tone) are the operator's own decision, not a model
+      // invention: carry them out. WITHOUT a direction, spin stays a faithful rewriter
+      // that adds nothing. The banking + festival-fact rails hold in both modes, and
+      // guardUngroundedDates still drops any date found in neither draft nor direction.
+      if (hasDir) {
+        return {
+          system: `You turn a festival team member's INTENT into a finished, ready-to-send message on the channel below. Their intent is an OPERATOR DIRECTION plus an optional rough draft. Output the finished message ONLY: no preamble, no explanation, no quotes.
+
+RULES:
+- CARRY OUT the OPERATOR DIRECTION. It is the operator's own decision, so any offer, plan, date, amount or tone it states is theirs to make and you must include it. This is authoring on their behalf, not answering the vendor.
+- You may state a date, price, amount or commitment ONLY if it appears in the direction or the draft. Never invent one that is in neither.
+- NEVER state banking details, account numbers or branch codes. If payment comes up, point them to the exhibitor portal and stop there.
+- Keep every name, figure and link from the direction and draft exact. If either contradicts the festival facts below, follow the facts.
+
+${shape}
+
+${base}`,
+          user: `${draft.trim() ? `ROUGH DRAFT (raw material, optional):\n${draft}\n\n` : ''}OPERATOR DIRECTION (do exactly this):\n${instruction!.trim()}\n\nWrite the finished ${channel} message that carries out the direction.`,
+        }
+      }
       return {
         system: `You rewrite a festival team member's own message so it reads well on the channel it is being sent on. Output the rewritten message ONLY, with no preamble, no explanation, and no quotes around it.
 
@@ -163,7 +186,7 @@ RULES THAT OVERRIDE EVERYTHING:
 ${shape}
 
 ${base}`,
-        user: `THE OPERATOR WROTE:\n${draft}\n\nRewrite it for the target channel, keeping their meaning and facts intact.${dir}`,
+        user: `THE OPERATOR WROTE:\n${draft}\n\nRewrite it for the target channel, keeping their meaning and facts intact.`,
       }
     }
     case 'follow_up':
@@ -219,7 +242,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const res = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      // Sonnet, not Haiku: this drafter is operator-only and on-demand (you click it,
+      // you review before sending), so cost is negligible, and Haiku was too weak to
+      // hold the OPERATOR DIRECTION over the grounding + style block (the "spin ignores
+      // my direction" complaint, 2026-09-13).
+      model: 'claude-sonnet-5',
       max_tokens: 400,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],

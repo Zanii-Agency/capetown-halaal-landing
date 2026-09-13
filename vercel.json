@@ -64,6 +64,10 @@
     {
       "path": "/api/cron/plan-approvals",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/accessory-reminders",
+      "schedule": "0 6 * * *"
     }
   ]
 }

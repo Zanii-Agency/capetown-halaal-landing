@@ -3,7 +3,8 @@ import { getExhibitorContext } from '@/lib/exhibitor'
 import { parsePortalState } from '@/lib/portal-state'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { paymentsEnabled, paymentReference } from '@/lib/payments'
-import { formatRand } from '@/lib/payments/pricing'
+import { formatRand, ELECTRICAL_PRICES } from '@/lib/payments/pricing'
+import AddAppliances from '@/components/exhibitor/AddAppliances'
 import { vendorBill, accEftReference } from '@/lib/payments/vendor-bill'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
@@ -129,6 +130,9 @@ export default async function PaymentsPage() {
   const topUpDue = !settled && paidSoFar > 0 && (outstanding || 0) > 0
   // Settled vendor still owing accessories (the split-bill case).
   const accDue = settled && accState === 'owing' && accOwing > 0
+  // Self-service "Add appliances" catalog: the SAME list + prices vendors saw at
+  // signup (ELECTRICAL_PRICES), so a settled vendor can add more power now.
+  const applianceCatalog = Object.entries(ELECTRICAL_PRICES).map(([key, v]) => ({ key, label: v.label, price: v.price }))
   const amount = owed
   // APPROVED PAYMENT PLAN (bot, 2026-09-04): the EFT panel asks for THIS
   // instalment, not the whole fee, and stays open after a part-payment settles
@@ -425,6 +429,10 @@ export default async function PaymentsPage() {
             accessories={paidSoFar === 0 ? (bill?.accessories.total ?? 0) : 0}
           />
         )}
+
+        {/* Self-service: a settled vendor can add more appliances any time. The
+            cost lands on the accessories balance above, payable by the same flow. */}
+        {settled && <AddAppliances catalog={applianceCatalog} />}
 
         {proofViews.length > 0 && (
           <Card>

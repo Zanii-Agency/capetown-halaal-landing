@@ -23,8 +23,10 @@ export interface VendorPricing {
   currency: 'ZAR'
 }
 
-// Mirrors ELECTRICAL_OPTIONS in apply/page.tsx — keep in sync.
-const ELECTRICAL_PRICES: Record<string, { label: string; price: number }> = {
+// Mirrors ELECTRICAL_OPTIONS in apply/page.tsx — keep in sync. Exported so the
+// self-service "Add appliances" endpoint prices additions from the SAME catalog
+// (server-side, never trusting a client-sent amount).
+export const ELECTRICAL_PRICES: Record<string, { label: string; price: number }> = {
   'charger-lighting': { label: 'Charger/Lighting', price: 400 },
   microwave: { label: 'Microwave', price: 400 },
   urn: { label: 'Urn', price: 500 },
@@ -53,6 +55,12 @@ interface SpecialRequirementsShape {
   stall_type?: string
   electrical_appliances?: Record<string, number> | string[] | string
   electrical_custom?: Array<{ label: string; amount: number; qty?: number }>
+  /** Appliances the VENDOR self-added after signup (portal "Add appliances").
+   *  A SEPARATE list from electrical_custom (admin): always summed on top, never
+   *  supersedes the original electrical_appliances, so adding can neither drop a
+   *  string-form vendor's originals nor double-count. Priced server-side from
+   *  ELECTRICAL_PRICES, so amount is trustworthy. */
+  electrical_added?: Array<{ label: string; amount: number; qty?: number }>
   hired_chairs?: number | string
   hired_tables?: number | string
   stall_price?: number
@@ -163,8 +171,23 @@ export function computeVendorPricing(
     }
   }
 
-  // electricalTotal is the sum of ALL electrical items (priced + custom), so
-  // custom charges flow into total below and onto the invoice.
+  // VENDOR SELF-ADDED appliances (portal "Add appliances", 2026-09-07). Always
+  // summed on top; a separate list so it can NEVER supersede the free-text string
+  // (electrical_custom does, which would drop 218 string-form vendors' originals)
+  // and never double-counts the object/string branches above. `amount` is the
+  // per-unit price ELECTRICAL_PRICES gave server-side; qty applied here.
+  const addedList = Array.isArray(reqs.electrical_added) ? reqs.electrical_added : []
+  for (const entry of addedList) {
+    if (!entry || typeof entry !== 'object') continue
+    const amt = Number(entry.amount)
+    if (!Number.isFinite(amt) || amt <= 0) continue
+    const label = (typeof entry.label === 'string' && entry.label.trim()) || 'Added appliance'
+    const qty = Math.max(1, Math.floor(Number(entry.qty) || 1))
+    electrical.push({ label, amount: amt * qty, qty })
+  }
+
+  // electricalTotal is the sum of ALL electrical items (priced + custom + added),
+  // so all of them flow into total below and onto the invoice.
   const electricalTotal = electrical.reduce((s, i) => s + i.amount, 0)
 
   const chairsQty = Math.max(0, Math.floor(Number(reqs.hired_chairs) || 0))

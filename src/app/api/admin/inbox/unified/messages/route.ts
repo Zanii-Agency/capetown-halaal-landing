@@ -173,6 +173,15 @@ export async function GET(req: NextRequest) {
         const htmlSplit = splitQuotedHtml(m.body_html)
         if (!body && !attachments.length) continue
         const out = m.direction !== 'in'
+        // SYSTEM / AUTO notification (Taona 2026-09-12: "these auto-gen messages
+        // are repetitive"). Outbound template blasts (reminders, "Payment
+        // confirmed", "One step left", approvals, password resets, invoices) all
+        // carry a template subject and are NOT a reply into the conversation. A
+        // real reply, from a human or an auto-responder, threads in as "Re: …".
+        // So: outbound + subject not starting "Re:" = system noise the thread can
+        // collapse. sent_by is unusable here (never populated). The vendor's own
+        // inbound is never auto.
+        const isAuto = out && !/^re:/i.test((m.subject || '').trim())
         const media: MediaInfo[] | undefined = attachments.length
           ? attachments.map((a, i) => ({
               kind: kindForMime(a.mimeType),
@@ -185,6 +194,7 @@ export async function GET(req: NextRequest) {
           id: `mail:${m.id}`,
           channel: 'email',
           direction: out ? 'out' : 'in',
+          ...(isAuto ? { auto: true } : {}),
           body,
           // ARRIVAL time, not the sender's Date header. Both channels are now on
           // the same clock, so the final sort below is meaningful. Previously

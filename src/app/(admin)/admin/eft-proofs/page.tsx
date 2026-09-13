@@ -41,7 +41,7 @@ export default async function EftProofsPage() {
           <p className="text-xs text-neutral-400 mt-3">These are the exact details shown to vendors on their payment page.</p>
         </div>
       )}
-      {!ownerEftActive || !fullEft ? (
+      {!fullEft ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
           EFT mode is not active yet. Once it is, vendors who upload EFT proof will appear here.
         </div>

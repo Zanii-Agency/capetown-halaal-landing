@@ -10,7 +10,17 @@ import { isAcknowledgement } from '@/lib/bot/ack'
  * treated as machine-generated and ignored for queue purposes.
  */
 const AUTO_REPLY_RES = [
-  /thank you for contacting[\s\S]*?please let us know how we can help/i,
+  // WhatsApp Business greeting auto-reply. It ALWAYS opens (optionally after a
+  // short greeting like "Shukran/", "Salaam/Hi" or "Hi/Aslm") with "thank you
+  // for contacting <their own business>". The tail is not fixed: real vendors'
+  // greetings continue with "how we can help", "how we can assist", "how we can
+  // be of assistance", "we are closed", a menu, opening hours, and so on. The
+  // old pattern demanded the single tail "how we can help", so every other
+  // ending (Frullato, MIZ DAYZEE, ~20 more) sailed through and pinned as
+  // "waiting on a person". So match the OPENER, not the tail. The negative
+  // lookahead keeps a genuine human ("thank you for contacting me/my ...") in
+  // the queue: an auto-reply names the business or "us", never "me".
+  /^[\s\S]{0,60}?\bthank\s*you for contacting (?!me\b|my\b)/i,
   /thank you for your message[\s\S]*?you have reached us outside our business hours/i,
   /you have reached us outside our business hours/i,
   /our whatsapp line is for customer support/i,

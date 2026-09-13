@@ -60,7 +60,11 @@ const SRC = readFileSync(join(process.cwd(), 'src/lib/eft.ts'), 'utf8')
 const FN = SRC.slice(SRC.indexOf('export async function resolveInEftLane'), SRC.indexOf('export async function resolveInEftLane') + 3600)
 
 test('resolver overrides win before the rotation, in the right order', () => {
-  const order = ['isInternalAccount', 'app.paid_at', 'hasNoEftMarker', "status === 'paid'", 'hasEftMarker', 'eft_submitted_at', 'eft_revealed_at', 'eftRevealWithinGrace', "status === 'pending'", '!globalOn', 'getRotationStartAt', 'tierReceivedCount']
+  // 2026-09-11: `status === 'paid'` moved above ⟦NOEFT⟧ (same verdict by a different
+  // guard, so no behaviour change) so the ⟦NEWVENDOR⟧ guard could slot in BETWEEN
+  // them: a paid cohort member keeps the paid view, and the cohort tag beats
+  // ⟦NOEFT⟧ (Haadiya Bakes: ⟦NEWVENDOR⟧+⟦NOEFT⟧ saw Samreen's ...629).
+  const order = ['isInternalAccount', 'app.paid_at', "status === 'paid'", 'hasNewVendorMarker', 'hasNoEftMarker', 'hasEftMarker', 'eft_submitted_at', 'eft_revealed_at', 'eftRevealWithinGrace', "status === 'pending'", '!globalOn', 'getRotationStartAt', 'tierReceivedCount']
   let last = -1
   for (const token of order) {
     const at = FN.indexOf(token)

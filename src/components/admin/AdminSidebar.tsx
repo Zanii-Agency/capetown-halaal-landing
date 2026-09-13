@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck, Sparkles } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -101,13 +101,16 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
   const badgeCls = isMaster
     ? 'bg-purple-50 text-purple-700 border-purple-200'
     : badge.cls
-  const groups: NavGroup[] = eftAdmin
-    ? navGroups.map((g) =>
-        g.label === 'MONEY'
-          ? { ...g, items: [...g.items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }] }
-          : g,
-      )
-    : navGroups
+  // Gmail (capetownhalaal@ personal mailbox) is master/dev only. The festival
+  // owner works WhatsApp + Support Email, so strip the Gmail item for anyone who
+  // is not the EFT admin (dev@ / taona@). Master Lane stays an eftAdmin add.
+  const groups: NavGroup[] = navGroups.map((g) => {
+    let items = g.label === 'COMMUNICATIONS' && !eftAdmin
+      ? g.items.filter((it) => it.href !== '/admin/inbox/gmail')
+      : g.items
+    if (g.label === 'MONEY' && eftAdmin) items = [...items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }, { name: 'New Vendors', href: '/admin/new-vendors', icon: Sparkles }]
+    return { ...g, items }
+  })
   const BadgeIcon = badge.Icon
   const [mobileOpen, setMobileOpen] = useState(false)
   const [channelCounts, setChannelCounts] = useState<Record<string, number>>({})
