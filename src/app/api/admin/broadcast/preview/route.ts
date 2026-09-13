@@ -39,18 +39,18 @@ import {
 
 export const dynamic = 'force-dynamic'
 
-async function assertAdmin(): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+async function assertAdmin(): Promise<{ ok: true; email: string | null } | { ok: false; status: number; error: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, status: 401, error: 'Unauthorized' }
   const admin = createAdminClient()
   const { data: adminUser } = await admin
     .from('admin_users')
-    .select('id')
+    .select('id, email')
     .eq('id', user.id)
     .single()
   if (!adminUser) return { ok: false, status: 403, error: 'Forbidden' }
-  return { ok: true }
+  return { ok: true, email: ((adminUser as { email?: string | null }).email) ?? user.email ?? null }
 }
 
 // Audience building (filter parsing + derivation) is shared with the dispatch
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const url = new URL(req.url)
-  const audience = await buildAudience(filtersFromSearch(url.searchParams))
+  const audience = await buildAudience(filtersFromSearch(url.searchParams), auth.email)
   return NextResponse.json({
     audience: audience.slice(0, 25).map((r) => ({
       id: r.id,
@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
   // Find an audience row to use as the preview sample. We use the supplied
   // filter set when building the audience so the preview reflects the actual
   // outbound slice.
-  const audience = await buildAudience(filtersFromBody(body.filters))
+  const audience = await buildAudience(filtersFromBody(body.filters), gate.adminUser.email)
 
   const sample =
     (body.vendor_id ? audience.find((a) => a.id === body.vendor_id) : audience[0]) ||
