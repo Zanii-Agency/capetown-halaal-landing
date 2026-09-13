@@ -307,27 +307,52 @@ async function ownRow(vendorId: string) {
   } | null
 }
 
-// Surface requests the vendor already has open with the team, so the bot never
-// tells a vendor "no request on file" seconds after logging one, and never opens
-// a duplicate. escalate_to_human writes to state.support[]; stall changes write
-// their own pending markers. A trailing vendor message with no admin reply after
-// it is still awaiting the team.
+// Surface requests the vendor already has open with the team, AND decisions
+// already made on them, so the bot never tells a vendor "no request on file"
+// seconds after logging one, never opens a duplicate, and never says a request
+// is "still pending" once it has been approved or rejected. escalate_to_human
+// writes to state.support[]; stall changes write their own status markers. A
+// trailing vendor message with no admin reply after it is still awaiting the
+// team. DECIDED requests (rejected/approved) MUST be stated plainly: jimmalos
+// trading's size change was rejected on 2026-09-02 with a rejection email sent,
+// yet the bot kept promising a corrected invoice because a decided request went
+// silent here and the model filled the vacuum with "pending". The size + price
+// line in checkApplicationStatus already reflects the resolved stall (approve
+// updates preferred_booth_tier, reject leaves it), so a decided line only has
+// to name the DECISION.
 export function pendingRequestsLine(state: ReturnType<typeof parsePortalState>): string {
-  const bits: string[] = []
+  const open: string[] = []     // still awaiting the team
+  const decided: string[] = []  // a decision is already on record
+
   const sup = state.support || []
   const last = sup[sup.length - 1]
   if (last && last.from === 'vendor') {
     const day = (last.at || '').slice(0, 10)
-    bits.push(`a request already logged with the team${day ? ` on ${day}` : ''} ("${last.body.slice(0, 90)}")`)
+    open.push(`a request already logged with the team${day ? ` on ${day}` : ''} ("${last.body.slice(0, 90)}")`)
   }
-  if (state.stallChangeRequest?.status === 'pending') {
-    bits.push(`a pending stall-size change request to "${state.stallChangeRequest.requestedTier}"`)
+
+  const scr = state.stallChangeRequest
+  if (scr?.status === 'pending') {
+    open.push(`a pending stall-size change request to "${scr.requestedTier}"`)
+  } else if (scr?.status === 'rejected') {
+    decided.push(`Their stall-size change request to "${scr.requestedTier}" was NOT approved. Their stall stays the size and price shown above.${scr.adminNote ? ` Team's reason: ${scr.adminNote}` : ''}`)
+  } else if (scr?.status === 'approved') {
+    decided.push(`Their stall-size change request to "${scr.requestedTier}" was APPROVED. The size and price shown above already reflect the new stall.${scr.adminNote ? ` Team's note: ${scr.adminNote}` : ''}`)
   }
-  if (state.stallMoveRequest?.status === 'pending') {
-    bits.push('a pending stall-position request')
+
+  const mr = state.stallMoveRequest
+  if (mr?.status === 'pending') {
+    open.push('a pending stall-position request')
+  } else if (mr?.status === 'rejected') {
+    decided.push(`Their stall-position change request was NOT approved.${mr.adminNote ? ` Team's reason: ${mr.adminNote}` : ''}`)
+  } else if (mr?.status === 'approved') {
+    decided.push(`Their stall-position change request was approved.${mr.adminNote ? ` Team's note: ${mr.adminNote}` : ''}`)
   }
-  if (!bits.length) return ''
-  return ` Open with the team (they will follow up here, do not log it again): ${bits.join('; ')}.`
+
+  let out = ''
+  if (decided.length) out += ` Decisions already on record (state these plainly to the vendor, never call them pending, never promise a corrected invoice): ${decided.join(' ')}`
+  if (open.length) out += ` Open with the team (they will follow up here, do not log it again): ${open.join('; ')}.`
+  return out
 }
 
 async function checkApplicationStatus(vendorId: string): Promise<string> {
