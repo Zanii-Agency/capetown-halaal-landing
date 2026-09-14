@@ -65,6 +65,7 @@ function normaliseMime(mime: string | undefined): string | null {
 export async function seeImageBytes(
   bytes: Buffer,
   mimeType?: string,
+  timeoutMs: number = TIMEOUT_MS,
 ): Promise<SeenImage | null> {
   if (!process.env.ANTHROPIC_API_KEY || !bytes?.byteLength) return null
   const mime = normaliseMime(mimeType)
@@ -100,7 +101,7 @@ export async function seeImageBytes(
           },
         ],
       },
-      { timeout: TIMEOUT_MS },
+      { timeout: timeoutMs },
     )
 
     const text = res.content

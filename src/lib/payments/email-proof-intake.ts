@@ -140,7 +140,10 @@ export async function fileEmailedProof(a: IntakeArgs): Promise<string[]> {
     let proofAmount: string | null = null
     if (/^image\//i.test((att.contentType || '').toLowerCase())) {
       const { seeImageBytes } = await import('@/lib/bot/see-image')
-      const seen = await seeImageBytes(att.content, att.contentType)
+      // Longer vision timeout than the WhatsApp path: this runs in the mail cron,
+      // not on Meta's webhook-retry clock, and an emailed proof can be a full-res
+      // photo/screenshot that the WhatsApp 8s cap times out on (a 1.8MB PNG did).
+      const seen = await seeImageBytes(att.content, att.contentType, 25_000)
       if (!seen || !seen.isPaymentProof) {
         const { notifyOwners } = await import('@/lib/bot/notify')
         const why = seen ? `it is not a payment proof (${seen.description.slice(0, 100)})` : 'the image could not be read automatically'
