@@ -130,28 +130,50 @@ export async function fileEmailedProof(a: IntakeArgs): Promise<string[]> {
     const att = pickProofAttachment(a.attachments)
     if (!att?.content) return errors
 
-    // LOOK at an image attachment before filing it. The email path had no vision
-    // gate, so a replied-with-poster image passed looksLikeProofEmail (a text/lane
-    // heuristic) and was filed as an EFT proof. Now an image must be VISION-CONFIRMED
-    // as a real bank proof; a poster/flyer/menu/logo, or an image vision cannot read,
-    // is surfaced to the master instead of auto-filed. PDFs (bank confirmations) keep
-    // the existing path. Mirrors the WhatsApp isProofMedia verdict via the shared core.
+    // READ an attachment before filing it. The email path had no content gate, so a
+    // replied-with-poster passed looksLikeProofEmail (a text/lane heuristic) and was
+    // filed as an EFT proof. Now the file must be CONFIRMED a real bank proof (bank +
+    // amount) before filing: an image via vision, a PDF via its text + an LLM verdict.
+    // A poster/flyer/menu/invoice/quote, or a file that cannot be read, is surfaced to
+    // the master instead of auto-filed. Both modalities share one standard.
+    const attType = (att.contentType || '').toLowerCase()
+    const isImage = /^image\//i.test(attType)
+    const isPdf = /pdf/i.test(attType) || /\.pdf$/i.test(att.filename || '')
     let proofBank: string | null = null
     let proofAmount: string | null = null
-    if (/^image\//i.test((att.contentType || '').toLowerCase())) {
+    const alertNotProof = async (why: string) => {
+      const { notifyOwners } = await import('@/lib/bot/notify')
+      await notifyOwners({ event: 'system_alert', audience: 'master', body: `${vendor.business_name || a.fromAddress} emailed a file but ${why}. It was NOT filed as a proof. Check the thread in /admin/inbox if it was meant as one.` })
+    }
+    if (isImage) {
       const { seeImageBytes } = await import('@/lib/bot/see-image')
       // Longer vision timeout than the WhatsApp path: this runs in the mail cron,
       // not on Meta's webhook-retry clock, and an emailed proof can be a full-res
       // photo/screenshot that the WhatsApp 8s cap times out on (a 1.8MB PNG did).
       const seen = await seeImageBytes(att.content, att.contentType, 25_000)
       if (!seen || !seen.isPaymentProof) {
-        const { notifyOwners } = await import('@/lib/bot/notify')
-        const why = seen ? `it is not a payment proof (${seen.description.slice(0, 100)})` : 'the image could not be read automatically'
-        await notifyOwners({ event: 'system_alert', audience: 'master', body: `${vendor.business_name || a.fromAddress} emailed an image but ${why}. It was NOT filed as a proof. Check the thread in /admin/inbox if it was meant as one.` })
+        await alertNotProof(seen ? `it is not a payment proof (${seen.description.slice(0, 100)})` : 'the image could not be read automatically')
         return errors
       }
       proofBank = seen.bankName ?? null
       proofAmount = seen.amount ?? null
+    } else if (isPdf) {
+      // PDFs are the canonical bank-confirmation format, but an invoice, quote,
+      // statement, menu or poster can also arrive as a PDF. Read the text layer and
+      // let the model rule proof vs not-proof, same standard as the image vision gate.
+      // A scanned image-only PDF has no text to read, so it cannot be auto-verified
+      // and is surfaced to a human rather than filed on the filename alone.
+      const { extractPdfText, classifyProofText } = await import('@/lib/payments/proof-content')
+      const text = await extractPdfText(att.content)
+      const verdict = text ? await classifyProofText(text) : null
+      if (!verdict || !verdict.isPaymentProof) {
+        await alertNotProof(!text ? 'the PDF has no readable text (a scanned image) and could not be auto-verified'
+          : verdict ? `the PDF is not a payment proof (${verdict.description.slice(0, 100)})`
+          : 'the PDF text could not be read automatically')
+        return errors
+      }
+      proofBank = verdict.bankName
+      proofAmount = verdict.amount
     }
 
     const { parsePortalState } = await import('@/lib/portal-state')
