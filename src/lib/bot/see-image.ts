@@ -42,6 +42,10 @@ export type SeenImage = {
   isPaymentProof: boolean
   /** True when it shows an error, a failed page, or something visibly broken. */
   isProblem: boolean
+  /** Bank/institution name visible on a payment proof, else null. */
+  bankName?: string | null
+  /** Payment amount visible on a payment proof (as shown, e.g. "R3,700.00"), else null. */
+  amount?: string | null
 }
 
 function normaliseMime(mime: string | undefined): string | null {
@@ -52,46 +56,46 @@ function normaliseMime(mime: string | undefined): string | null {
 }
 
 /**
- * Read an inbound WhatsApp image and return what it shows.
- * Returns null whenever the image cannot be read for any reason.
+ * LOOK at raw image bytes and return what they show. The vision core shared by
+ * the WhatsApp path (seeImage, which fetches bytes from Meta) and the emailed-
+ * proof intake (which already holds the attachment bytes). Same verdict, one
+ * prompt, so a proof judged over WhatsApp and one judged over email cannot drift.
+ * Returns null whenever the image cannot be read for any reason (fails soft).
  */
-export async function seeImage(
-  mediaId: string,
+export async function seeImageBytes(
+  bytes: Buffer,
   mimeType?: string,
 ): Promise<SeenImage | null> {
-  if (!process.env.ANTHROPIC_API_KEY || !mediaId) return null
+  if (!process.env.ANTHROPIC_API_KEY || !bytes?.byteLength) return null
+  const mime = normaliseMime(mimeType)
+  if (!mime) return null
+  if (bytes.byteLength > MAX_BYTES) return null
 
   try {
-    const media = await fetchMediaBytes(mediaId)
-    if (!media) return null
-
-    // Trust the bytes' own content type over the webhook's claim: the webhook
-    // field has been absent on some inbound images.
-    const mime = normaliseMime(media.contentType) || normaliseMime(mimeType)
-    if (!mime) return null
-    if (media.bytes.byteLength > MAX_BYTES) return null
-
     const client = new Anthropic()
     const res = await client.messages.create(
       {
         model: MODEL,
         max_tokens: 300,
         system:
-          'You are looking at an image a festival vendor sent to a support line over WhatsApp. ' +
+          'You are looking at an image a festival vendor sent to the festival support line. ' +
           'Describe only what is actually visible. Do not guess at intent, do not advise, do not greet. ' +
           'If it shows an error message, a failed page, or a broken link, quote the visible error text. ' +
-          'If it is a proof of payment, say so and include any visible amount, date and reference. ' +
-          'If it is a document (certificate, licence, ID, menu), say which. ' +
-          'Reply with JSON only: {"description": string, "isPaymentProof": boolean, "isProblem": boolean}',
+          'A PROOF OF PAYMENT is an actual bank transfer confirmation, deposit slip, banking-app receipt, ' +
+          'or EFT confirmation that shows money moved: it names a bank and shows an amount. ' +
+          'A marketing poster, event flyer, menu, price list, logo, product photo, certificate, licence or ID ' +
+          'is NOT a proof of payment, even if it mentions the festival or prices. ' +
+          'When it IS a proof, capture the bank/institution name and the amount exactly as shown. ' +
+          'Reply with JSON only: {"description": string, "isPaymentProof": boolean, "isProblem": boolean, "bankName": string|null, "amount": string|null}',
         messages: [
           {
             role: 'user',
             content: [
               {
                 type: 'image',
-                source: { type: 'base64', media_type: mime as 'image/jpeg', data: media.bytes.toString('base64') },
+                source: { type: 'base64', media_type: mime as 'image/jpeg', data: bytes.toString('base64') },
               },
-              { type: 'text', text: 'What is in this image?' },
+              { type: 'text', text: 'What is in this image? Is it a proof of payment?' },
             ],
           },
         ],
@@ -115,11 +119,35 @@ export async function seeImage(
     const description = typeof parsed.description === 'string' ? parsed.description.trim() : ''
     if (!description) return null
 
+    const clean = (s: unknown) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, 120) : null)
     return {
       description: description.slice(0, 600),
       isPaymentProof: parsed.isPaymentProof === true,
       isProblem: parsed.isProblem === true,
+      bankName: clean(parsed.bankName),
+      amount: clean(parsed.amount),
     }
+  } catch (e) {
+    console.error('[see-image] failed:', (e as Error).message)
+    return null
+  }
+}
+
+/**
+ * Read an inbound WhatsApp image and return what it shows.
+ * Returns null whenever the image cannot be read for any reason.
+ */
+export async function seeImage(
+  mediaId: string,
+  mimeType?: string,
+): Promise<SeenImage | null> {
+  if (!process.env.ANTHROPIC_API_KEY || !mediaId) return null
+  try {
+    const media = await fetchMediaBytes(mediaId)
+    if (!media) return null
+    // Trust the bytes' own content type over the webhook's claim: the webhook
+    // field has been absent on some inbound images.
+    return await seeImageBytes(media.bytes, media.contentType || mimeType)
   } catch (e) {
     console.error('[see-image] failed:', (e as Error).message)
     return null

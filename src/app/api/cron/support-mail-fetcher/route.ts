@@ -54,7 +54,7 @@ async function findVendorByEmail(
   if (!email) return null
   const { data, error } = await supabase
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, admin_notes, paid_at')
+    .select('id, business_name, contact_name, email, phone, admin_notes, paid_at, status')
     .eq('email', email)
     .limit(1)
   if (error || !data || data.length === 0) return null

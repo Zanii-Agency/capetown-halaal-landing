@@ -24,9 +24,24 @@ export interface IntakeVendor {
   phone?: string | null
   admin_notes?: string | null
   paid_at?: string | null
+  status?: string | null
 }
 
-const VENDOR_COLS = 'id, business_name, contact_name, email, phone, admin_notes, paid_at'
+const VENDOR_COLS = 'id, business_name, contact_name, email, phone, admin_notes, paid_at, status'
+
+/** Only a vendor who is actually supposed to pay a stall fee can have an emailed
+ *  proof auto-filed against them (Taona 2026-09-14, after a PENDING applicant's
+ *  reply-with-the-event-poster was captured as an EFT proof and hid them from
+ *  Samreen). A proof presupposes an approved vendor with an outstanding balance:
+ *  a pending/rejected/waitlisted applicant has no fee due, so an image they mail
+ *  is never a stall payment. Withdrawn vendors are out too. This gates the
+ *  auto-file only; a genuine proof from a non-approved sender still surfaces to a
+ *  human via the master alert below, it is just never silently laned covert. */
+export function isEligiblePayer(v: IntakeVendor): boolean {
+  if ((v.status || '').toLowerCase() !== 'approved') return false
+  if (v.paid_at) return false
+  return true
+}
 
 /** Gmail ignores dots and anything after '+' in the local part. */
 export function gmailKey(email: string): string {
@@ -95,10 +110,46 @@ export async function fileEmailedProof(a: IntakeArgs): Promise<string[]> {
     }
     if (vendor.paid_at) return errors // zanii-codef: settled stall; accessory top-ups still arrive via WhatsApp/portal
 
+    // MUST BE A VENDOR WHO IS SUPPOSED TO PAY (Taona 2026-09-14). Only an approved,
+    // owing, non-withdrawn vendor can have an emailed proof auto-filed. A pending or
+    // rejected applicant replying to a blast (e.g. with the event poster attached)
+    // has no stall fee due, so that image is never a stall payment and must never
+    // lane them covert. A genuine proof from a non-approved sender is still surfaced
+    // to a human via the master alert rather than dropped.
+    const portalMod = await import('@/lib/portal-state')
+    if (!isEligiblePayer(vendor) || portalMod.isWithdrawn(portalMod.parsePortalState(vendor.admin_notes || ''))) {
+      if (looksLikeProofEmail({ subject: a.subject, body: a.body, attachments: a.attachments })) {
+        const { notifyOwners } = await import('@/lib/bot/notify')
+        await notifyOwners({ event: 'system_alert', audience: 'master', body: `${vendor.business_name || a.fromAddress} (status: ${vendor.status || 'unknown'}) emailed a possible proof of payment but is not an approved paying vendor, so it was NOT auto-filed. Review the thread in /admin/inbox.` })
+      }
+      return errors
+    }
+
     const alreadyLane = vendorInEftLane(vendor.admin_notes || '', await getEftMode(), vendor.paid_at ?? null, { email: vendor.email, phone: vendor.phone })
     if (!looksLikeProofEmail({ subject: a.subject, body: a.body, attachments: a.attachments, alreadyLane })) return errors
     const att = pickProofAttachment(a.attachments)
     if (!att?.content) return errors
+
+    // LOOK at an image attachment before filing it. The email path had no vision
+    // gate, so a replied-with-poster image passed looksLikeProofEmail (a text/lane
+    // heuristic) and was filed as an EFT proof. Now an image must be VISION-CONFIRMED
+    // as a real bank proof; a poster/flyer/menu/logo, or an image vision cannot read,
+    // is surfaced to the master instead of auto-filed. PDFs (bank confirmations) keep
+    // the existing path. Mirrors the WhatsApp isProofMedia verdict via the shared core.
+    let proofBank: string | null = null
+    let proofAmount: string | null = null
+    if (/^image\//i.test((att.contentType || '').toLowerCase())) {
+      const { seeImageBytes } = await import('@/lib/bot/see-image')
+      const seen = await seeImageBytes(att.content, att.contentType)
+      if (!seen || !seen.isPaymentProof) {
+        const { notifyOwners } = await import('@/lib/bot/notify')
+        const why = seen ? `it is not a payment proof (${seen.description.slice(0, 100)})` : 'the image could not be read automatically'
+        await notifyOwners({ event: 'system_alert', audience: 'master', body: `${vendor.business_name || a.fromAddress} emailed an image but ${why}. It was NOT filed as a proof. Check the thread in /admin/inbox if it was meant as one.` })
+        return errors
+      }
+      proofBank = seen.bankName ?? null
+      proofAmount = seen.amount ?? null
+    }
 
     const { parsePortalState } = await import('@/lib/portal-state')
     const notesNow = vendor.admin_notes ?? null
@@ -133,7 +184,7 @@ export async function fileEmailedProof(a: IntakeArgs): Promise<string[]> {
       business_name: vendor.business_name ?? null,
       contact_name: vendor.contact_name ?? null,
       file: { bytes: att.content, name: att.filename || 'proof-of-payment', type: att.contentType },
-      note: `emailed proof of payment (subject: "${a.subject.slice(0, 120)}")`,
+      note: `emailed proof of payment${proofBank ? ` (${proofBank}${proofAmount ? ` ${proofAmount}` : ''})` : ''} (subject: "${a.subject.slice(0, 120)}")`,
       source: 'email',
       captureRegardless: true,
       skipAck: true,
