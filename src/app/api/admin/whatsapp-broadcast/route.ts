@@ -170,7 +170,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Use ?counts=1 with filters' }, { status: 400 })
   }
   const filters = filtersFromSearch(url.searchParams)
-  const audience = await buildAudience(filters)
+  const audience = await buildAudience(filters, auth.email)
   const optout = await loadOptOutEmails()
 
   const mailRecipients = new Set<string>()
@@ -276,7 +276,7 @@ export async function POST(req: NextRequest) {
   }
 
   const filters = filtersFromBody(body.filters)
-  const audience = await buildAudience(filters)
+  const audience = await buildAudience(filters, auth.email)
   const optout = await loadOptOutEmails()
 
   // H2: audience cap. Refuse to dispatch a >500 blast in a single call. Real

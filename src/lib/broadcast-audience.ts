@@ -19,6 +19,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, hasPaid } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
+import { isEftAdmin, vendorCommsInOwnerScope } from '@/lib/eft'
 
 export const AUDIENCE_COLUMNS =
   'id, business_name, contact_name, email, phone, preferred_booth_tier, product_categories, status, admin_notes, paid_at, contract_signed_at'
@@ -214,7 +215,23 @@ export function filtersFromBody(b: Record<string, unknown> | null | undefined): 
 // they read admin_notes markers that are not indexed.
 // ---------------------------------------------------------------------------
 
-export async function buildAudience(f: BroadcastFilters): Promise<AudienceRow[]> {
+// THE COVERT-LANE WALL ON OUTBOUND BLASTS. A broadcast is Samreen-initiated comms,
+// so every master-lane vendor (⟦EFT⟧, an EFT proof/collection, an eft/manual
+// settlement, presented-not-reconciled) — the ...191 cohort included — must be
+// dropped from her audience: she must never be able to reach them from a blast
+// (Taona 2026-09-14: "anyone on the master paid into 191 can never be accessed by
+// samreen from anywhere even in blast or support email"). Applied HERE, the single
+// place every broadcast/preview/count caller routes through, so no call site can
+// forget it and the wall cannot drift into a second copy. Uses vendorCommsInOwnerScope
+// (the comms wall — narrower than the roster wall, hides presented-not-reconciled too).
+//
+// Fails CLOSED: an absent/unknown viewer is treated as NON-EFT-admin, so a caller
+// that forgets to pass the viewer gets the walled (smaller) list, never a leak. The
+// EFT admin (dev@/taona@) passes their own email to send to the full master lane.
+export async function buildAudience(
+  f: BroadcastFilters,
+  viewerEmail?: string | null,
+): Promise<AudienceRow[]> {
   const admin = createAdminClient()
   let q = admin.from('vendor_applications').select(AUDIENCE_COLUMNS)
   if (f.status) q = q.eq('status', f.status)
@@ -226,5 +243,10 @@ export async function buildAudience(f: BroadcastFilters): Promise<AudienceRow[]>
     console.error('buildAudience query error', error)
     return []
   }
-  return ((data || []) as AudienceRow[]).filter((r) => rowMatchesFilters(r, f))
+  const restrict = !isEftAdmin(viewerEmail)
+  return ((data || []) as AudienceRow[]).filter(
+    (r) =>
+      rowMatchesFilters(r, f) &&
+      (!restrict || vendorCommsInOwnerScope(r.admin_notes, r.paid_at)),
+  )
 }

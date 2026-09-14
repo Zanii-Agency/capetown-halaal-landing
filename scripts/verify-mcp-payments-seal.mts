@@ -17,7 +17,7 @@
  */
 import { createClient } from '@supabase/supabase-js'
 import { mintAdminApiToken } from '@/lib/admin-actor'
-import { getMasterBankDetails, getPaymentRail, getFullEftMode, onCovertMasterLane, isOwnerVisible, reconciledPaid } from '@/lib/eft'
+import { getMasterBankDetails, getPaymentRail, isOwnerVisible, reconciledPaid } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 
 const OWNER = 'capetownhalaal@gmail.com'
@@ -35,12 +35,38 @@ async function callTool(name: string, args: Record<string, unknown> = {}) {
 const failures: string[] = []
 const masterSecrets = Object.values(getMasterBankDetails()).filter((v): v is string => typeof v === 'string' && v.replace(/\s/g, '').length >= 6)
 
-// covert set, from the predicates
+// THE COVERT ...191 COHORT — who must never surface to the owner on a payment
+// surface. This is NOT the whole master RAIL: at rail='master' onCovertMasterLane
+// marks EVERY vendor covert, but the 2026-09-11 doctrine deliberately lets her see
+// and chase a merely-unpaid master-rail vendor (their pay page still points at ...191,
+// so she can never take their money). A real LEAK is a vendor who actually paid into
+// the covert ...191 account — the per-proof `account: 'master'` stamp — or a pinned
+// covert holder (⟦EFT⟧ / ⟦NEWVENDOR⟧ / the frozen full-EFT cohort), EXCEPT one handed
+// back with ⟦OWNERVIS⟧. Same gates eftProofVisibleToOwner uses, so the seal and the
+// fence can't disagree.
 const rail = await getPaymentRail()
-const fullEft = await getFullEftMode()
 const { data: apps } = await db.from('vendor_applications').select('id, admin_notes, paid_at, business_name').limit(5000)
-const covert = new Set((apps ?? []).filter(a => !isOwnerVisible(a.admin_notes as string | null) && onCovertMasterLane(a.id as string, a.admin_notes as string | null, rail, fullEft)).map(a => a.id as string))
+const latestEftProofAccount = (notes: string | null): string | undefined =>
+  (parsePortalState(notes).payment?.proofs || [])
+    .filter((f) => f.kind === 'eft_submission')
+    .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]?.account
 const MASTER_ONLY = new Set(['eft', 'manual_card', 'manual'])
+// "Paid into ...191" = MONEY that actually landed in the covert account. The
+// unambiguous signal is the per-proof `account: 'master'` stamp; a master-only
+// settlement method (eft/manual) with no her-channel reconciliation is the pre-stamp
+// equivalent. EXCLUDES ⟦OWNERVIS⟧ hand-backs and anyone reconciled HER way (Yoco/cash/
+// waived, e.g. Shifa henna art paid by Yoco while pinned in the frozen cohort). The
+// bare pinned flags (⟦EFT⟧/⟦NEWVENDOR⟧/protectedIds) mean "routes to ...191 IF they
+// pay", NOT "paid into 191" — an UNPAID ⟦NEWVENDOR⟧ (Suade: also ⟦NOEFT⟧) has moved no
+// money and is not in scope. A pinned vendor who DOES pay into ...191 gets a master
+// proof / master method and is caught here anyway.
+const paidInto191 = (a: { id: string; admin_notes: string | null; paid_at: string | null }): boolean => {
+  if (isOwnerVisible(a.admin_notes)) return false
+  if (reconciledPaid(a.admin_notes, a.paid_at)) return false
+  const p = parsePortalState(a.admin_notes).payment
+  return latestEftProofAccount(a.admin_notes) === 'master' || MASTER_ONLY.has(String(p?.method || ''))
+}
+const covert = new Set((apps ?? []).filter((a) => paidInto191({ id: a.id as string, admin_notes: a.admin_notes as string | null, paid_at: a.paid_at as string | null })).map(a => a.id as string))
 const inMotion = new Set((apps ?? []).filter(a => {
   const p = parsePortalState((a.admin_notes as string) || '').payment
   const real = p?.status === 'collected' || !!p?.eft_submitted_at || MASTER_ONLY.has(String(p?.method || ''))
@@ -82,9 +108,7 @@ if (covertId) {
 // Probe a recent window; any covert vendor with a payment event today must be
 // absent from the owner's day digest.
 {
-  const { onCovertMasterLane, getPaymentRail, getFullEftMode } = await import('@/lib/eft')
-  const railD = await getPaymentRail(); const fullEftD = await getFullEftMode()
-  const covertIds = new Set((apps ?? []).filter(a => onCovertMasterLane(a.id as string, a.admin_notes as string | null, railD, fullEftD)).map(a => a.id as string))
+  const covertIds = covert // the precise ...191 cohort, not the whole master rail
   const today = new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10)
   const da = await callTool('day_activity', { date: today })
   const names = new Set(((da.data?.groups ?? []) as { key: string; items: { name: string }[] }[]).filter(g => /received|eft_pending|accessories|reversed/.test(g.key)).flatMap(g => g.items.map(i => i.name)))
@@ -95,6 +119,32 @@ if (covertId) {
 
 const fake = await callTool('eft_proof_confirm', { applicationId: '00000000-0000-4000-8000-000000000000' })
 if (!fake.isError) failures.push('eft_proof_confirm on a fake id succeeded')
+
+// BROADCAST/BLAST AUDIENCE (2026-09-14): the festival owner must never REACH a
+// vendor who actually paid into the covert ...191 account from a WhatsApp/email
+// blast (Taona: "anyone on the master paid into 191 can never be accessed by
+// samreen from anywhere even in blast"). buildAudience is the single builder behind
+// whatsapp-broadcast + broadcast/preview; called with her (non-EFT-admin) email it
+// must drop that cohort.
+//
+// The protected cohort is NOT every master-RAIL vendor: the 2026-09-11 doctrine
+// deliberately lets her blast merely-unpaid vendors (a pay reminder is exactly that
+// send), and their pay page still points at ...191 so she can never take their money.
+// What must never appear is a vendor with REAL ...191 money in motion (inMotion:
+// collected / proof uploaded / eft|manual settlement, unreconciled) OR a hand-picked
+// ⟦EFT⟧ covert vendor. Both are computed independently of buildAudience's own branch.
+{
+  const { buildAudience } = await import('@/lib/broadcast-audience')
+  let reachable = 0
+  for (const filters of [{}, { status: 'approved' }] as const) {
+    const aud = await buildAudience(filters, OWNER)
+    const ids = new Set(aud.map((r) => r.id))
+    if (Object.keys(filters).length === 0) reachable = aud.length
+    for (const id of covert) if (ids.has(id)) failures.push(`broadcast audience leaked ...191 vendor ${id} to owner (filters=${JSON.stringify(filters)})`)
+    for (const id of inMotion) if (ids.has(id)) failures.push(`broadcast audience leaked EFT-in-motion vendor ${id} to owner (filters=${JSON.stringify(filters)})`)
+  }
+  console.log(`broadcast audience (owner): ${reachable} reachable, ${covert.size} ...191 + ${inMotion.size} in-motion all excluded`)
+}
 
 if (failures.length) { console.error('PAYMENT SEAL BROKEN:\n - ' + failures.join('\n - ')); process.exit(1) }
 console.log('PAYMENT SEAL HOLDS')

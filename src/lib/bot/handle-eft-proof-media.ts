@@ -14,22 +14,9 @@ import { markVendorToldEft, vendorInEftLane, getEftMode, getPaymentRail, withEft
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
 import { resolveIdentity } from '@/lib/bot/identity'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { extractPdfText } from '@/lib/payments/proof-content'
 
 const PROOF_KEYWORDS_RE = /\b(proof\s*of\s*payment|pop|eft|bank\s*transfer|deposit|paid|payment|reference|ref\s*[:#])\b/i
-
-async function extractPdfText(buf: Buffer, maxChars = 8000): Promise<string | null> {
-  try {
-    const { extractText, getDocumentProxy } = await import('unpdf')
-    const pdf = await getDocumentProxy(new Uint8Array(buf))
-    const { text } = await extractText(pdf, { mergePages: true })
-    const raw = Array.isArray(text) ? text.join('\n') : String(text || '')
-    const cleaned = raw.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
-    return cleaned.length > maxChars ? cleaned.slice(0, maxChars) + '\n\n[…truncated]' : cleaned
-  } catch (e) {
-    console.warn('[handle-eft-proof-media] pdf text extraction failed:', (e as Error).message)
-    return null
-  }
-}
 
 function looksLikePaymentProof(caption: string): boolean {
   return PROOF_KEYWORDS_RE.test(caption)

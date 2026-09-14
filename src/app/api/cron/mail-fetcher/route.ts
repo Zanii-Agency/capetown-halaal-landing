@@ -36,7 +36,7 @@ async function findVendorByEmail(
   email: string
 ): Promise<IntakeVendor | null> {
   if (!email) return null
-  const { data } = await supabase.from('vendor_applications').select('id, business_name, contact_name, email, phone, admin_notes, paid_at').eq('email', email).limit(1)
+  const { data } = await supabase.from('vendor_applications').select('id, business_name, contact_name, email, phone, admin_notes, paid_at, status').eq('email', email).limit(1)
   return (data?.[0] as IntakeVendor) || null
 }
 
