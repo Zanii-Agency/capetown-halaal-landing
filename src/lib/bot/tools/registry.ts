@@ -1090,7 +1090,10 @@ async function logTeamArrangement(vendorId: string, args: { with_whom?: string; 
   await recordVendorAction({ applicationId: vendorId, eventType: 'payment_arrangement_claimed', note: `Says agreed with ${who}: ${details}`.slice(0, 200) }).catch(() => {})
   try {
     const { getPaymentRail, getFullEftMode, onCovertMasterLane } = await import('@/lib/eft')
-    const audience = teamArrangementAudience(vendorId, row.admin_notes, await getPaymentRail(), await getFullEftMode(), onCovertMasterLane)
+    // Fail CLOSED: if the frozen-set read fails (null), we cannot tell who is covert,
+    // so the payment-detail alert goes to the master only.
+    const fullEft = await getFullEftMode()
+    const audience = fullEft ? teamArrangementAudience(vendorId, row.admin_notes, await getPaymentRail(), fullEft, onCovertMasterLane) : 'master'
     await notifyOwners({
       event: 'system_alert',
       vendorId,
