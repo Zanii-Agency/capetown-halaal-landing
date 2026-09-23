@@ -178,7 +178,25 @@ export async function POST(req: NextRequest) {
     const scope = await laneScopeFor(gate.adminUser.email)
     if (!scope.unrestricted) {
       const walled = await loadWalledContacts()
-      const isHeld = (r: (typeof recipients)[number]) => !walled || scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }) || walled.blocks(r.phone, r.email)
+      // Per PERSON, from the server: the client may omit a phone, so every stored row
+      // sharing the recipient's id or email is checked too. Lookup error -> hold all.
+      const ids = recipients.map((r) => r.id).filter(Boolean) as string[]
+      const emails = recipients.map((r) => (r.email || '').trim().toLowerCase()).filter(Boolean)
+      const db = createAdminClient()
+      const [byId, byEmail] = await Promise.all([
+        ids.length ? db.from('vendor_applications').select('id, email, phone').in('id', ids) : Promise.resolve({ data: [], error: null }),
+        emails.length ? db.from('vendor_applications').select('id, email, phone').in('email', emails) : Promise.resolve({ data: [], error: null }),
+      ])
+      const lookupFailed = !!(byId.error || byEmail.error)
+      const rows = [...(byId.data || []), ...(byEmail.data || [])] as Array<{ id: string; email: string | null; phone: string | null }>
+      const rowsFor = (r: (typeof recipients)[number]) => {
+        const em = (r.email || '').trim().toLowerCase()
+        return rows.filter((x) => x.id === r.id || (!!em && (x.email || '').trim().toLowerCase() === em))
+      }
+      const isHeld = (r: (typeof recipients)[number]) =>
+        !walled || lookupFailed ||
+        scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }) || walled.blocks(r.phone ?? null, r.email ?? null) ||
+        rowsFor(r).some((x) => scope.blocks({ email: x.email, phone: x.phone, applicationId: x.id }) || walled.blocks(x.phone, x.email))
       heldList = recipients.filter(isHeld)
       sendList = recipients.filter((r) => !isHeld(r))
     }

@@ -42,7 +42,7 @@ const firstName = (n?: string | null) => {
   return f ? f.charAt(0).toUpperCase() + f.slice(1) : 'there'
 }
 
-type Recipient = { email: string; name: string; id?: string; notes?: string }
+type Recipient = { email: string; name: string; id?: string; notes?: string; phone?: string | null }
 
 async function getRecipients(
   audience: Audience,
@@ -62,14 +62,14 @@ async function getRecipients(
   // festival owner's bulk sends.
   let q = admin
     .from('vendor_applications')
-    .select('id, email, contact_name, admin_notes, paid_at')
+    .select('id, email, phone, contact_name, admin_notes, paid_at')
     .order('email', { ascending: true })
   if (audience === 'vendors_pending') q = q.in('status', ['pending', 'info_requested'])
   else if (audience === 'vendors_approved') q = q.eq('status', 'approved')
   const { data } = await q
   return (data || [])
     .filter((r) => !opts.restrict || vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null))
-    .map((r) => ({ id: r.id, email: r.email, name: firstName(r.contact_name), notes: r.admin_notes || '' }))
+    .map((r) => ({ id: r.id, email: r.email, phone: r.phone ?? null, name: firstName(r.contact_name), notes: r.admin_notes || '' }))
 }
 
 /** Dedupe by lowercased email, drop invalids. */
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
   if (restrict) {
     // Wall unavailable -> deliver to nobody (every recipient is held below).
     const walled = await loadWalledContacts()
-    allRecipients = walled ? allRecipients.filter((r) => !walled.blocks(null, r.email)) : []
+    allRecipients = walled ? allRecipients.filter((r) => !walled.blocks(r.phone ?? null, r.email)) : []
   }
   // HELD (Taona 2026-09-23): vendors walled from the owner are counted as sent but
   // NEVER delivered; the master gets one summary. Computed as the unrestricted cohort

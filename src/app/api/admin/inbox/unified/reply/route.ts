@@ -232,8 +232,9 @@ export async function POST(req: NextRequest) {
       const walled = await loadWalledContacts()
       const { shouldHoldNewEmail } = await import('@/lib/inbox/held-email')
       // Every application row with this email, so a same-phone twin is caught.
-      const { data: personRows } = await db.from('vendor_applications').select('id, phone').ilike('email', peer)
-      if (shouldHoldNewEmail(scope, walled, peer, (personRows || []) as Array<{ id: string; phone: string | null }>)) {
+      const { data: personRows, error: personErr } = await db.from('vendor_applications').select('id, phone').ilike('email', peer)
+      // Lookup error -> hold (fail closed; email-only would miss a phone-walled twin).
+      if (personErr || shouldHoldNewEmail(scope, walled, peer, (personRows || []) as Array<{ id: string; phone: string | null }>)) {
         try {
           const { notifyOwners } = await import('@/lib/bot/notify')
           await notifyOwners({
