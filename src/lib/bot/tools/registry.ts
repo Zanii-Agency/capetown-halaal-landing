@@ -35,6 +35,7 @@ import { CONTRACT_VERSION, cancellationTermsText } from '@/lib/contract/copy'
 import { startVendorVerification } from '@/lib/bot/vendor-session'
 import { buildSendable } from '@/lib/inbox/send-library'
 import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
+import { openCase, fmtCaseDate } from '@/lib/support-case'
 
 const PORTAL_LOGIN = 'cthalaal.co.za/exhibitor/login'
 
@@ -1415,10 +1416,29 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
   const row = await ownRow(vendorId)
   const biz = row?.business_name || 'a vendor'
   const clean = (note || '').trim().slice(0, 1000)
-  await updatePortalState(vendorId, (s) => ({
+  // ONE CASE PER VENDOR (lib/support-case.ts). A chase joins the open case: it is
+  // recorded (the ask count is what ranks it), but it is not a fresh hand-over with
+  // a fresh 72h promise, and the vendor is told the truth about where it stands.
+  const before = openCase(parsePortalState(row?.admin_notes as string | null | undefined))
+  const s2 = await updatePortalState(vendorId, (s) => ({
     ...s,
     support: [...(s.support || []), { id: randomUUID(), from: 'vendor' as const, body: clean, at: new Date().toISOString() }],
   }))
+  const now = openCase(s2)
+  if (before && now) {
+    const since = fmtCaseDate(now.openedAt)
+    try {
+      await notifyOwners({
+        event: 'vendor_support_message',
+        body: `VENDOR CHASING (asked ${now.asks} times since ${since}${now.overdue ? ', PAST the 72h we promised' : ''}) via WhatsApp (unverified free text)\nBusiness (on file): ${biz}\nFirst ask: "${now.firstAsk.slice(0, 160)}"\nLatest: "${clean.slice(0, 160)}"`,
+        audience: 'all',
+        vendorId: row ? vendorId : undefined,
+      })
+    } catch (e) { console.error('[tool escalate_to_human] chase notify failed:', (e as Error).message) }
+    return now.overdue
+      ? `This has been with the team since ${since}, which is longer than we promised, and I am sorry. I have added your message and pushed it to the top of their list as urgent. They will come back to you here.`
+      : `This is already with the team (since ${since}). I have added your message and marked it urgent. They will come back to you here by ${fmtCaseDate(now.dueAt)}.`
+  }
   try {
     await notifyOwners({
       event: 'vendor_support_message',

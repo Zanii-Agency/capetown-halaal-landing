@@ -8,6 +8,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { withoutMerged } from '@/lib/merge'
 import { findAdmin, type BotAdmin } from '@/lib/bot/admins'
 import { hasEftMarker } from '@/lib/eft'
+import { openCase } from '@/lib/support-case'
 import { computePaymentDue, daysUntil, fmtDate } from '@/lib/exhibitor-paygate'
 
 /**
@@ -51,6 +52,8 @@ export interface ResolvedIdentity {
      *  agent never "corrects" a true confirmation that was for a sibling brand. */
     siblings?: Array<{ business_name: string; status: string; paid: boolean; amount: number | null }>
     paid?: boolean               // this application's stall fee settled (paid/waived/collected)
+    /** What the team owes this vendor right now (lib/support-case.ts), if anything. */
+    openCase?: { since: string; dueAt: string; asks: number; overdue: boolean; firstAsk: string }
     eftLane?: boolean            // TEMPORARY: vendor carries the ⟦EFT⟧ lane marker (lib/eft.ts)
     eftSubmitted?: boolean       // TEMPORARY: vendor uploaded an EFT proof (payment.eft_submitted_at)
   }
@@ -189,6 +192,7 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
         applicationCount: (vendors || []).length,
         otherBusinesses: distinctBusinesses.length > 1 ? distinctBusinesses : undefined,
         paid: hasPaid(portal),
+        openCase: (() => { const c = openCase(portal); return c ? { since: c.openedAt, dueAt: c.dueAt, asks: c.asks, overdue: c.overdue, firstAsk: c.firstAsk.slice(0, 200) } : undefined })(),
         // Tasneem Allie 2026-09-14: her number is WAV-bound to The Salty Shack, The
         // Wok Bar (same number) paid R9,900 and got "Payment received". Seeing only
         // Salty Shack unpaid, the bot told her the confirmation "was wrong". One row

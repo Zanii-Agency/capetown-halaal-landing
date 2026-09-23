@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, type SupportMessage } from '@/lib/portal-state'
 import { laneScopeFor, hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
+import { openCase } from '@/lib/support-case'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,6 +26,9 @@ export interface SupportThread {
   latest_preview: string
   last_inbound_at: string | null
   unread_count: number
+  case_opened_at?: string | null
+  case_due_at?: string | null
+  case_overdue?: boolean
 }
 
 export async function GET() {
@@ -67,10 +71,11 @@ export async function GET() {
     if (!messages.length) continue
     const latest = messages[messages.length - 1]
     const lastIn = [...messages].reverse().find((m) => m.from === 'vendor')
-    const lastOutAt = [...messages].reverse().find((m) => m.from === 'admin')?.at
-    const unread = lastOutAt
-      ? messages.filter((m) => m.from === 'vendor' && m.at > lastOutAt).length
-      : messages.filter((m) => m.from === 'vendor').length
+    // The open CASE (lib/support-case.ts): asks since the team last answered, in the
+    // portal thread OR on WhatsApp/email (supportResolvedAt). Was portal-only, so a
+    // vendor answered on WhatsApp stayed "unread" here for ever.
+    const kase = openCase({ support: messages, supportResolvedAt: state.supportResolvedAt })
+    const unread = kase?.asks ?? 0
     threads.push({
       application_id: row.id as string,
       business_name: (row.business_name as string) || 'Unnamed vendor',
@@ -84,6 +89,9 @@ export async function GET() {
       latest_preview: (latest?.body || '').slice(0, 200),
       last_inbound_at: lastIn?.at || null,
       unread_count: unread,
+      case_opened_at: kase?.openedAt ?? null,
+      case_due_at: kase?.dueAt ?? null,
+      case_overdue: kase?.overdue ?? false,
     })
   }
   threads.sort((a, b) => (b.latest_at || '').localeCompare(a.latest_at || ''))

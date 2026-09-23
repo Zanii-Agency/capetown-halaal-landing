@@ -23,6 +23,7 @@ import { assertRole } from '@/lib/admin-rbac'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { mentionsEft, markVendorToldEft } from '@/lib/eft'
 import { z } from 'zod'
+import { resolveSupportCase } from '@/lib/support-case'
 
 /**
  * Which mailbox does this peer's conversation live on? The two inbound
@@ -112,6 +113,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'text or attachment required' }, { status: 400 })
   }
   const text = body.text?.trim() || ''
+  // A human answered this vendor: close their open case (lib/support-case.ts) so the
+  // To Do and the bot stop treating it as waiting. Every success path returns via this.
+  const done = async <T extends object>(p: T) => { await resolveSupportCase(db, { phone: body.phone, email: body.email }); return okAndRefresh(p) }
 
   // No EFT lane gate (2026-07-26): replying is ordinary support work and both
   // admins see the alerts that prompt it. PAYMENT actions stay walled — see
@@ -143,7 +147,7 @@ export async function POST(req: NextRequest) {
         provider_message_id: res.messageId || null,
         metadata: { sent_by: adminUser.email, attachment: body.attachment.filename },
       })
-      return okAndRefresh({ ok: true, channel: 'whatsapp', via: 'media' })
+      return done({ ok: true, channel: 'whatsapp', via: 'media' })
     }
 
     // Template path: reach a contact who is outside the 24h window.
@@ -162,7 +166,7 @@ export async function POST(req: NextRequest) {
         provider_message_id: res.messageId || null,
         metadata: { sent_by: adminUser.email, via: 'template' },
       })
-      return okAndRefresh({ ok: true, channel: 'whatsapp', via: 'template' })
+      return done({ ok: true, channel: 'whatsapp', via: 'template' })
     }
 
     const res = await sendText(e164, text)
@@ -188,7 +192,7 @@ export async function POST(req: NextRequest) {
     })
     // Told a vendor about EFT -> move their comms onto the Master lane.
     if (mentionsEft(text)) await markVendorToldEft({ phone: e164 })
-    return okAndRefresh({ ok: true, channel: 'whatsapp' })
+    return done({ ok: true, channel: 'whatsapp' })
   }
 
   // email — thread into the recipient's existing conversation.
@@ -241,7 +245,7 @@ export async function POST(req: NextRequest) {
       // in the thread same as a support@ reply does.
       await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ' })
       if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
-      return okAndRefresh({ ok: true, channel: 'email', via: 'gmail' })
+      return done({ ok: true, channel: 'email', via: 'gmail' })
     } catch (e) {
       const msg = (e as Error).message
       console.error('[unified/reply] gmail send failed:', msg)
@@ -262,5 +266,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, channel: 'email', reason: res.error, message: `Email failed: ${res.error}` }, { status: 502 })
   }
   if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
-  return okAndRefresh({ ok: true, channel: 'email', via: 'support' })
+  return done({ ok: true, channel: 'email', via: 'support' })
 }

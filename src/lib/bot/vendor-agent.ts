@@ -16,6 +16,7 @@ import { TOOL_DEFS, executeTool } from '@/lib/bot/tools/registry'
 import { MEMORY_ON } from '@/lib/bot/vendor-memory'
 import { VENDOR_FACTS, VENDOR_FACTS_NO_PAYMENT } from '@/lib/festival-brain/system-prompt'
 import { joburgClockBlock } from '@/lib/joburg-clock'
+import { fmtCaseDate } from '@/lib/support-case'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
 const MAX_TOOL_ROUNDS = 5
@@ -207,6 +208,12 @@ export function vendorContextLines(v: NonNullable<VendorSession['vendor']>): str
   // only, Yoco" rule) asked her for a Yoco confirmation. Her own method is hers.
   if (v.eftLane || v.eftSubmitted) {
     L.push('THIS VENDOR PAYS BY BANK TRANSFER (EFT), not card. A bank payment notification or proof is the normal thing for them to send. Never ask them for a Yoco or card confirmation. Still never state bank or account details yourself: those are in their portal.')
+  }
+  // THE OPEN CASE (lib/support-case.ts). Vendors chased and got a brand-new "passed
+  // to the team, 24 to 72 hours" each time, a fresh promise on top of a broken one.
+  if (v.openCase) {
+    const c = v.openCase
+    L.push(`OPEN REQUEST WITH THE TEAM: "${c.firstAsk}" (open since ${fmtCaseDate(c.since)}, asked ${c.asks} time${c.asks === 1 ? '' : 's'}, answer promised by ${fmtCaseDate(c.dueAt)}${c.overdue ? ', which has PASSED' : ''}). If they chase it or add to it, call escalate_to_human with what they said: it joins this same request and marks it urgent, and it tells you what to say. Never promise a new 24 to 72 hours on it, never say it is sorted unless a tool shows it is, and if the promise has passed, own that plainly.`)
   }
   // Tasneem Allie 2026-09-14: see identity.ts siblings.
   if (v.siblings && v.siblings.length > 0) {

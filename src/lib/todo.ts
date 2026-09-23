@@ -36,6 +36,10 @@ export type TodoItem = {
   /** Plain instruction to the operator: what this needs from her. */
   whatsNeeded: string
   since: string | null
+  /** A vendor case past the 72h the bot promised (lib/support-case.ts). */
+  overdue?: boolean
+  /** Unanswered asks on the case (2+ = the vendor chased). */
+  asks?: number
   /** The tool to run without leaving To Do. */
   action: TodoAction
   /** Deep link, only as a fallback for the full history. */
@@ -59,6 +63,7 @@ type Contact = {
 type SupportThread = {
   application_id: string; business_name: string; contact_name: string | null; email: string | null; phone: string | null
   latest_preview: string; last_inbound_at: string | null; unread_count: number
+  case_opened_at?: string | null; case_due_at?: string | null; case_overdue?: boolean
 }
 
 const internal = (path: string) => new NextRequest(new URL(path, 'http://todo.internal'))
@@ -115,8 +120,9 @@ export async function loadTodo(): Promise<Todo> {
   const threads: SupportThread[] = Array.isArray(supportRes?.threads) ? supportRes.threads : []
   const portal: TodoItem[] = threads.filter((t) => t.unread_count > 0).map((t) => ({
     kind: 'portal_support', title: t.business_name || t.contact_name || 'Vendor', ask: clip(t.latest_preview),
-    whatsNeeded: `Answer ${t.business_name || 'this vendor'}'s question. It came through the portal or the WhatsApp assistant handed it over.`,
-    since: t.last_inbound_at,
+    whatsNeeded: `${t.case_overdue ? 'OVERDUE: we promised an answer within 72 hours and it has passed. ' : ''}Answer ${t.business_name || 'this vendor'}'s question${t.unread_count > 1 ? ` (they have asked ${t.unread_count} times)` : ''}. It came through the portal or the WhatsApp assistant handed it over.`,
+    since: t.case_opened_at ?? t.last_inbound_at,
+    overdue: !!t.case_overdue, asks: t.unread_count,
     action: { type: 'reply_portal', applicationId: t.application_id },
     href: `/admin/vendors/${t.application_id}`, phone: t.phone, email: t.email, applicationId: t.application_id,
   }))
@@ -146,12 +152,15 @@ export async function loadTodo(): Promise<Todo> {
 
   const bySince = (a: TodoItem, b: TodoItem) => (a.since || '') < (b.since || '') ? -1 : 1 // oldest first: the longest wait is the most urgent
   const byRecent = (a: TodoItem, b: TodoItem) => (a.since || '') > (b.since || '') ? -1 : 1 // newest first
+  // Cases: a broken 72h promise first, then vendors who chased, then the longest wait.
+  const byCase = (a: TodoItem, b: TodoItem) =>
+    Number(!!b.overdue) - Number(!!a.overdue) || (b.asks ?? 0) - (a.asks ?? 0) || bySince(a, b)
   const sections: Todo['sections'] = [
     { key: 'eft_proof', label: 'EFT proofs to confirm', items: eft.sort(byRecent) },
     { key: 'whatsapp_reply', label: 'WhatsApp replies owed', items: whatsapp.sort(bySince) },
     { key: 'email_reply', label: 'Email replies owed', items: email.sort(bySince) },
     { key: 'stall_change', label: 'Stall changes to approve', items: stall.sort(byRecent) },
-    { key: 'portal_support', label: 'Special requests from vendors', items: portal.sort(bySince) },
+    { key: 'portal_support', label: 'Special requests from vendors', items: portal.sort(byCase) },
   ]
   return { generatedAt: new Date().toISOString(), total: sections.reduce((s, x) => s + x.items.length, 0), sections }
 }
