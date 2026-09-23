@@ -17,6 +17,9 @@ import { GET as supportThreads } from '@/app/api/admin/support/route'
 import { GET as stallChanges } from '@/app/api/admin/stall-changes/route'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { cleanEmailText } from '@/lib/inbox/email-body'
+import { settledBy, type SettleRow } from '@/lib/support-case'
+import { parsePortalState } from '@/lib/portal-state'
 
 export type TodoAction =
   | { type: 'reply'; channel: 'whatsapp'; phone: string }
@@ -55,7 +58,7 @@ export type Todo = {
   sections: { key: TodoItem['kind']; label: string; items: TodoItem[] }[]
 }
 
-type Contact = {
+export type Contact = {
   application_id?: string | null; business_name?: string | null; contact_name?: string | null
   phone?: string | null; email?: string | null; last_channel?: string | null; mailbox?: string | null
   last_message_at?: string | null; last_preview?: string | null; needs_response?: boolean; unread?: boolean; bot_paused?: boolean
@@ -107,15 +110,11 @@ export async function loadTodo(): Promise<Todo> {
   // still reads inbound — measured 2026-09-07: 7 of 10 were already answered). So
   // we re-derive it from the peer's genuine latest message: an email is owed only
   // if the newest message across that vendor's threads is INBOUND.
-  const emailCandidates = needs.filter((c) => c.last_channel === 'email' && c.application_id && c.email)
-  const stillWaiting = await emailsAwaitingReply(emailCandidates.map((c) => (c.email as string).toLowerCase()))
-  const email: TodoItem[] = emailCandidates.filter((c) => stillWaiting.has((c.email as string).toLowerCase())).map((c) => ({
-    kind: 'email_reply', title: who(c), ask: clip(c.last_preview),
-    whatsNeeded: `Reply by email to ${who(c)}, a vendor waiting on an answer.`,
-    since: c.last_message_at ?? null,
-    action: { type: 'reply', channel: 'email', email: c.email as string },
-    href: '/admin/customer-inbox?view=needs', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
-  }))
+  // 2026-09-23 audit: 60 vendor emails on support@ sat unanswered with NO to-do
+  // card, because (a) only inbox-flagged contacts were candidates and (b) an
+  // AUTOMATED send (a payment reminder) after the vendor's question counted as the
+  // answer. Every vendor contact is a candidate now; only a HUMAN reply answers.
+  const email = await owedVendorEmails(contacts)
 
   const threads: SupportThread[] = Array.isArray(supportRes?.threads) ? supportRes.threads : []
   const portal: TodoItem[] = threads.filter((t) => t.unread_count > 0).map((t) => ({
@@ -166,40 +165,110 @@ export async function loadTodo(): Promise<Todo> {
 }
 
 
+/** Vendor emails on support@ still owed a HUMAN answer, as To Do items. One
+ *  implementation: loadTodo calls it with the viewer-walled inbox contacts. */
+export async function owedVendorEmails(contacts: Contact[]): Promise<TodoItem[]> {
+  const whoOf = (c: Contact) => c.business_name || c.contact_name || c.phone || c.email || 'Unknown'
+  const seenEmail = new Set<string>()
+  const emailCandidates = contacts.filter((c) => {
+    const e = (c.email || '').toLowerCase()
+    if (!c.application_id || !e || seenEmail.has(e)) return false
+    seenEmail.add(e); return true
+  })
+  const stillWaiting = await emailsAwaitingReply(emailCandidates.map((c) => (c.email as string).toLowerCase()))
+  // Settled by what happened next (support-case.ts): an emailed proof followed by a
+  // confirmed payment, "was I accepted?" followed by the decision, a withdrawal.
+  const waitingIds = emailCandidates.filter((c) => stillWaiting.has((c.email as string).toLowerCase())).map((c) => c.application_id as string)
+  const settleRows = new Map<string, SettleRow>()
+  for (let i = 0; i < waitingIds.length; i += 100) {
+    const { data } = await createAdminClient().from('vendor_applications').select('id, status, reviewed_at, paid_at, admin_notes').in('id', waitingIds.slice(i, i + 100))
+    for (const r of (data || []) as Array<SettleRow & { id: string }>) settleRows.set(r.id, r)
+  }
+  const humanWaAt = new Map<string, string>()
+  {
+    const since = [...stillWaiting.values()].map((w) => w.at).sort()[0]
+    if (since) {
+      const { data } = await createAdminClient().from('wa_messages').select('wa_phone, created_at, metadata')
+        .eq('direction', 'out').gte('created_at', since).not('metadata->>sent_by', 'is', null).limit(1000)
+      for (const m of (data || []) as Array<{ wa_phone: string; created_at: string }>) {
+        const k = String(m.wa_phone || '').replace(/\D/g, '').slice(-9)
+        if (m.created_at > (humanWaAt.get(k) || '')) humanWaAt.set(k, m.created_at)
+      }
+    }
+  }
+  const email: TodoItem[] = emailCandidates.filter((c) => {
+    const w = stillWaiting.get((c.email as string).toLowerCase())
+    if (!w) return false
+    const row = settleRows.get(c.application_id as string)
+    if (row && settledBy(`${w.subject} ${w.preview}`, w.at, row)) return false
+    // Answered on another channel: a human WhatsApp reply, or the case was closed
+    // (supportResolvedAt: a human replied through the inbox) after this email.
+    const k = (c.phone || '').replace(/\D/g, '').slice(-9)
+    if (k && (humanWaAt.get(k) || '') > w.at) return false
+    if (row && (parsePortalState(row.admin_notes).supportResolvedAt || '') > w.at) return false
+    return true
+  }).map((c) => {
+    const w = stillWaiting.get((c.email as string).toLowerCase())!
+    return {
+      kind: 'email_reply', title: whoOf(c), ask: clip(w.preview),
+      whatsNeeded: `Reply by email to ${whoOf(c)}, a vendor waiting on an answer.`,
+      since: w.at,
+      action: { type: 'reply', channel: 'email', email: c.email as string, subject: w.subject },
+      href: '/admin/customer-inbox?view=needs', phone: c.phone ?? null, email: c.email ?? null, applicationId: c.application_id ?? null,
+    }
+  })
+
+  return email
+}
+
 /**
- * Which of these vendor emails genuinely still await a reply: the newest message
- * across all of a peer's support threads is INBOUND. Authoritative, unlike the
- * inbox needs_response flag. Two queries, whatever the number of candidates.
+ * Which vendor emails genuinely still await a HUMAN reply on support@: the vendor's
+ * newest real message is later than our newest human reply. A human reply is an
+ * outbound whose subject starts "Re:" (the only reliable human-vs-system signal:
+ * sent_by is never set on email). Automated sends (reminders, confirmations) do not
+ * answer anyone. Samreen's own Gmail is out of scope (Taona 2026-09-23). A bare
+ * "thanks" / "ok" is not a question. Chunked + paged: PostgREST caps at 1000 rows.
  */
-async function emailsAwaitingReply(emails: string[]): Promise<Set<string>> {
-  const waiting = new Set<string>()
+const THANKS_ONLY = /^(thanks?( you)?( so much)?|thank you.*|shukr\w*|jzk|jazak\w*|ok(ay)?|noted|great|perfect|will do|ameen\w*)[\s!.,🙏👍❤️😊]*$/i
+export async function emailsAwaitingReply(emails: string[]): Promise<Map<string, { at: string; preview: string; subject: string }>> {
+  const waiting = new Map<string, { at: string; preview: string; subject: string }>()
   const uniq = Array.from(new Set(emails.filter(Boolean)))
   if (uniq.length === 0) return waiting
   const db = createAdminClient()
-  const { data: threads } = await db
-    .from('support_inbox_threads')
-    .select('id, peer_email')
-    .in('peer_email', uniq)
-  const rows = (threads || []) as Array<{ id: string; peer_email: string | null }>
   const emailByThread = new Map<string, string>()
-  for (const t of rows) if (t.peer_email) emailByThread.set(t.id, t.peer_email.toLowerCase())
-  const threadIds = rows.map((t) => t.id)
-  if (threadIds.length === 0) return waiting
-  const { data: msgs } = await db
-    .from('support_inbox_messages')
-    .select('thread_id, direction, received_at, created_at')
-    .in('thread_id', threadIds)
-  // newest message per email by the true event time (received_at is the sender's
-  // header and can be null/skewed on our own outbound, so coalesce to created_at).
-  const newest = new Map<string, { dir: string; ts: string }>()
-  for (const m of (msgs || []) as Array<{ thread_id: string; direction: string | null; received_at: string | null; created_at: string | null }>) {
-    const email = emailByThread.get(m.thread_id)
-    if (!email) continue
-    const ts = m.received_at || m.created_at || ''
-    const cur = newest.get(email)
-    if (!cur || ts > cur.ts) newest.set(email, { dir: m.direction === 'in' ? 'in' : 'out', ts })
+  for (let i = 0; i < uniq.length; i += 100) {
+    const { data } = await db.from('support_inbox_threads').select('id, peer_email').in('peer_email', uniq.slice(i, i + 100))
+    for (const t of (data || []) as Array<{ id: string; peer_email: string | null }>) if (t.peer_email) emailByThread.set(t.id, t.peer_email.toLowerCase())
   }
-  for (const [email, v] of newest) if (v.dir === 'in') waiting.add(email)
+  const threadIds = [...emailByThread.keys()]
+  type M = { thread_id: string; direction: string | null; subject: string | null; body_text: string | null; received_at: string | null; created_at: string | null }
+  const lastIn = new Map<string, M>(); const lastHuman = new Map<string, string>()
+  for (let i = 0; i < threadIds.length; i += 100) {
+    for (let from = 0; ; from += 1000) {
+      const { data } = await db.from('support_inbox_messages')
+        .select('thread_id, direction, subject, body_text, received_at, created_at')
+        .in('thread_id', threadIds.slice(i, i + 100)).is('mailbox', null)
+        .order('created_at', { ascending: true }).range(from, from + 999)
+      for (const m of (data || []) as M[]) {
+        const email = emailByThread.get(m.thread_id); if (!email) continue
+        const ts = m.received_at || m.created_at || ''
+        if (m.direction === 'in') {
+          const own = cleanEmailText(m.body_text).split(/\n\s*On .+wrote:|\n>|\s+On (Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,? \d|_{8,}|\bFrom: |\bSent from (my|Outlook)|\bGet Outlook/)[0].replace(/\s+/g, ' ').trim()
+          // A thank-you is not a question: exact thanks, or a short note that thanks
+          // us and asks nothing ("Wslm Shukran", "Hi team thanks for letting me know").
+          if (!own || THANKS_ONLY.test(own) || (own.length < 90 && !own.includes('?') && /thank|shukr|jzk|jazak|appreciat/i.test(own))) continue
+          const cur = lastIn.get(email); if (!cur || ts > (cur.received_at || cur.created_at || '')) lastIn.set(email, { ...m, body_text: own })
+        } else if (/^re:/i.test(m.subject || '')) {
+          if (ts > (lastHuman.get(email) || '')) lastHuman.set(email, ts)
+        }
+      }
+      if (!data || data.length < 1000) break
+    }
+  }
+  for (const [email, m] of lastIn) {
+    const at = m.received_at || m.created_at || ''
+    if (at > (lastHuman.get(email) || '')) waiting.set(email, { at, preview: m.body_text || m.subject || '', subject: m.subject || '' })
+  }
   return waiting
 }
 

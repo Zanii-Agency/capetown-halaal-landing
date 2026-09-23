@@ -33,3 +33,28 @@ test('a human answer on WhatsApp/email (supportResolvedAt) closes it too', () =>
   const s = { support: [m('vendor', '2026-09-20T00:00:00Z')], supportResolvedAt: '2026-09-21T00:00:00Z' }
   assert.equal(openCase(s, NOW), null)
 })
+
+import { settledBy } from './support-case'
+import { updatePortalStateImpl } from '@/lib/portal-state'
+const notes = (payment: Record<string, unknown>, extra: Record<string, unknown> = {}) => updatePortalStateImpl('', { v: 1, payment, ...extra } as never)
+
+test('a payment question is settled by a later payment', () => {
+  assert.equal(settledBy('Can I get an extension to pay?', '2026-08-31T09:00:00Z', { admin_notes: notes({ status: 'paid', paid_at: '2026-08-31T16:47:00Z' }) }), 'paid')
+})
+
+test('a later payment does NOT settle an unrelated request (El chapo: remove appliances)', () => {
+  assert.equal(settledBy('Remove the blender and display fridge from my booking', '2026-09-21T08:33:00Z', { admin_notes: notes({ status: 'paid', paid_at: '2026-09-23T08:00:00Z' }) }), null)
+})
+
+test('a payment BEFORE the question settles nothing', () => {
+  assert.equal(settledBy('Where do I pay?', '2026-09-10T00:00:00Z', { admin_notes: notes({ status: 'paid', paid_at: '2026-09-01T00:00:00Z' }) }), null)
+})
+
+test('"was I accepted?" is settled by a later decision; a withdrawal settles anything', () => {
+  assert.equal(settledBy('Was my application accepted?', '2026-07-22T14:00:00Z', { status: 'approved', reviewed_at: '2026-07-26T14:47:00Z' }), 'decided')
+  assert.equal(settledBy('Any question at all', '2026-08-31T07:39:00Z', { admin_notes: notes({}, { withdrawn: { at: '2026-09-01T00:00:00Z' } }) }), 'withdrew')
+})
+
+test('a stall-size request is settled once the stall change is decided', () => {
+  assert.equal(settledBy('I want to change to the Bedouin 2x3 size', '2026-08-31T07:24:00Z', { admin_notes: notes({}, { stallChangeRequest: { requestedTier: 'b', currentTier: 'a', reason: '', status: 'rejected', createdAt: '2026-08-29T00:00:00Z' } }) }), 'stall change decided')
+})

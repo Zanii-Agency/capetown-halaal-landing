@@ -358,6 +358,7 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
         vendorQuery = raw.slice(0, sepIdx).trim()
         note = raw.slice(raw.match(/\s+(?:because|reason:)\s+/)?.[0].length || 0).trim()
       }
+      if (rejectMatch && !note) return { reply: 'Add the reason, it is sent to the vendor: reject <vendor> because <reason>', action: 'none' }
       const matches = await resolveVendorByQuery(vendorQuery)
       if (matches.length === 0) return { reply: `No vendor matches "${vendorQuery}".`, action: 'none' }
       if (matches.length > 1) {

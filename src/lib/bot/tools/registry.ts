@@ -35,7 +35,7 @@ import { CONTRACT_VERSION, cancellationTermsText } from '@/lib/contract/copy'
 import { startVendorVerification } from '@/lib/bot/vendor-session'
 import { buildSendable } from '@/lib/inbox/send-library'
 import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
-import { openCase, fmtCaseDate } from '@/lib/support-case'
+import { openCase, openCaseFor, fmtCaseDate } from '@/lib/support-case'
 
 const PORTAL_LOGIN = 'cthalaal.co.za/exhibitor/login'
 
@@ -1419,7 +1419,7 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
   // ONE CASE PER VENDOR (lib/support-case.ts). A chase joins the open case: it is
   // recorded (the ask count is what ranks it), but it is not a fresh hand-over with
   // a fresh 72h promise, and the vendor is told the truth about where it stands.
-  const before = openCase(parsePortalState(row?.admin_notes as string | null | undefined))
+  const before = row ? openCaseFor(row as { status?: string; admin_notes?: string | null; reviewed_at?: string | null }) : null
   const s2 = await updatePortalState(vendorId, (s) => ({
     ...s,
     support: [...(s.support || []), { id: randomUUID(), from: 'vendor' as const, body: clean, at: new Date().toISOString() }],

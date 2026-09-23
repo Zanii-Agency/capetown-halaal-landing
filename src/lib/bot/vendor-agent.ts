@@ -209,6 +209,14 @@ export function vendorContextLines(v: NonNullable<VendorSession['vendor']>): str
   if (v.eftLane || v.eftSubmitted) {
     L.push('THIS VENDOR PAYS BY BANK TRANSFER (EFT), not card. A bank payment notification or proof is the normal thing for them to send. Never ask them for a Yoco or card confirmation. Still never state bank or account details yourself: those are in their portal.')
   }
+  // Standing answers the team decided (Taona 2026-09-23), so these never become
+  // a hand-over that waits days for a human.
+  if (v.rejectionReason) {
+    L.push(`THIS APPLICATION WAS NOT SUCCESSFUL. The reason recorded by the team: "${v.rejectionReason}". If they ask why, give them exactly that reason, kindly and plainly, and that their details stay on file for future events. Do not hand this over to the team and do not promise a review or reconsideration.`)
+  }
+  if (!v.paid && !v.rejectionReason) {
+    L.push('DOCUMENTS COME AFTER PAYMENT. In the portal a vendor signs the contract first, then pays the stall fee, and only then does the Documents page unlock for uploads. If they ask why they cannot upload documents yet, explain that plainly: pay first, then upload.')
+  }
   // THE OPEN CASE (lib/support-case.ts). Vendors chased and got a brand-new "passed
   // to the team, 24 to 72 hours" each time, a fresh promise on top of a broken one.
   if (v.openCase) {

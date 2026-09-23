@@ -39,7 +39,7 @@ const PAY_URL = `${SITE}/exhibitor/portal/payments`
 const FINAL_SETTLEMENT = new Date('2026-12-11T21:59:59.999Z')
 const MIN_DAYS_BETWEEN = 3
 
-interface AccHistory { history?: { at: string; n: number }[] }
+interface AccHistory { history?: { at: string; n: number }[]; hold_until?: string }
 
 function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
@@ -83,6 +83,9 @@ export async function GET(req: NextRequest) {
     const history = acc.history || []
     const lastSent = history.length ? new Date(history[history.length - 1].at) : null
     if (lastSent && daysBetween(lastSent, today) < MIN_DAYS_BETWEEN) continue
+    // A pay-by date the team agreed (e.g. Frosty Fry's: electricity by 30 Sep):
+    // no chasing before it. Set on portal_state.accessory_reminders.hold_until.
+    if (acc.hold_until && today < new Date(`${acc.hold_until}T23:59:59+02:00`)) continue
 
     // One message per person per run (duplicate approved rows share a phone/email).
     if (!deduper.claim(app as never)) continue

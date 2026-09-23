@@ -78,3 +78,41 @@ export async function resolveSupportCase(
 export function fmtCaseDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', timeZone: 'Africa/Johannesburg' })
 }
+
+// ── Settled by what happened next ─────────────────────────────────────────────
+// 2026-09-23 audit: 21 of 43 "open" cases were already settled, just not by a typed
+// reply: the vendor paid, the application or stall change was decided, or they
+// withdrew. A question counts as answered when a LATER event settles its subject.
+// Keyed on what the ask is about, so paying never closes an unrelated request
+// (El chapo asked to drop R1,000 of appliances; a later payment answers nothing).
+const PAY_ASK = /\b(pay|paid|payment|pop|proof|invoice|extension|instal|split|arrangement|reference|eft|deposit|due date|deadline|fee)\w*/i
+const STATUS_ASK = /\b(accept|approv|application|status|chosen|selected|successful|confirm)\w*/i
+const STALL_ASK = /\b(stall change|upgrade|bigger|smaller|size|move|bedouin|marquee|gazebo|split)\w*/i
+
+export interface SettleRow {
+  status?: string | null
+  reviewed_at?: string | null
+  paid_at?: string | null
+  admin_notes?: string | null
+}
+
+/** Why a question asked at `askedAt` is already settled, or null if it is not. */
+export function settledBy(ask: string, askedAt: string, row: SettleRow): string | null {
+  const s = parsePortalState(row.admin_notes)
+  const withdrawnAt = (s as { withdrawn?: { at?: string } }).withdrawn?.at
+  if (withdrawnAt && withdrawnAt > askedAt) return 'withdrew'
+  const p = s.payment as { paid_at?: string; eft_collected_at?: string } | undefined
+  const paidAt = row.paid_at || p?.paid_at || p?.eft_collected_at
+  if (paidAt && paidAt > askedAt && PAY_ASK.test(ask)) return 'paid'
+  if (row.reviewed_at && row.reviewed_at > askedAt && STATUS_ASK.test(ask) && (row.status === 'approved' || row.status === 'rejected')) return 'decided'
+  const sc = s.stallChangeRequest
+  if (sc && sc.status !== 'pending' && STALL_ASK.test(ask)) return 'stall change decided'
+  return null
+}
+
+/** The open case, unless something that happened after it settled it. */
+export function openCaseFor(row: SettleRow, now = Date.now()): OpenCase | null {
+  const c = openCase(parsePortalState(row.admin_notes), now)
+  if (!c) return null
+  return settledBy(`${c.firstAsk} ${c.latestAsk}`, c.lastAskAt, row) ? null : c
+}

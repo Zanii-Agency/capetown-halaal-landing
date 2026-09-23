@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, type SupportMessage } from '@/lib/portal-state'
 import { laneScopeFor, hidesEftContent, stripEftMessages } from '@/lib/inbox-lane'
-import { openCase } from '@/lib/support-case'
+import { openCase, settledBy } from '@/lib/support-case'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -74,7 +74,9 @@ export async function GET() {
     // The open CASE (lib/support-case.ts): asks since the team last answered, in the
     // portal thread OR on WhatsApp/email (supportResolvedAt). Was portal-only, so a
     // vendor answered on WhatsApp stayed "unread" here for ever.
-    const kase = openCase({ support: messages, supportResolvedAt: state.supportResolvedAt })
+    const raw = openCase({ support: messages, supportResolvedAt: state.supportResolvedAt })
+    // ...unless a later payment / decision / withdrawal already settled it (support-case.ts).
+    const kase = raw && settledBy(`${raw.firstAsk} ${raw.latestAsk}`, raw.lastAskAt, { status: row.app_status as string, paid_at: row.paid_at as string, admin_notes: row.admin_notes as string }) ? null : raw
     const unread = kase?.asks ?? 0
     threads.push({
       application_id: row.id as string,
