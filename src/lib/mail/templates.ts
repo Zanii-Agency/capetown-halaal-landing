@@ -345,3 +345,36 @@ export function validateMailTemplate(
   if (missing.length === 0) return { ok: true }
   return { ok: false, error: `Missing: ${missing.join(', ')}`, missing }
 }
+
+// ---- free text in the branded layout ---------------------------------------
+
+const SIGNOFF_RE = /^(kind|warm|best)?\s*regards\b|^thank(s| you)\b|^sincerely\b|^cheers\b/i
+
+/** Split an operator's typed email into paragraphs (blank line = new paragraph,
+ *  single newline kept) and pull a trailing sign-off off the body so the branded
+ *  layout's own sign-off line uses THEIR words instead of repeating one. */
+export function freeTextParts(text: string): { paragraphs: string[]; signoff?: string } {
+  const paragraphs = text.replace(/\r\n/g, '\n').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+  const last = paragraphs[paragraphs.length - 1]
+  if (last && SIGNOFF_RE.test(last) && last.split('\n').length <= 3) {
+    paragraphs.pop()
+    return { paragraphs, signoff: last.split('\n')[0].trim() }
+  }
+  return { paragraphs }
+}
+
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
+
+/** Free-text email in the SAME branded Campaign layout the templates use (Taona
+ *  2026-09-24: "keep the formatting of the email that would have been sent"). */
+export async function renderFreeTextEmail(text: string, subject: string, unsubscribeUrl?: string | null): Promise<string> {
+  const { paragraphs, signoff } = freeTextParts(text)
+  const bodyHtml = paragraphs.map((p) => `<p style="margin:0 0 16px">${esc(p).replace(/\n/g, '<br/>')}</p>`).join('')
+  return render(createElement(Campaign, {
+    preview: (paragraphs[0] || subject).slice(0, 120),
+    heading: subject,
+    bodyHtml,
+    signoff,
+    unsubscribeUrl: unsubscribeUrl ?? undefined,
+  }))
+}

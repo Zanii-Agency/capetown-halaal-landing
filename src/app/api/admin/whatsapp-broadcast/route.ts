@@ -43,7 +43,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
-import { renderTemplate, TEMPLATE_KEYS, type TemplateKey, type TemplateVars } from '@/lib/mail/templates'
+import { renderTemplate, renderFreeTextEmail, TEMPLATE_KEYS, type TemplateKey, type TemplateVars } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
 import { parseAllocation } from '@/lib/stalls'
@@ -476,15 +476,6 @@ async function renderFreeText(
 ): Promise<{ subject: string; body_text: string; body_html: string }> {
   const body = interpolate(text, vars as InterpolateVars)
   const subj = interpolate(subject, vars as InterpolateVars)
-  const escaped = body.replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c] as string))
-  const html =
-    `<div style="font-family:Inter,Arial,sans-serif;color:#1B1A17;line-height:1.55;font-size:15px">` +
-    escaped.split('\n').map((l) => l.trim().length === 0 ? '<br/>' : `<p style="margin:0 0 12px">${l}</p>`).join('') +
-    (vars.unsubscribe_url
-      ? `<p style="margin-top:24px;font-size:12px;color:#666">Unsubscribe: <a href="${vars.unsubscribe_url}">${vars.unsubscribe_url}</a></p>`
-      : '') +
-    `</div>`
+  const html = await renderFreeTextEmail(body, subj, vars.unsubscribe_url)
   return { subject: subj, body_text: body, body_html: html }
 }

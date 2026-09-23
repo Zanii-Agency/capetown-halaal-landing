@@ -34,7 +34,7 @@ import { laneScopeFor } from '@/lib/inbox-lane'
 import { loadWalledContacts } from '@/lib/broadcast-audience'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
-import { renderTemplate, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
+import { renderTemplate, renderFreeTextEmail, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
 import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, MASTER_LANE_MESSAGE_TEMPLATE_KEYS, PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
@@ -251,11 +251,7 @@ export async function POST(req: NextRequest) {
             const rawText = interpolate(scrub(body.email_body), vars as InterpolateVars)
             subject = scrub(interpolate(body.email_subject || 'A note from Young at Heart Festival', vars as InterpolateVars))
             text = rawText
-            const escaped = rawText.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
-            html = `<div style="font-family:Inter,Arial,sans-serif;color:#1B1A17;line-height:1.55;font-size:15px">` +
-                   escaped.split('\n').map((l) => l.trim() ? `<p style="margin:0 0 12px">${l}</p>` : '<br/>').join('') +
-                   `<p style="margin-top:24px;font-size:12px;color:#666">Unsubscribe: <a href="${unsub}">${unsub}</a></p>` +
-                   `</div>`
+            html = await renderFreeTextEmail(rawText, subject, unsub)
           }
           const send = await sendZaniiMail({
             to: emailRaw,
