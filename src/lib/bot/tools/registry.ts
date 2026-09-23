@@ -1023,6 +1023,19 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   return `Done, you have until ${nice} to settle your stall fee in full. Your spot stays reserved until then, just pay through Payments in your portal when you're ready.`
 }
 
+/** Who is told about a claimed arrangement. A covert master-lane vendor's alert
+ *  carries payment details (amounts, dates, their own words), so it goes to the
+ *  master only, never the festival owner (doctrine review 2026-09-23). */
+export function teamArrangementAudience(
+  vendorId: string,
+  adminNotes: string | null | undefined,
+  rail: import('@/lib/eft').PaymentRail,
+  fullEft: { protectedIds: Set<string> } | null,
+  onCovert: (id: string, n: string | null | undefined, r: import('@/lib/eft').PaymentRail, f: { protectedIds: Set<string> } | null) => boolean,
+): 'master' | 'all' {
+  return onCovert(vendorId, adminNotes, rail, fullEft) ? 'master' : 'all'
+}
+
 /** A vendor says they ALREADY agreed an arrangement with the team (Samreen,
  *  Altaaf...). Taona 2026-09-23: "these are all things the bot should have memory
  *  of". Saves it where the bot, the reminders and the team all see it, and asks
@@ -1032,8 +1045,15 @@ async function logTeamArrangement(vendorId: string, args: { with_whom?: string; 
   const row = await ownRow(vendorId)
   if (!row) return 'I could not load your application just now. Please try again shortly.'
   const st = parsePortalState(row.admin_notes || '')
-  if (st.payment?.status === 'paid' || st.payment?.status === 'collected') {
-    return 'Your stall fee is already settled, thank you, so there is nothing outstanding to arrange.'
+  // Owing, not status: a partial payer on a plan has status 'paid' but still owes.
+  const owing = vendorBill({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier, special_requirements: row.special_requirements, admin_notes: row.admin_notes, paid_at: null }).owing
+  if (st.payment?.status === 'waived' || owing <= 0) {
+    return 'There is nothing outstanding on your stall fee, thank you, so there is nothing to arrange.'
+  }
+  // One active claim at a time: a repeat within 24h is acknowledged, not re-alerted.
+  const prev = st.payment?.arrangement
+  if (prev?.plan_status === 'claimed' && prev.proposed_at && Date.now() - new Date(prev.proposed_at).getTime() < 24 * 3600 * 1000) {
+    return 'Thank you, I already have your arrangement noted and the team has been asked to confirm it. Someone will come back to you here on WhatsApp.'
   }
   const clean = (t: unknown, n: number) => String(t || '').replace(/[\u2013\u2014]/g, ',').replace(/\s+/g, ' ').trim().slice(0, n)
   const who = clean(args.with_whom, 60) || 'the team'
@@ -1069,9 +1089,12 @@ async function logTeamArrangement(vendorId: string, args: { with_whom?: string; 
   }
   await recordVendorAction({ applicationId: vendorId, eventType: 'payment_arrangement_claimed', note: `Says agreed with ${who}: ${details}`.slice(0, 200) }).catch(() => {})
   try {
+    const { getPaymentRail, getFullEftMode, onCovertMasterLane } = await import('@/lib/eft')
+    const audience = teamArrangementAudience(vendorId, row.admin_notes, await getPaymentRail(), await getFullEftMode(), onCovertMasterLane)
     await notifyOwners({
       event: 'system_alert',
       vendorId,
+      audience,
       body: `ARRANGEMENT TO CONFIRM: ${row.business_name || 'a vendor'} says they agreed with ${who}: "${details}".${plan.length ? ` Dates given: ${planSummary(plan)}.` : ' No exact dates given.'}${plan.length && !hasApprovedPlan ? ' Their overdue reminders are paused until then.' : ''}${hasApprovedPlan ? ' Note: they already have an approved plan with us, which was left unchanged.' : ''} Please confirm or correct it with them.`,
     })
   } catch (e) { console.error('[log_team_arrangement] notify failed:', (e as Error).message) }
