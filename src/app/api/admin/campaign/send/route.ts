@@ -8,6 +8,7 @@ import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { requireOperator } from '@/lib/admin-rbac'
 import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 import { recordAdminAction } from '@/lib/zanii-ledger'
+import { loadWalledContacts } from '@/lib/broadcast-audience'
 
 export const maxDuration = 300
 
@@ -116,7 +117,15 @@ export async function POST(request: NextRequest) {
   // This is the source of truth (immune to local-file/ledger drift). excludeEmails remains as a belt-and-braces extra.
   const markNote = (body.markNote || '').trim()
   const exclude = new Set((body.excludeEmails || []).map((e) => (e || '').trim().toLowerCase()))
-  const allRecipients = clean(await getRecipients(audience, testTo, { restrict }))
+  // Per-PERSON master wall on top of getRecipients' per-row test: a master payer's
+  // twin application row (or a ticket-buyer record) must not carry her campaign to
+  // them. Same helper as the broadcast. Fails closed.
+  let allRecipients = clean(await getRecipients(audience, testTo, { restrict }))
+  if (restrict) {
+    const walled = await loadWalledContacts()
+    if (!walled) return NextResponse.json({ error: 'wall_unavailable', hint: 'Could not load the master-lane wall, nothing sent.' }, { status: 503 })
+    allRecipients = allRecipients.filter((r) => !walled.blocks(null, r.email))
+  }
   const recipients = allRecipients.filter(
     (r) =>
       !exclude.has(r.email) &&

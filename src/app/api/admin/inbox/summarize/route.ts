@@ -216,8 +216,7 @@ Return JSON with "summary" and "suggested_replies" (3 short chips).`
       system: OPS_SYSTEM,
       messages: [{ role: 'user', content: user }],
     })
-    const block = resp.content[0]
-    raw = block && block.type === 'text' ? block.text : ''
+    raw = resp.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })
   }

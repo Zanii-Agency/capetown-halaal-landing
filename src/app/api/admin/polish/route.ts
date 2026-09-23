@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       system: SYSTEM,
       messages: [{ role: 'user', content: text }],
     })
-    const out = response.content[0].type === 'text' ? response.content[0].text : ''
+    const out = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
     return NextResponse.json({ text: out })
   } catch (error) {
     console.error('Polish error:', error)

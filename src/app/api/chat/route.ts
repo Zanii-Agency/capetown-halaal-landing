@@ -278,7 +278,7 @@ export async function POST(req: NextRequest) {
       })),
     })
 
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
 
     return NextResponse.json({ message: text })
   } catch (error) {

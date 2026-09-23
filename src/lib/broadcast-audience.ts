@@ -20,6 +20,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState, hasPaid } from '@/lib/portal-state'
 import { parseAllocation } from '@/lib/stalls'
 import { isEftAdmin, vendorCommsInOwnerScope } from '@/lib/eft'
+import { phoneKey } from '@/lib/inbox-lane'
 
 export const AUDIENCE_COLUMNS =
   'id, business_name, contact_name, email, phone, preferred_booth_tier, product_categories, status, admin_notes, paid_at, contract_signed_at'
@@ -244,9 +245,52 @@ export async function buildAudience(
     return []
   }
   const restrict = !isEftAdmin(viewerEmail)
+  const walled = restrict ? await loadWalledContacts() : null
+  if (restrict && !walled) return []
   return ((data || []) as AudienceRow[]).filter(
     (r) =>
       rowMatchesFilters(r, f) &&
-      (!restrict || vendorCommsInOwnerScope(r.admin_notes, r.paid_at)),
+      (!restrict || (vendorCommsInOwnerScope(r.admin_notes, r.paid_at) && !walled!.blocks(r.phone, r.email))),
   )
+}
+
+// THE WALL IS PER PERSON, NOT PER ROW. A blast is sent to a phone/email, so a
+// master payer with a SECOND application row (a pending re-apply, a rejected
+// duplicate) was reachable through that twin: the row test above passed it.
+// 2026-09-23 audit: 6 people, incl. Dailyfresh corn + Melonscape (collected) and
+// The Plug Fragrances (proof on a REJECTED row). Every row of ANY status that
+// fails the comms wall walls its phone (+ ⟦WAV⟧ alternates) and email. Not
+// laneScopeFor: that skips non-approved rows, which would miss The Plug.
+// Two different businesses sharing a phone/email are BOTH walled if either is on
+// the master lane: over-blocking loses one of her blasts, under-blocking leaks.
+// Returns null (caller sends to nobody) when it cannot prove it saw every row.
+export async function loadWalledContacts(): Promise<{ blocks: (phone?: string | null, email?: string | null) => boolean } | null> {
+  const admin = createAdminClient()
+  const phones = new Set<string>()
+  const emails = new Set<string>()
+  const PAGE = 1000
+  let seen = 0
+  let total: number | null = null
+  for (let page = 0; page < 25; page++) {
+    const { data, error, count } = await admin
+      .from('vendor_applications')
+      .select('id, phone, email, admin_notes, paid_at', { count: 'exact' })
+      .order('id', { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1)
+    if (error) { console.error('loadWalledContacts failed, failing closed', error); return null }
+    total = count
+    for (const r of data || []) {
+      if (vendorCommsInOwnerScope(r.admin_notes, r.paid_at)) continue
+      if (r.email) emails.add(r.email.trim().toLowerCase())
+      if (phoneKey(r.phone)) phones.add(phoneKey(r.phone))
+      for (const m of (r.admin_notes || '').matchAll(/WAV(\d{6,})/g)) phones.add(phoneKey(m[1]))
+    }
+    seen += (data || []).length
+    if (!data || data.length < PAGE) break
+  }
+  if (total === null || seen < total) { console.error(`loadWalledContacts saw ${seen}/${total}, failing closed`); return null }
+  return {
+    blocks: (phone, email) =>
+      (!!phoneKey(phone) && phones.has(phoneKey(phone))) || (!!email && emails.has(email.trim().toLowerCase())),
+  }
 }
