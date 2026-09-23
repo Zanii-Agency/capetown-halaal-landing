@@ -30,6 +30,8 @@ export async function mirrorOutboundToSupportInbox(opts: {
   text?: string
   /** Resend email id, so message_id matches the webhook's `resend:<id>` form. */
   providerMessageId?: string
+  /** admin_users.id of the person who wrote it (human email, not a notice). */
+  sentBy?: string | null
 }): Promise<void> {
   try {
     const peerEmail = (opts.to || '').trim().toLowerCase()
@@ -97,6 +99,7 @@ export async function mirrorOutboundToSupportInbox(opts: {
       provider: 'resend' as const,
       provider_message_id: opts.providerMessageId ?? null,
       received_at: nowIso,
+      ...(opts.sentBy ? { sent_by: opts.sentBy } : {}),
     }
 
     const { error: msgErr } = await db.from('support_inbox_messages').insert(row)

@@ -294,7 +294,7 @@ export async function POST(req: NextRequest) {
       // Resend's sendEmail mirrors into the Support Inbox automatically; the
       // raw nodemailer path here must do it explicitly so the reply appears
       // in the thread same as a support@ reply does.
-      await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ' })
+      await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ', sentBy: adminUser.id as string })
       if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
       return done({ ok: true, channel: 'email', via: 'gmail' })
     } catch (e) {
@@ -312,6 +312,7 @@ export async function POST(req: NextRequest) {
       ? [{ filename: body.attachment.filename, content: body.attachment.dataBase64, contentType: body.attachment.contentType }]
       : undefined,
     extraHeaders: inReplyTo ? { 'In-Reply-To': inReplyTo, 'References': inReplyTo } : undefined,
+    sentBy: adminUser.id as string,
   })
   if (!res.ok) {
     return NextResponse.json({ ok: false, channel: 'email', reason: res.error, message: `Email failed: ${res.error}` }, { status: 502 })

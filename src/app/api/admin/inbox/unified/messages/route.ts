@@ -181,7 +181,9 @@ export async function GET(req: NextRequest) {
         // So: outbound + subject not starting "Re:" = system noise the thread can
         // collapse. sent_by is unusable here (never populated). The vendor's own
         // inbound is never auto.
-        const isAuto = out && !/^re:/i.test((m.subject || '').trim())
+        // A new email a PERSON wrote (sent_by set, Taona 2026-09-24: "must show the
+        // subject") is a real conversation even without "Re:".
+        const isAuto = out && !m.sent_by && !/^re:/i.test((m.subject || '').trim())
         const media: MediaInfo[] | undefined = attachments.length
           ? attachments.map((a, i) => ({
               kind: kindForMime(a.mimeType),
