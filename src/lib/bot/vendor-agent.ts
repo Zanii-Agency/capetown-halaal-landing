@@ -196,7 +196,27 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     'Robot: "Please contact support@youngatheart.co.za for further assistance." (when a tool exists)',
   )
   if (verified) parts.push('', eftMode ? VENDOR_FACTS_NO_PAYMENT : VENDOR_FACTS)
+  if (verified && session.vendor) parts.push('', ...vendorContextLines(session.vendor))
   return parts.join('\n')
+}
+
+/** Per-vendor facts the global rules above cannot know. Verified sessions only. */
+export function vendorContextLines(v: NonNullable<VendorSession['vendor']>): string[] {
+  const L: string[] = []
+  // Suade 2026-09-21: paid by bank transfer, the bot (reading the global "card
+  // only, Yoco" rule) asked her for a Yoco confirmation. Her own method is hers.
+  if (v.eftLane || v.eftSubmitted) {
+    L.push('THIS VENDOR PAYS BY BANK TRANSFER (EFT), not card. A bank payment notification or proof is the normal thing for them to send. Never ask them for a Yoco or card confirmation. Still never state bank or account details yourself: those are in their portal.')
+  }
+  // Tasneem Allie 2026-09-14: see identity.ts siblings.
+  if (v.siblings && v.siblings.length > 0) {
+    L.push(`THE SAME PERSON ALSO RUNS OTHER BUSINESSES ON THIS NUMBER. You are serving ${v.business_name} (stall fee ${v.paid ? 'PAID' : 'not yet paid'}). Their other applications:`)
+    for (const s of v.siblings) {
+      L.push(`- ${s.business_name}: application ${s.status}; stall fee ${s.paid ? `PAID${s.amount ? ` (R${s.amount.toLocaleString('en-ZA')})` : ''}` : 'not paid'}.`)
+    }
+    L.push('A payment confirmation or reminder earlier in this chat may have been for one of those other businesses, not this one. NEVER tell them a confirmation was wrong or a payment did not come through because THIS business is unpaid: check which business it was for first, and if it was the other one, say so plainly ("that R5,000 was for Business A, it is paid; Business B is still open"). You can state the other business\'s status above, but act (payments, plans, changes) only on the business you are serving.')
+  }
+  return L
 }
 
 export interface VendorAgentResult {

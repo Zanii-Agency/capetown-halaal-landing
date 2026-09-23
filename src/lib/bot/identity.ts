@@ -47,6 +47,10 @@ export interface ResolvedIdentity {
     tier_label: string | null
     applicationCount?: number    // how many applications this person has (multi-apply)
     otherBusinesses?: string[]   // distinct business names on this phone, set ONLY when >1 (disambiguate)
+    /** The OTHER businesses on this number with their own status + payment, so the
+     *  agent never "corrects" a true confirmation that was for a sibling brand. */
+    siblings?: Array<{ business_name: string; status: string; paid: boolean; amount: number | null }>
+    paid?: boolean               // this application's stall fee settled (paid/waived/collected)
     eftLane?: boolean            // TEMPORARY: vendor carries the ⟦EFT⟧ lane marker (lib/eft.ts)
     eftSubmitted?: boolean       // TEMPORARY: vendor uploaded an EFT proof (payment.eft_submitted_at)
   }
@@ -147,7 +151,7 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
   } | undefined
   if (vendor) {
     const { parseAllocation, tierLabel } = await import('@/lib/stalls')
-    const { parsePortalState } = await import('@/lib/portal-state')
+    const { parsePortalState, hasPaid } = await import('@/lib/portal-state')
     const alloc = parseAllocation(vendor.admin_notes)
     const portal = parsePortalState(vendor.admin_notes)
     const due = computePaymentDue({ reviewed_at: vendor.reviewed_at })
@@ -184,6 +188,24 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
         tier_label: vendor.preferred_booth_tier ? tierLabel(vendor.preferred_booth_tier) : null,
         applicationCount: (vendors || []).length,
         otherBusinesses: distinctBusinesses.length > 1 ? distinctBusinesses : undefined,
+        paid: hasPaid(portal),
+        // Tasneem Allie 2026-09-14: her number is WAV-bound to The Salty Shack, The
+        // Wok Bar (same number) paid R9,900 and got "Payment received". Seeing only
+        // Salty Shack unpaid, the bot told her the confirmation "was wrong". One row
+        // per OTHER business name; same-name duplicates are not a second business.
+        // From `deduped`, NOT `vendors`: preferWaBound collapses a WAV-bound number to
+        // its ONE bound row, which is exactly how The Wok Bar vanished from view.
+        siblings: (deduped || []).length > 1
+          ? ((deduped || []) as Array<{ id: string; business_name?: string | null; status: string; admin_notes: string | null }>)
+              .filter((x: { id: string; business_name?: string | null }) =>
+                x.id !== vendor.id && (x.business_name || '').trim() !== (vendor.business_name || '').trim())
+              .filter((x: { business_name?: string | null }, i: number, arr: Array<{ business_name?: string | null }>) =>
+                arr.findIndex((y) => (y.business_name || '').trim() === (x.business_name || '').trim()) === i)
+              .map((x: { business_name?: string | null; status: string; admin_notes: string | null }) => {
+                const ps = parsePortalState(x.admin_notes)
+                return { business_name: (x.business_name || '').trim(), status: x.status, paid: hasPaid(ps), amount: ps.payment?.amount ?? null }
+              })
+          : undefined,
         eftLane: hasEftMarker(vendor.admin_notes),
         eftSubmitted: !!portal.payment?.eft_submitted_at,
       },
