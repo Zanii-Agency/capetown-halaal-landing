@@ -21,6 +21,7 @@ import { ChevronDown, Mail, MoreHorizontal } from 'lucide-react'
 import type { CommItem } from '@/lib/inbox/types'
 import { fmtSAST, initials } from '@/lib/inbox/format'
 import { MediaBubble } from './MediaBubble'
+import { groupEmailConversations, conversationKey } from '@/lib/inbox/email-conversations'
 
 function Body({ m, quoted }: { m: CommItem; quoted: boolean }) {
   const html = quoted ? m.bodyHtmlQuoted : m.bodyHtml
@@ -164,7 +165,13 @@ function SystemGroup({ items }: { items: CommItem[] }) {
   )
 }
 
-export function EmailThread({ messages }: { messages: CommItem[] }) {
+export function EmailThread({ messages, onReply, replyTo }: {
+  messages: CommItem[]
+  /** Reply into THIS conversation (sets the composer's subject). */
+  onReply?: (title: string) => void
+  /** The conversation the composer is currently replying to. */
+  replyTo?: string | null
+}) {
   if (!messages.length) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-neutral-400">
@@ -173,33 +180,50 @@ export function EmailThread({ messages }: { messages: CommItem[] }) {
       </div>
     )
   }
-  const subject = messages.find((m) => m.subject)?.subject
-  // Expand the newest REAL (non-auto) message; a system notice never auto-opens.
-  const lastRealId = [...messages].reverse().find((m) => !m.auto)?.id
-
-  // Fold consecutive auto messages into one SystemGroup; render real messages
-  // individually in place, so chronology is preserved and the conversation shows.
-  const blocks: Array<{ kind: 'real'; m: CommItem } | { kind: 'auto'; items: CommItem[] }> = []
-  for (const m of messages) {
-    if (m.auto) {
-      const last = blocks[blocks.length - 1]
-      if (last && last.kind === 'auto') last.items.push(m)
-      else blocks.push({ kind: 'auto', items: [m] })
-    } else {
-      blocks.push({ kind: 'real', m })
-    }
-  }
+  // One row per address in the DB, but separate CONVERSATIONS on screen, split by
+  // subject (lib/inbox/email-conversations). Reminder-only subjects are pooled.
+  const { conversations, automated } = groupEmailConversations(messages)
+  const replyKey = replyTo ? conversationKey(replyTo) : null
 
   return (
-    <div className="flex flex-col gap-2 py-2">
-      {subject && (
-        <h2 className="px-1 text-[15px] font-semibold text-neutral-900 leading-snug break-words">{subject}</h2>
-      )}
-      {blocks.map((b, i) =>
-        b.kind === 'auto'
-          ? <SystemGroup key={`sys:${i}`} items={b.items} />
-          : <EmailMessage key={b.m.id} m={b.m} defaultExpanded={b.m.id === lastRealId} />
-      )}
+    <div className="flex flex-col gap-4 py-2">
+      {automated.length > 0 && <SystemGroup items={automated} />}
+      {conversations.map((c, ci) => {
+        const lastRealId = [...c.messages].reverse().find((m) => !m.auto)?.id
+        const blocks: Array<{ kind: 'real'; m: CommItem } | { kind: 'auto'; items: CommItem[] }> = []
+        for (const m of c.messages) {
+          if (m.auto) {
+            const last = blocks[blocks.length - 1]
+            if (last && last.kind === 'auto') last.items.push(m)
+            else blocks.push({ kind: 'auto', items: [m] })
+          } else {
+            blocks.push({ kind: 'real', m })
+          }
+        }
+        const active = replyKey !== null && replyKey === c.key
+        const isLatest = ci === conversations.length - 1
+        return (
+          <section key={c.key || `c${ci}`} className={`flex flex-col gap-2 rounded-xl p-2 ${active ? 'ring-2 ring-[#cd2653]/30 bg-[#cd2653]/[0.03]' : ''}`}>
+            <div className="flex items-start justify-between gap-2 px-1">
+              <h2 className="text-[15px] font-semibold text-neutral-900 leading-snug break-words">{c.title}</h2>
+              {onReply && (
+                <button
+                  type="button"
+                  onClick={() => onReply(c.title)}
+                  className={`shrink-0 text-[12px] font-medium px-2 py-1 rounded-md border transition ${active ? 'border-[#cd2653] text-[#cd2653] bg-white' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'}`}
+                >
+                  {active ? 'Replying here' : 'Reply'}
+                </button>
+              )}
+            </div>
+            {blocks.map((b, i) =>
+              b.kind === 'auto'
+                ? <SystemGroup key={`sys:${ci}:${i}`} items={b.items} />
+                : <EmailMessage key={b.m.id} m={b.m} defaultExpanded={isLatest && b.m.id === lastRealId} />
+            )}
+          </section>
+        )
+      })}
     </div>
   )
 }

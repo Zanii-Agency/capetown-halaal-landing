@@ -65,6 +65,9 @@ const bodySchema = z.object({
   email: z.string().email().max(160).optional(),
   text: z.string().max(4000).optional(),
   subject: z.string().max(200).optional(),
+  // Start a NEW email conversation (vendor profile 'Send Email'): subject required,
+  // no 'Re:', no In-Reply-To, so it never lands inside an older conversation.
+  newThread: z.boolean().optional(),
   // Optional attachment (~4.5MB binary). Email -> Resend attachment; WhatsApp ->
   // uploaded + sent as a media message (in-window only).
   attachment: z.object({
@@ -206,19 +209,33 @@ export async function POST(req: NextRequest) {
     .limit(1)
   const thread = threads?.[0] as { id: string; subject: string | null } | undefined
 
-  let subject = body.subject || thread?.subject || 'Young at Heart Festival'
-  if (thread?.subject && !/^re:/i.test(subject)) subject = 'Re: ' + thread.subject.replace(/^re:\s*/i, '')
-
+  // Three shapes (Taona 2026-09-23 "keep them separate"):
+  //  - newThread: a fresh email, the operator's subject verbatim, not threaded.
+  //  - reply to a chosen conversation: "Re: <that subject>", threaded to ITS last
+  //    message. (This used to overwrite a passed subject with the thread's latest
+  //    subject, so every reply became "Re: <whatever came last>".)
+  //  - no subject: reply to the latest conversation, as before.
+  let subject: string
   let inReplyTo: string | undefined
-  if (thread?.id) {
-    const { data: lastMsg } = await db
-      .from('support_inbox_messages')
-      .select('message_id')
-      .eq('thread_id', thread.id)
-      .not('message_id', 'is', null)
-      .order('received_at', { ascending: false })
-      .limit(1)
-    inReplyTo = (lastMsg?.[0]?.message_id as string | undefined) || undefined
+  if (body.newThread) {
+    subject = (body.subject || '').trim()
+    if (!subject) return NextResponse.json({ error: 'subject required for a new email' }, { status: 400 })
+  } else {
+    const base = (body.subject || thread?.subject || 'Young at Heart Festival').replace(/^\s*((re|fwd?)\s*:\s*)+/i, '').trim()
+    subject = 'Re: ' + base
+    if (thread?.id) {
+      const { data: recent } = await db
+        .from('support_inbox_messages')
+        .select('message_id, subject')
+        .eq('thread_id', thread.id)
+        .not('message_id', 'is', null)
+        .order('received_at', { ascending: false })
+        .limit(50)
+      const { conversationKey } = await import('@/lib/inbox/email-conversations')
+      const want = conversationKey(base)
+      const inConv = (recent || []).find((r) => conversationKey(r.subject as string) === want)
+      inReplyTo = ((inConv || (body.subject ? undefined : recent?.[0]))?.message_id as string | undefined) || undefined
+    }
   }
 
   const mailbox = await mailboxForPeer(db, peer)

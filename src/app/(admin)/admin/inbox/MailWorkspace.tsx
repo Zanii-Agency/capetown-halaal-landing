@@ -52,6 +52,9 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
    *  for something a vendor actually said found nothing. */
   const [bodyHits, setBodyHits] = useState<Set<string>>(new Set())
   const [panelOpen, setPanelOpen] = useState(false)
+  // Which email conversation the composer replies into (by subject). null = latest.
+  const [replyTo, setReplyTo] = useState<string | null>(null)
+  useEffect(() => { setReplyTo(null) }, [activeId])
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -274,7 +277,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
               </header>
 
               <div className="flex-1 overflow-y-auto px-4 py-3">
-                <EmailThread messages={messages} />
+                <EmailThread messages={messages} onReply={setReplyTo} replyTo={replyTo} />
                 <div ref={streamEnd} />
               </div>
 
@@ -285,7 +288,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                   email={active.email}
                   applicationId={active.application_id}
                   sendingAs={sendingAs}
-                  subject={active.subject}
+                  subject={replyTo || active.subject}
                   onSent={() => { if (active) loadMessages(active); loadThreads(true) }}
                   onError={(m) => setError(m)}
                 />
