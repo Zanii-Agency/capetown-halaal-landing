@@ -54,3 +54,16 @@ test('renderMemory surfaces live state, the EFT guard, atoms and emails', () => 
   assert.doesNotMatch(eft, /lane/i) // the bot echoed "payment lane" to Zayaan; internals never reach it
   assert.match(eft, /never state bank or account details/i)
 })
+
+test('renderMemory: a claimed arrangement shows as awaiting team confirmation', () => {
+  const text = renderMemory({
+    business: 'Kulfi Krush', contact: 'Fathima',
+    live: { status: 'approved', payment: 'deferred', amount: null, stall: null, dueDate: null, contractSigned: true, eftLane: false,
+      plan: 'R3 200 by 10 October 2026 (they told us they agreed this with the team, awaiting team confirmation)' },
+    atoms: [{ fact: 'Says they agreed with Samreen: pay in two parts in October. Awaiting team confirmation.', source: 'whatsapp' }],
+    emails: [],
+  })
+  assert.match(text, /payment plan: R3 200 by 10 October 2026 \(they told us they agreed this with the team, awaiting team confirmation\)/)
+  assert.match(text, /Says they agreed with Samreen/)
+  assert.doesNotMatch(text, /[–—]/)
+})

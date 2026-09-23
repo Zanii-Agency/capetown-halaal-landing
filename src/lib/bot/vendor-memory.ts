@@ -21,6 +21,7 @@ import { parseAllocation } from '@/lib/stalls'
 import { hasEftMarker } from '@/lib/eft'
 import { hasPaid } from '@/lib/portal-state'
 import { cleanEmailText } from '@/lib/inbox/email-body'
+import { planSummary } from '@/lib/payments/payment-plan'
 
 /** Flag: the whole memory layer is inert unless this is 'on'. */
 export const MEMORY_ON = (process.env.VENDOR_MEMORY || '').toLowerCase() === 'on'
@@ -59,6 +60,16 @@ export function withAtoms(adminNotes: string | null | undefined, atoms: VendorAt
   return t ? `${t}\n${marker}` : marker
 }
 
+/** Append one durable fact to THIS vendor's memory (keeps the newest 20). Read-
+ *  modify-write of the ⟦MEM⟧ marker only; every other marker is preserved. */
+export async function appendVendorAtom(vendorId: string, atom: VendorAtom): Promise<void> {
+  const db = createAdminClient()
+  const { data } = await db.from('vendor_applications').select('admin_notes').eq('id', vendorId).maybeSingle()
+  if (!data) return
+  const atoms = [...readAtoms(data.admin_notes as string), atom].slice(-20)
+  await db.from('vendor_applications').update({ admin_notes: withAtoms(data.admin_notes as string, atoms) }).eq('id', vendorId)
+}
+
 // ── Recall ────────────────────────────────────────────────────────────────────
 export interface VendorRecall {
   business: string
@@ -70,6 +81,7 @@ export interface VendorRecall {
     stall: string | null
     dueDate: string | null
     contractSigned: boolean
+    plan?: string | null      // agreed payment plan / arrangement, in vendor words
     eftLane: boolean          // on the private lane — the agent must not discuss bank arrangements (banking-guard already enforces)
   }
   atoms: VendorAtom[]
@@ -146,6 +158,12 @@ export async function recallVendorContext(vendorId: string): Promise<VendorRecal
       // contradicting the identity block the agent also sees.
       contractSigned: !!v.contract_signed_at,
       eftLane: hasEftMarker(notes) || p.status === 'collected',
+      plan: (() => {
+        const a = (p as { arrangement?: { installments?: Array<{ date: string; amount: number }>; plan_status?: string } }).arrangement
+        if (!a?.installments?.length || !a.plan_status) return null
+        const tag = a.plan_status === 'claimed' ? 'they told us they agreed this with the team, awaiting team confirmation' : a.plan_status
+        return `${planSummary(a.installments)} (${tag})`
+      })(),
     },
     atoms: readAtoms(notes),
     emails,
@@ -163,7 +181,7 @@ export function renderMemory(r: VendorRecall): string {
   const L: string[] = []
   L.push(`WHAT YOU ALREADY KNOW ABOUT ${r.business}${r.contact ? ` (${r.contact})` : ''}: trust this, do not re-ask what is here.`)
   const money = r.live.amount ? `${r.live.payment} (R${r.live.amount})` : r.live.payment
-  L.push(`Live: application ${r.live.status}; payment ${money}; stall ${r.live.stall || r.live.stall === '' ? (r.live.stall || 'not yet allocated') : 'not yet allocated'}${r.live.dueDate ? `; fee due ${r.live.dueDate}` : ''}; contract ${r.live.contractSigned ? 'signed' : 'not signed'}.`)
+  L.push(`Live: application ${r.live.status}; payment ${money}; stall ${r.live.stall || r.live.stall === '' ? (r.live.stall || 'not yet allocated') : 'not yet allocated'}${r.live.dueDate ? `; fee due ${r.live.dueDate}` : ''}; contract ${r.live.contractSigned ? 'signed' : 'not signed'}${r.live.plan ? `; payment plan: ${r.live.plan}` : ''}.`)
   // NEVER the word "lane": the bot repeated it to Zayaan ("you're on a different
   // payment lane"). Their method is theirs to hear (see vendorContextLines); only
   // account details stay in the portal.

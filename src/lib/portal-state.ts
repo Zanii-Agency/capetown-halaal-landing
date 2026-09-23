@@ -140,7 +140,7 @@ export interface PortalState {
       installments?: Array<{ date: string; amount: number }>
       proposed_at?: string
       approved_at?: string
-      plan_status?: 'pending' | 'approved'
+      plan_status?: 'pending' | 'approved' | 'claimed'
     }
     /** MASTER-LANE SETTLEMENT SCHEDULE (Taona 2026-09-10). A covert master-lane
      *  vendor whose EFT was already collected into ...191, shown to the festival
