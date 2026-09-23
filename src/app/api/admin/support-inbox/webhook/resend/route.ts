@@ -202,7 +202,14 @@ export async function POST(req: NextRequest) {
   try {
     const resend = getResend()
     if (resend) {
-      const full = await resend.emails.get(data.email_id)
+      let full = await resend.emails.get(data.email_id)
+      // Right after email.sent Resend can still return an empty body (2026-09-23:
+      // 21 of 22 replies logged blank, yet the text was there seconds later), so
+      // ask once more before giving up.
+      if (!full?.data?.html && !full?.data?.text) {
+        await new Promise((r) => setTimeout(r, 2000))
+        full = await resend.emails.get(data.email_id)
+      }
       bodyHtml = (full?.data?.html || '').trim() || null
       bodyText = (full?.data?.text || '').trim() || null
     }
