@@ -26,7 +26,12 @@ test('per PERSON: a twin row with another email but a walled phone still holds',
 
 test('handed to her (OWNERVIS row in scope) wins over an old master twin row (The Plug)', () => {
   const walledAll = { blocks: () => true }
-  assert.equal(shouldHoldNewEmail(scope(false), walledAll, 'plug@v.com', [{ id: 'old', phone: '1' }, { id: 'new', phone: '1', handedToOwner: true }]), false)
+  // handed row + master-money twin, no explicit decision -> still held
+  assert.equal(shouldHoldNewEmail(scope(false), walledAll, 'x@v.com', [{ id: 'old', phone: '1' }, { id: 'new', phone: '1', handedToOwner: true, inOwnerScope: true }]), true)
+  // handed row, every row hers -> delivered
+  assert.equal(shouldHoldNewEmail(scope(false), walledAll, 'x@v.com', [{ id: 'new', handedToOwner: true, inOwnerScope: true }]), false)
+  // The Plug: explicit person decision beats its master twin
+  assert.equal(shouldHoldNewEmail(scope(false), walledAll, 'plug@v.com', [{ id: '9ea6035b-5013-4589-98c5-1d732e82a4d0' }, { id: '88ce5038-fe89-4bd9-83cf-433a027c3951', handedToOwner: true, inOwnerScope: true }]), false)
   assert.equal(shouldHoldNewEmail(scope(false), walledAll, 'plug@v.com', [{ id: 'old', phone: '1' }]), true)
   assert.equal(shouldHoldNewEmail(scope(false), null, 'plug@v.com', [{ id: 'new', handedToOwner: true }]), true) // no wall -> still hold
 })

@@ -257,6 +257,7 @@ export async function POST(req: NextRequest) {
       id: r.id as string,
       phone: (r.phone as string | null) ?? null,
       handedToOwner: isOwnerVisible(r.admin_notes as string | null) && vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null),
+      inOwnerScope: vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null),
     }))
     if (personErr || shouldHoldNewEmail(scope, walled, peer, rows)) {
       try {

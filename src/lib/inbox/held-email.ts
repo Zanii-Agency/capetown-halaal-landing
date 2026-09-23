@@ -3,6 +3,12 @@
 // forwarded to the master (Taona 2026-09-23). Fails closed: no provable wall = hold.
 import type { LaneScope } from '@/lib/inbox-lane'
 
+/** Handed rows whose PERSON is hers despite a master-money twin row. Operator
+ *  decisions only, one line each. */
+const PERSON_HANDED_OVER = new Set<string>([
+  '88ce5038-fe89-4bd9-83cf-433a027c3951', // The Plug Fragrances (Taona 2026-09-24: "The Plug stays hers"; rejected twin has a master proof)
+])
+
 export function shouldHoldNewEmail(
   scope: Pick<LaneScope, 'unrestricted' | 'blocks'>,
   walled: { blocks: (phone?: string | null, email?: string | null) => boolean } | null,
@@ -10,14 +16,15 @@ export function shouldHoldNewEmail(
   /** Every application row carrying this email (looked up server-side, never from
    *  the client). The wall is per PERSON: a twin row with a different email but the
    *  same phone as a master payer must hold too (MacSmashed, Melonscape). */
-  rows: Array<{ id?: string | null; phone?: string | null; handedToOwner?: boolean }> = [],
+  rows: Array<{ id?: string | null; phone?: string | null; handedToOwner?: boolean; inOwnerScope?: boolean }> = [],
 ): boolean {
   if (scope.unrestricted) return false
   if (!walled) return true
-  // A row the master explicitly handed to her (⟦OWNERVIS⟧, still in her scope) makes
-  // the PERSON hers, even if an old twin row carries master money (The Plug, Taona
-  // 2026-09-24: "The Plug stays hers").
-  if (rows.some((r) => r.handedToOwner)) return false
+  // A row the master handed to her (⟦OWNERVIS⟧, still in her scope) makes the PERSON
+  // hers, but only when no other row of theirs is outside her scope (master money).
+  // A twin with master money needs an explicit per-person decision: PERSON_HANDED_OVER.
+  const handed = rows.filter((r) => r.handedToOwner)
+  if (handed.length && (rows.every((r) => r.inOwnerScope) || handed.some((r) => PERSON_HANDED_OVER.has(r.id || '')))) return false
   if (scope.blocks({ email }) || walled.blocks(null, email)) return true
   return rows.some((r) => scope.blocks({ email, phone: r.phone ?? null, applicationId: r.id ?? null }) || walled.blocks(r.phone ?? null, email))
 }
