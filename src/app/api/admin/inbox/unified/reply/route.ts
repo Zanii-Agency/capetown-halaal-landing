@@ -231,7 +231,9 @@ export async function POST(req: NextRequest) {
       const { loadWalledContacts } = await import('@/lib/broadcast-audience')
       const walled = await loadWalledContacts()
       const { shouldHoldNewEmail } = await import('@/lib/inbox/held-email')
-      if (shouldHoldNewEmail(scope, walled, peer)) {
+      // Every application row with this email, so a same-phone twin is caught.
+      const { data: personRows } = await db.from('vendor_applications').select('id, phone').ilike('email', peer)
+      if (shouldHoldNewEmail(scope, walled, peer, (personRows || []) as Array<{ id: string; phone: string | null }>)) {
         try {
           const { notifyOwners } = await import('@/lib/bot/notify')
           await notifyOwners({

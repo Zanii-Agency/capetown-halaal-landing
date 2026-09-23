@@ -254,6 +254,30 @@ export async function buildAudience(
   )
 }
 
+/** The vendors a restricted viewer's blast would have matched but who are walled
+ *  from her (paid into master, etc). Taona 2026-09-23: she sees them and it reads as
+ *  sent, but they are NEVER delivered. Kept SEPARATE from buildAudience on purpose:
+ *  the delivery list is unchanged, callers only ADD these to counts and the master
+ *  summary, so no caller can deliver to them by forgetting a flag. Unrestricted
+ *  viewers: []. Wall unavailable: every matching row (buildAudience returns []). */
+export async function buildHeldAudience(
+  f: BroadcastFilters,
+  viewerEmail?: string | null,
+): Promise<AudienceRow[]> {
+  if (isEftAdmin(viewerEmail)) return []
+  const admin = createAdminClient()
+  let q = admin.from('vendor_applications').select(AUDIENCE_COLUMNS)
+  if (f.status) q = q.eq('status', f.status)
+  if (f.booth_tier) q = q.eq('preferred_booth_tier', f.booth_tier)
+  if (f.sector) q = q.contains('product_categories', [f.sector])
+  const { data, error } = await q
+  if (error) return []
+  const walled = await loadWalledContacts()
+  return ((data || []) as AudienceRow[]).filter(
+    (r) => rowMatchesFilters(r, f) && (!walled || !vendorCommsInOwnerScope(r.admin_notes, r.paid_at) || walled.blocks(r.phone, r.email)),
+  )
+}
+
 // THE WALL IS PER PERSON, NOT PER ROW. A blast is sent to a phone/email, so a
 // master payer with a SECOND application row (a pending re-apply, a rejected
 // duplicate) was reachable through that twin: the row test above passed it.

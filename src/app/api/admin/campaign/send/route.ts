@@ -9,6 +9,7 @@ import { requireOperator } from '@/lib/admin-rbac'
 import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 import { loadWalledContacts } from '@/lib/broadcast-audience'
+import { notifyHeldBlast } from '@/lib/inbox/held-email'
 
 export const maxDuration = 300
 
@@ -122,17 +123,30 @@ export async function POST(request: NextRequest) {
   // them. Same helper as the broadcast. Fails closed.
   let allRecipients = clean(await getRecipients(audience, testTo, { restrict }))
   if (restrict) {
+    // Wall unavailable -> deliver to nobody (every recipient is held below).
     const walled = await loadWalledContacts()
-    if (!walled) return NextResponse.json({ error: 'wall_unavailable', hint: 'Could not load the master-lane wall, nothing sent.' }, { status: 503 })
-    allRecipients = allRecipients.filter((r) => !walled.blocks(null, r.email))
+    allRecipients = walled ? allRecipients.filter((r) => !walled.blocks(null, r.email)) : []
+  }
+  // HELD (Taona 2026-09-23): vendors walled from the owner are counted as sent but
+  // NEVER delivered; the master gets one summary. Computed as the unrestricted cohort
+  // minus the deliverable one, so the delivery list above is untouched.
+  let heldRecipients: Recipient[] = []
+  if (restrict && audience !== 'test') {
+    const deliverable = new Set(allRecipients.map((r) => (r.email || '').trim().toLowerCase()))
+    heldRecipients = clean(await getRecipients(audience, testTo, { restrict: false }))
+      .filter((r) => !deliverable.has((r.email || '').trim().toLowerCase()))
   }
   const recipients = allRecipients.filter(
     (r) =>
       !exclude.has(r.email) &&
       !(markNote && (r.notes || '').toLowerCase().includes(markNote.toLowerCase()))
   )
-  const total = recipients.length
-  const excluded = allRecipients.length - total
+  const heldActive = heldRecipients.filter(
+    (r) => !exclude.has(r.email) && !(markNote && (r.notes || '').toLowerCase().includes(markNote.toLowerCase())),
+  )
+  const heldCount = heldActive.length
+  const total = recipients.length // pagination runs over the deliverable list only
+  const excluded = allRecipients.length - recipients.length
 
   // Resumable batching: offset slices into the deterministic ordered cohort so multi-call sends are non-overlapping.
   const offset = Math.max(0, Math.floor(body.offset ?? 0))
@@ -151,10 +165,10 @@ export async function POST(request: NextRequest) {
       dryRun: true,
       audience,
       subject,
-      total,
+      total: total + heldCount,
       excluded,
       offset,
-      willSend,
+      willSend: offset === 0 ? willSend + heldCount : willSend,
       nextOffset,
       remainingFromOffset,
       skippedOverCap,
@@ -228,6 +242,12 @@ export async function POST(request: NextRequest) {
     if (PACE_MS) await new Promise((res) => setTimeout(res, PACE_MS))
   }
 
+  // Held vendors are tallied once, on the first page, and never touch Resend.
+  if (offset === 0 && heldCount > 0) {
+    sent += heldCount
+    await notifyHeldBlast({ viewer: auth.viewerEmail ?? null, tool: 'campaign', names: heldActive.map((r) => r.email), channel: 'email', subject })
+  }
+
   await recordAdminAction({
     actor: { email: auth.viewerEmail ?? null, role: null },
     action: 'campaign_send',
@@ -237,7 +257,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     audience,
     subject,
-    total,
+    total: total + heldCount,
     excluded,
     offset,
     sent,

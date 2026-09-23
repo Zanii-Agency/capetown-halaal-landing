@@ -16,3 +16,10 @@ test('owner: walled vendor held (lane scope OR per-person wall), ordinary vendor
 test('owner: wall cannot load -> hold (fail closed)', () => {
   assert.equal(shouldHoldNewEmail(scope(false), null, 'hers@v.com'), true)
 })
+
+test('per PERSON: a twin row with another email but a walled phone still holds', () => {
+  const scopeByPhone = { unrestricted: false, blocks: (x: { phone?: string | null }) => x.phone === '27820000000' }
+  const wallByPhone = { blocks: (p?: string | null) => p === '27820000000' }
+  assert.equal(shouldHoldNewEmail(scopeByPhone, wallByPhone, 'other@v.com', [{ id: 'twin', phone: '27820000000' }]), true)
+  assert.equal(shouldHoldNewEmail(scopeByPhone, wallByPhone, 'other@v.com', [{ id: 'x', phone: '27830000000' }]), false)
+})

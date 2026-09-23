@@ -27,6 +27,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { notifyHeldBlast } from '@/lib/inbox/held-email'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { laneScopeFor } from '@/lib/inbox-lane'
@@ -165,23 +166,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'unknown wa_template' }, { status: 400 })
   }
 
-  // EFT lane: a chase is a PAYMENT message, so sending one to a master-lane vendor
-  // actively contradicts the EFT arrangement being run for them. Reject the whole
-  // batch rather than silently dropping recipients — a partial send that reports
-  // success is how an operator concludes a vendor was chased when they were not.
+  // EFT lane: a chase is a PAYMENT message and must never reach a master-lane
+  // vendor from the owner. It used to REFUSE the batch with "these vendors are on the
+  // EFT master lane", which told her the lane exists. Now (Taona 2026-09-23) walled
+  // recipients are HELD: they read as sent, are never delivered, and the master gets
+  // one summary. laneScopeFor skips non-approved rows, so the per-person wall covers
+  // twins (The Plug). Wall unavailable -> hold everyone (fail closed, no error).
+  let sendList = recipients
+  let heldList: typeof recipients = []
   {
     const scope = await laneScopeFor(gate.adminUser.email)
-    // laneScopeFor skips non-approved rows, so a master payer whose EFT trace sits on
-    // a rejected/pending row (The Plug Fragrances) was not blocked here. The
-    // per-person wall covers every row; null = cannot prove the wall, send nothing.
-    const walled = scope.unrestricted ? null : await loadWalledContacts()
-    if (!scope.unrestricted && !walled) return NextResponse.json({ error: 'wall_unavailable' }, { status: 503 })
-    const blocked = recipients.filter((r) => scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }) || !!walled?.blocks(r.phone, r.email))
-    if (blocked.length > 0) {
-      return NextResponse.json(
-        { error: 'eft_lane_recipients', blocked: blocked.length, hint: 'These vendors are on the EFT master lane. The EFT admin handles their payment comms.' },
-        { status: 403 },
-      )
+    if (!scope.unrestricted) {
+      const walled = await loadWalledContacts()
+      const isHeld = (r: (typeof recipients)[number]) => !walled || scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }) || walled.blocks(r.phone, r.email)
+      heldList = recipients.filter(isHeld)
+      sendList = recipients.filter((r) => !isHeld(r))
     }
   }
 
@@ -207,7 +206,7 @@ export async function POST(req: NextRequest) {
     errors: [] as Array<{ kind: 'mail' | 'wa'; to: string; error: string }>,
   }
 
-  for (const r of recipients) {
+  for (const r of sendList) {
     const vars: TemplateVars = {
       first_name: firstName(r.name),
       business_name: r.business_name || null,
@@ -345,5 +344,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // HELD tally: counters only, no send call (see the lane note above).
+  const heldNames: string[] = []
+  for (const r of heldList) {
+    const em = (r.email || '').trim().toLowerCase()
+    const ph = (r.phone || '').replace(/[^0-9]/g, '')
+    if ((channel === 'mail' || channel === 'both') && em && !seenEmails.has(em)) { seenEmails.add(em); results.mail.attempted++; results.mail.sent++ }
+    if ((channel === 'wa' || channel === 'both') && ph.length >= 9 && !seenPhones.has(ph)) { seenPhones.add(ph); results.wa.attempted++; results.wa.sent++ }
+    heldNames.push(r.business_name || r.name || em || ph)
+  }
+  if (!dryRun) {
+    await notifyHeldBlast({ viewer: gate.adminUser.email, tool: 'chase', names: heldNames, channel, subject: body.template_key || null, preview: body.email_body || body.wa_body || body.custom_vars?.custom_message || null })
+  }
   return NextResponse.json(results)
 }
