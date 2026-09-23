@@ -740,3 +740,12 @@ test('doctrine 2026-09-23: MASTER money never counts as a Samreen payer, even if
   // manual (finance capture) is master: never a card payer
   assert.equal(paidSamreenVia(paidNotes({ status: 'paid', method: 'manual', amount: 3700 })), null)
 })
+
+test('doctrine re-review 2026-09-23: accessory-side master money also disqualifies', () => {
+  const accMaster = withEftMarker(paidNotes({ status: 'paid', method: 'yoco', amount: 6500, acc: { amount: 1500, collected_at: '2026-09-14' } }))
+  assert.equal(paidSamreenVia(accMaster), null)
+  assert.equal(onCovertMasterLane('x', accMaster, 'samreen_eft', null), true)
+  const accProofMaster = paidNotes({ status: 'paid', method: 'yoco', amount: 6500,
+    proofs: [{ path: 'a', kind: 'eft_accessories', uploaded_at: '2026-09-14', account: 'master' }] })
+  assert.equal(paidSamreenVia(accProofMaster), null, 'an older/accessory master proof counts too')
+})

@@ -927,17 +927,17 @@ export function eftProofVisibleToOwner(
  *  tags do NOT count (Coconuts' proof was tagged master but paid …629).
  *  MASTER money never counts, even if it was later settled through Yoco (doctrine
  *  review 2026-09-23): presented_eft, a master COLLECT (eft_collected_at /
- *  status 'collected' are written only by markEftCollected, the master tool), or a
- *  newest stall proof stamped 'master'. Channel is decided by EFT EVIDENCE, not the
+ *  status 'collected' are written only by markEftCollected, the master tool), a master
+ *  accessory collect, or ANY proof stamped 'master'. Channel is decided by EFT EVIDENCE, not the
  *  method label (Vanilla Cream: method 'yoco' but paid by EFT). */
 export function paidSamreenVia(adminNotes: string | null | undefined): 'yoco' | 'eft' | null {
   const p = parsePortalState(adminNotes).payment
   if (!(Number(p?.amount) > 0) || p?.presented_eft) return null
   if (p?.eft_collected_at || p?.status === 'collected') return null
-  const newestStall = (p?.proofs || [])
-    .filter((f) => f.kind === 'eft_submission')
-    .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
-  if (newestStall?.account === 'master') return null
+  // Any master trace on EITHER side (stall or accessories) = master money in play:
+  // a master accessory collect (markAccessoriesCollected) or ANY proof stamped master.
+  if (p?.acc?.collected_at) return null
+  if ((p?.proofs || []).some((f) => f.account === 'master')) return null
   const method = String(p?.method || '')
   if (method === 'samreen_eft') return 'eft'
   if (method !== 'yoco' && method !== 'cash') return null
