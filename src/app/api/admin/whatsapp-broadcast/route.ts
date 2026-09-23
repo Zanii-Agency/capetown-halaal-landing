@@ -474,8 +474,9 @@ async function renderFreeText(
   subject: string,
   vars: TemplateVars & { unsubscribe_url?: string },
 ): Promise<{ subject: string; body_text: string; body_html: string }> {
-  const body = interpolate(text, vars as InterpolateVars)
-  const subj = interpolate(subject, vars as InterpolateVars)
+  // Law 7: no em/en dashes in the vendor-facing subject or body.
+  const body = interpolate(text, vars as InterpolateVars).replace(/\s*[\u2013\u2014]\s*/g, ', ')
+  const subj = interpolate(subject, vars as InterpolateVars).replace(/\s*[\u2013\u2014]\s*/g, ', ')
   const html = await renderFreeTextEmail(body, subj, vars.unsubscribe_url)
   return { subject: subj, body_text: body, body_html: html }
 }

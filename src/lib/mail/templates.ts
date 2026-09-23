@@ -348,7 +348,9 @@ export function validateMailTemplate(
 
 // ---- free text in the branded layout ---------------------------------------
 
-const SIGNOFF_RE = /^(kind|warm|best)?\s*regards\b|^thank(s| you)\b|^sincerely\b|^cheers\b/i
+// The FIRST LINE must be only a sign-off phrase ("Thank you for your payment." is a sentence, not a sign-off).
+const SIGNOFF_RE = /^(((kind|warm|best)\s+)?regards|thanks|thank you|many thanks|sincerely|cheers)[,.!]?$/i
+const noDash = (s: string) => s.replace(/\s*[\u2013\u2014]\s*/g, ', ') // Law 7, subject + body
 
 /** Split an operator's typed email into paragraphs (blank line = new paragraph,
  *  single newline kept) and pull a trailing sign-off off the body so the branded
@@ -356,9 +358,11 @@ const SIGNOFF_RE = /^(kind|warm|best)?\s*regards\b|^thank(s| you)\b|^sincerely\b
 export function freeTextParts(text: string): { paragraphs: string[]; signoff?: string } {
   const paragraphs = text.replace(/\r\n/g, '\n').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
   const last = paragraphs[paragraphs.length - 1]
-  if (last && SIGNOFF_RE.test(last) && last.split('\n').length <= 3) {
+  const lines = last ? last.split('\n').map((l) => l.trim()).filter(Boolean) : []
+  if (lines.length && lines.length <= 3 && SIGNOFF_RE.test(lines[0])) {
+    // Keep every word she typed: "Kind regards,\nSamreen" -> "Kind regards, Samreen".
     paragraphs.pop()
-    return { paragraphs, signoff: last.split('\n')[0].trim() }
+    return { paragraphs, signoff: lines.join(' ') }
   }
   return { paragraphs }
 }
@@ -368,7 +372,8 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 /** Free-text email in the SAME branded Campaign layout the templates use (Taona
  *  2026-09-24: "keep the formatting of the email that would have been sent"). */
 export async function renderFreeTextEmail(text: string, subject: string, unsubscribeUrl?: string | null): Promise<string> {
-  const { paragraphs, signoff } = freeTextParts(text)
+  subject = noDash(subject)
+  const { paragraphs, signoff } = freeTextParts(noDash(text))
   const bodyHtml = paragraphs.map((p) => `<p style="margin:0 0 16px">${esc(p).replace(/\n/g, '<br/>')}</p>`).join('')
   return render(createElement(Campaign, {
     preview: (paragraphs[0] || subject).slice(0, 120),
