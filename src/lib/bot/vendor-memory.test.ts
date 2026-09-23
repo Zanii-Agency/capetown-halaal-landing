@@ -43,7 +43,7 @@ test('renderMemory surfaces live state, the EFT guard, atoms and emails', () => 
   assert.match(block, /approved/)
   assert.match(block, /Extension to 31 Aug/)
   assert.match(block, /agreed by the team/) // operator source annotation
-  assert.match(block, /emailed support/)
+  assert.match(block, /email thread with the team/)
 
   // EFT lane vendor gets the no-bank-details guard line.
   const eft = renderMemory({
@@ -51,6 +51,6 @@ test('renderMemory surfaces live state, the EFT guard, atoms and emails', () => 
     live: { status: 'approved', payment: 'collected', amount: 3700, stall: null, dueDate: null, contractSigned: false, eftLane: true },
     atoms: [], emails: [],
   })
-  assert.match(eft, /private payment lane/i)
-  assert.match(eft, /do not discuss bank details/i)
+  assert.doesNotMatch(eft, /lane/i) // the bot echoed "payment lane" to Zayaan; internals never reach it
+  assert.match(eft, /never state bank or account details/i)
 })
