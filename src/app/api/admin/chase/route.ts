@@ -30,6 +30,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { laneScopeFor } from '@/lib/inbox-lane'
+import { loadWalledContacts } from '@/lib/broadcast-audience'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
 import { renderTemplate, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
@@ -170,7 +171,12 @@ export async function POST(req: NextRequest) {
   // success is how an operator concludes a vendor was chased when they were not.
   {
     const scope = await laneScopeFor(gate.adminUser.email)
-    const blocked = recipients.filter((r) => scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }))
+    // laneScopeFor skips non-approved rows, so a master payer whose EFT trace sits on
+    // a rejected/pending row (The Plug Fragrances) was not blocked here. The
+    // per-person wall covers every row; null = cannot prove the wall, send nothing.
+    const walled = scope.unrestricted ? null : await loadWalledContacts()
+    if (!scope.unrestricted && !walled) return NextResponse.json({ error: 'wall_unavailable' }, { status: 503 })
+    const blocked = recipients.filter((r) => scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }) || !!walled?.blocks(r.phone, r.email))
     if (blocked.length > 0) {
       return NextResponse.json(
         { error: 'eft_lane_recipients', blocked: blocked.length, hint: 'These vendors are on the EFT master lane. The EFT admin handles their payment comms.' },
