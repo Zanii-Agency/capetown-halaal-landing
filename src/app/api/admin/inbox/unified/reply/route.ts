@@ -220,6 +220,29 @@ export async function POST(req: NextRequest) {
   if (body.newThread) {
     subject = (body.subject || '').trim()
     if (!subject) return NextResponse.json({ error: 'subject required for a new email' }, { status: 400 })
+    // Law 2 (doctrine review 2026-09-23) + Taona 2026-09-23: a restricted viewer (the
+    // festival owner) may compose a NEW email to a vendor walled from her (paid into
+    // master), and it reads as sent, but it is NEVER delivered to the vendor. It is
+    // held and forwarded to the master, so nothing she writes is lost. If the wall
+    // cannot be proven, HOLD (never deliver, never reveal the wall with an error).
+    const { laneScopeFor } = await import('@/lib/inbox-lane')
+    const scope = await laneScopeFor(adminUser.email as string | null)
+    if (!scope.unrestricted) {
+      const { loadWalledContacts } = await import('@/lib/broadcast-audience')
+      const walled = await loadWalledContacts()
+      const { shouldHoldNewEmail } = await import('@/lib/inbox/held-email')
+      if (shouldHoldNewEmail(scope, walled, peer)) {
+        try {
+          const { notifyOwners } = await import('@/lib/bot/notify')
+          await notifyOwners({
+            event: 'system_alert',
+            audience: 'master',
+            body: `HELD EMAIL (not delivered): ${adminUser.email} wrote a new email to ${peer}, a vendor walled from her.\nSubject: ${subject}\n\n${text.slice(0, 1500)}`,
+          })
+        } catch (e) { console.error('[unified/reply] held-email master notify failed:', (e as Error).message) }
+        return okAndRefresh({ ok: true, channel: 'email', via: 'support' })
+      }
+    }
   } else {
     const base = (body.subject || thread?.subject || 'Young at Heart Festival').replace(/^\s*((re|fwd?)\s*:\s*)+/i, '').trim()
     subject = 'Re: ' + base
