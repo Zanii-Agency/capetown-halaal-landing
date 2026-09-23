@@ -220,32 +220,6 @@ export async function POST(req: NextRequest) {
   if (body.newThread) {
     subject = (body.subject || '').trim()
     if (!subject) return NextResponse.json({ error: 'subject required for a new email' }, { status: 400 })
-    // Law 2 (doctrine review 2026-09-23) + Taona 2026-09-23: a restricted viewer (the
-    // festival owner) may compose a NEW email to a vendor walled from her (paid into
-    // master), and it reads as sent, but it is NEVER delivered to the vendor. It is
-    // held and forwarded to the master, so nothing she writes is lost. If the wall
-    // cannot be proven, HOLD (never deliver, never reveal the wall with an error).
-    const { laneScopeFor } = await import('@/lib/inbox-lane')
-    const scope = await laneScopeFor(adminUser.email as string | null)
-    if (!scope.unrestricted) {
-      const { loadWalledContacts } = await import('@/lib/broadcast-audience')
-      const walled = await loadWalledContacts()
-      const { shouldHoldNewEmail } = await import('@/lib/inbox/held-email')
-      // Every application row with this email, so a same-phone twin is caught.
-      const { data: personRows, error: personErr } = await db.from('vendor_applications').select('id, phone').ilike('email', peer)
-      // Lookup error -> hold (fail closed; email-only would miss a phone-walled twin).
-      if (personErr || shouldHoldNewEmail(scope, walled, peer, (personRows || []) as Array<{ id: string; phone: string | null }>)) {
-        try {
-          const { notifyOwners } = await import('@/lib/bot/notify')
-          await notifyOwners({
-            event: 'system_alert',
-            audience: 'master',
-            body: `HELD EMAIL (not delivered): ${adminUser.email} wrote a new email to ${peer}, a vendor walled from her.\nSubject: ${subject}\n\n${text.slice(0, 1500)}`,
-          })
-        } catch (e) { console.error('[unified/reply] held-email master notify failed:', (e as Error).message) }
-        return okAndRefresh({ ok: true, channel: 'email', via: 'support' })
-      }
-    }
   } else {
     const base = (body.subject || thread?.subject || 'Young at Heart Festival').replace(/^\s*((re|fwd?)\s*:\s*)+/i, '').trim()
     subject = 'Re: ' + base
@@ -261,6 +235,39 @@ export async function POST(req: NextRequest) {
       const want = conversationKey(base)
       const inConv = (recent || []).find((r) => conversationKey(r.subject as string) === want)
       inReplyTo = ((inConv || (body.subject ? undefined : recent?.[0]))?.message_id as string | undefined) || undefined
+    }
+  }
+
+  // Law 2 (doctrine review 2026-09-23) + Taona 2026-09-23: a restricted viewer (the
+  // festival owner) may email a vendor walled from her (paid into master; new email OR reply,
+  // Taona 2026-09-24), and it reads as sent, but it is NEVER delivered to the vendor. It is
+  // held and forwarded to the master, so nothing she writes is lost. If the wall
+  // cannot be proven, HOLD (never deliver, never reveal the wall with an error).
+  const { laneScopeFor } = await import('@/lib/inbox-lane')
+  const scope = await laneScopeFor(adminUser.email as string | null)
+  if (!scope.unrestricted) {
+    const { loadWalledContacts } = await import('@/lib/broadcast-audience')
+    const walled = await loadWalledContacts()
+    const { shouldHoldNewEmail } = await import('@/lib/inbox/held-email')
+    // Every application row with this email, so a same-phone twin is caught.
+    const { data: personRows, error: personErr } = await db.from('vendor_applications').select('id, phone, admin_notes, paid_at').ilike('email', peer)
+    // Lookup error -> hold (fail closed; email-only would miss a phone-walled twin).
+    const { isOwnerVisible, vendorInOwnerScope } = await import('@/lib/eft')
+    const rows = (personRows || []).map((r) => ({
+      id: r.id as string,
+      phone: (r.phone as string | null) ?? null,
+      handedToOwner: isOwnerVisible(r.admin_notes as string | null) && vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null),
+    }))
+    if (personErr || shouldHoldNewEmail(scope, walled, peer, rows)) {
+      try {
+        const { notifyOwners } = await import('@/lib/bot/notify')
+        await notifyOwners({
+          event: 'system_alert',
+          audience: 'master',
+          body: `HELD EMAIL (not delivered): ${adminUser.email} wrote ${body.newThread ? 'a new email' : 'a reply'} to ${peer}, a vendor walled from her.\nSubject: ${subject}\n\n${text.slice(0, 1500)}`,
+        })
+      } catch (e) { console.error('[unified/reply] held-email master notify failed:', (e as Error).message) }
+      return okAndRefresh({ ok: true, channel: 'email', via: 'support' })
     }
   }
 

@@ -23,3 +23,10 @@ test('per PERSON: a twin row with another email but a walled phone still holds',
   assert.equal(shouldHoldNewEmail(scopeByPhone, wallByPhone, 'other@v.com', [{ id: 'twin', phone: '27820000000' }]), true)
   assert.equal(shouldHoldNewEmail(scopeByPhone, wallByPhone, 'other@v.com', [{ id: 'x', phone: '27830000000' }]), false)
 })
+
+test('handed to her (OWNERVIS row in scope) wins over an old master twin row (The Plug)', () => {
+  const walledAll = { blocks: () => true }
+  assert.equal(shouldHoldNewEmail(scope(false), walledAll, 'plug@v.com', [{ id: 'old', phone: '1' }, { id: 'new', phone: '1', handedToOwner: true }]), false)
+  assert.equal(shouldHoldNewEmail(scope(false), walledAll, 'plug@v.com', [{ id: 'old', phone: '1' }]), true)
+  assert.equal(shouldHoldNewEmail(scope(false), null, 'plug@v.com', [{ id: 'new', handedToOwner: true }]), true) // no wall -> still hold
+})
