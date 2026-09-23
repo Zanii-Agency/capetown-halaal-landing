@@ -12,9 +12,9 @@
 // on a single sentence; the human gets a draft + count + explicit YES gate.
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode } from '@/lib/eft'
 import { matchSegment, segmentCount, SEGMENT_LABELS, type SegmentKey } from './segments'
 import { runBlast, type BlastTemplate } from './blast'
+import { loadWalledContacts } from '@/lib/broadcast-audience'
 import type { BotAdmin } from './admins'
 import { sendText, toE164 } from '@/lib/whatsapp'
 import { escalateToHuman } from './handover'
@@ -257,21 +257,26 @@ export interface AdminChatResult {
 
 // Public entrypoint — handle one inbound admin message.
 export async function handleAdminMessage(admin: BotAdmin, text: string): Promise<AdminChatResult> {
+  try {
+    return await handleAdminMessageInner(admin, text)
+  } catch (e) {
+    // The owner wall throws when it cannot load (fail closed). Say so instead of
+    // going silent, so she knows to retry rather than think it was sent.
+    console.error('[admin-chat] failed:', (e as Error).message)
+    return { reply: 'Something did not load on my side, nothing was sent. Please try again in a minute.', action: 'none' }
+  }
+}
+
+async function handleAdminMessageInner(admin: BotAdmin, text: string): Promise<AdminChatResult> {
   const t = text.trim()
   const lower = t.toLowerCase()
   const adminPhone = admin.phone
 
-  // EFT-mode wall: while global EFT mode is ON, the bot must not surface payment
-  // numbers, segment counts, drafts or blasts to the festival owner (Samreen).
-  // Taona handles all payment ops on his side. She can still message the bot, and
-  // the webhook still mirrors her message to him; this just walls the DATA and
-  // action paths to a neutral reply so nothing leaks. Reverts when EFT mode is off.
-  if (admin.role === 'festival_owner' && (await getEftMode())) {
-    return {
-      reply: `Thanks ${admin.name.split(' ')[0]}. While the payment period is running, Taona is handling all the payment numbers, vendor lists and emails directly, so I am keeping those on his side for now. I have passed your message on to him, and I am here for anything else.`,
-      action: 'none',
-    }
-  }
+  // Samreen's world. Her stats and blasts are walled per recipient (segments.ts
+  // ownerView), so master-lane payers are never counted or reached. This replaced
+  // a whole-surface lock (2026-09-23) that refused her everything while EFT mode
+  // was on and walled NOTHING while it was off.
+  const ownerView = admin.role === 'festival_owner'
 
   // (1) Confirmation / cancellation of a pending action.
   const confirmMatch = t.match(/^(?:confirm|yes\s+send|approve)\s*([A-Z0-9]{3,8})?/i)
@@ -296,6 +301,7 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
     await consumePending(adminPhone, pending.code)
     if (pending.kind === 'blast') {
       const result = await runBlast({
+        ownerView,
         segment: pending.segment,
         template: pending.template,
         subject: pending.subject,
@@ -335,7 +341,7 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
 
   // (2) Stats queries.
   if (/\b(how many|count|stats|status|update|summary)\b/.test(lower)) {
-    const counts = await Promise.all((['pending', 'approved', 'approved_paid', 'approved_unpaid', 'rejected', 'info_requested', 'ticket_buyers'] as SegmentKey[]).map(async (k) => `${SEGMENT_LABELS[k]}: ${await segmentCount(k)}`))
+    const counts = await Promise.all((['pending', 'approved', 'approved_paid', 'approved_unpaid', 'rejected', 'info_requested', 'ticket_buyers'] as SegmentKey[]).map(async (k) => `${SEGMENT_LABELS[k]}: ${await segmentCount(k, { ownerView })}`))
     return { reply: 'Current numbers:\n\n' + counts.join('\n') + '\n\nAsk me to email any of these segments and I will draft it first.', action: 'stats' }
   }
 
@@ -516,7 +522,7 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
   const seg = matchSegment(lower)
   if (wantsToSend && seg) {
     const tpl = templateMatch(lower)
-    const count = await segmentCount(seg)
+    const count = await segmentCount(seg, { ownerView })
     if (count === 0) {
       return { reply: `Nobody matches "${SEGMENT_LABELS[seg]}" right now, nothing to send.`, action: 'none' }
     }
@@ -579,6 +585,12 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
     }
     try {
       const targetE164 = toE164(targetRaw)
+      if (ownerView) {
+        const wall = await loadWalledContacts()
+        if (!wall || wall.blocks(targetE164, null)) {
+          return { reply: `I have passed this one to Taona to send.`, action: 'none' }
+        }
+      }
       const res = await sendText(targetE164, message)
       const db = createAdminClient()
       await db.from('wa_messages').insert({
@@ -603,6 +615,10 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
   const relMatch = t.match(/^release\s+(\+?\d{8,16})\s*$/i)
   if (relMatch) {
     const targetE164 = toE164(relMatch[1])
+    if (ownerView) {
+      const wall = await loadWalledContacts()
+      if (!wall || wall.blocks(targetE164, null)) return { reply: 'I have passed this one to Taona.', action: 'none' }
+    }
     const { releaseToBot } = await import('./handover')
     await releaseToBot(targetE164, `released by ${admin.name}`)
     return { reply: `Released ${targetE164} back to the auto-bot.`, action: 'released_user' }
@@ -641,8 +657,7 @@ export async function handleAdminMessage(admin: BotAdmin, text: string): Promise
         'stats\n' +
         'send <segment> (approved, approved_unpaid, etc.)\n' +
         'to <+phone> <message> to reply to a vendor\n' +
-        'release <+phone> to hand a conversation back to the bot\n\n' +
-        'Payment numbers and vendor lists are handled by Taona while the payment period is running.',
+        'release <+phone> to hand a conversation back to the bot',
       action: 'none',
     }
   }
