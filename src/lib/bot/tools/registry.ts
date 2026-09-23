@@ -36,6 +36,8 @@ import { startVendorVerification } from '@/lib/bot/vendor-session'
 import { buildSendable } from '@/lib/inbox/send-library'
 import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
 import { openCase, openCaseFor, fmtCaseDate } from '@/lib/support-case'
+import { saveVendorLogo } from '@/lib/vendor-logo'
+import { seeImageBytes } from '@/lib/bot/see-image'
 
 const PORTAL_LOGIN = 'cthalaal.co.za/exhibitor/login'
 
@@ -1227,25 +1229,18 @@ export async function uploadDocument(session: VendorSession): Promise<string> {
       .eq('id', vendorId)
       .maybeSingle()
     const hasLogo = !!parsePortalState((vrow as { admin_notes?: string | null } | null)?.admin_notes || '').profile?.logo_path
-    if (!hasLogo) {
-      const logoPath = `${vendorId}/logo-${Date.now()}.${ext}`
-      const { error: logoErr } = await db.storage.from('vendor-docs').upload(logoPath, fetched.bytes, {
-        contentType: media.mimeType || fetched.contentType || `image/${ext}`,
-        upsert: true,
-      })
-      if (logoErr) {
-        console.error('[tool upload_document] logo upload failed:', logoErr.message)
+    // Never file a payment screenshot as a logo: look first. A vision miss (null)
+    // keeps the old behaviour, since the vendor chose to send this image.
+    const seen = await seeImageBytes(fetched.bytes, media.mimeType || fetched.contentType)
+    // No logo yet: any non-proof image is their logo. Has one: a clear new logo replaces it.
+    if (!seen?.isPaymentProof && (!hasLogo || seen?.isLogo)) {
+      // One save path for every channel (lib/vendor-logo): the PUBLIC bucket the
+      // listings read. This branch used to write to vendor-docs, which left 4
+      // vendors "uploaded" but broken on the public site (2026-09-23).
+      const logoPath = await saveVendorLogo({ vendorId, bytes: fetched.bytes, contentType: media.mimeType || fetched.contentType, filename: media.filename, source: 'whatsapp' })
+      if (!logoPath) {
         return `I could not save that logo just now. Please try uploading it in your portal at ${PORTAL_LOGIN} under Profile.`
       }
-      await updatePortalState(vendorId, (s) => ({ ...s, profile: { ...(s.profile || {}), logo_path: logoPath } }))
-      try {
-        await db.from('site_events').insert({
-          session_id: `vendor-${vendorId}`,
-          event_type: 'profile_logo_uploaded',
-          path: '/exhibitor/portal/profile',
-          metadata: { vendor_application_id: vendorId, file_name: safeName, storage_path: logoPath, source: 'whatsapp' },
-        })
-      } catch { /* telemetry never blocks the reply */ }
       return `Done, jazakallah, your logo is uploaded and will show on your public profile. If your tagline/description is filled in on your portal Profile page, you are all set to go live in the sector listings.`
     }
   }
