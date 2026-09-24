@@ -205,9 +205,13 @@ test('an APPROVED clean unpaid vendor is reachable (2026-09-11 rule); EFT-touche
   // New rule: a merely-unpaid approved vendor with no EFT trace is HERS.
   const s = buildLaneScope([v({ id: 'appr', status: 'approved' })], true, false)
   assert.equal(s.blocksApplicationId('appr'), false, 'clean approved-unpaid is reachable')
-  // But an approved vendor carrying an EFT marker stays blocked.
+  // Taona 2026-09-24: an approved vendor with ONLY a bare ⟦EFT⟧ marker (no real
+  // master money) is now reachable too — the marker pins bank details, not visibility.
   const s2 = buildLaneScope([v({ id: 'appr-eft', status: 'approved', admin_notes: '⟦EFT⟧' })], true, false)
-  assert.equal(s2.blocksApplicationId('appr-eft'), true, 'EFT-touched stays blocked')
+  assert.equal(s2.blocksApplicationId('appr-eft'), false, 'bare ⟦EFT⟧ approved-unpaid is reachable now (2026-09-24)')
+  // Real master money still blocks: a collected-EFT vendor stays walled.
+  const s3 = buildLaneScope([v({ id: 'appr-coll', status: 'approved', admin_notes: updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }) })], true, false)
+  assert.equal(s3.blocksApplicationId('appr-coll'), true, 'collected-EFT stays blocked')
 })
 
 test('a ⟦NOEFT⟧ vendor untouched by EFT reaches the festival owner', () => {

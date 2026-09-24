@@ -621,6 +621,28 @@ export function vendorInOwnerScope(
   // EFT trace hides a vendor: an interim collection, an uploaded proof, an
   // EFT/manual settlement, or a presented-Eft awaiting reconcile. This is the
   // MASTER lane (...191) that hides; her own reconciled EFT already returned above.
+  //
+  // A BARE ⟦EFT⟧ marker does NOT hide an otherwise-clean UNPAID vendor. Taona
+  // 2026-09-24: a vendor on the ⟦EFT⟧ lane who has paid NOTHING into master has no
+  // master arrangement to withhold, so the festival owner's sends to them must not
+  // get stuck ("make sure nothing gets stuck"). The marker still pins WHICH bank
+  // details the vendor SEES (onCovertMasterLane is unchanged); this only stops
+  // forcing them out of her VIEW.
+  //
+  // SCOPED (doctrine review 2026-09-24): the exemption applies ONLY to a vendor
+  // whose hide reason is the bare marker alone. It must NOT lift the broader
+  // "approved and unpaid" net that hides the frozen cutover set and the
+  // ⟦NEWVENDOR⟧ cohort, so ⟦NEWVENDOR⟧ is excluded here and real master money
+  // (collected / proof / EFT-method / presented) still hides via the catch-all.
+  if (hasEftMarker(adminNotes) && !hasNewVendorMarker(adminNotes) && !hasRealEftPayment && !presentedCommsPending(adminNotes)) {
+    return true
+  }
+
+  // Catch-all (UNCHANGED from the 2026-09-11 rule): a vendor still here is an
+  // approved vendor with no her-channel settlement and no marker exemption — i.e.
+  // the frozen cutover set, ⟦NEWVENDOR⟧, or anyone with a real master-lane EFT
+  // trace. Only a REAL master-lane EFT trace (or membership in those hidden
+  // cohorts via the marker) hides. Her own reconciled EFT already returned above.
   const touchedMasterEft =
     hasRealEftPayment
     || hasEftMarker(adminNotes)

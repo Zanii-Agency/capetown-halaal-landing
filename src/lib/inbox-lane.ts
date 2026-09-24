@@ -15,7 +15,7 @@
 // than by remembering to re-derive it. Same shape as the notifyOwners gate: the
 // predicate lives in ONE place (vendorCommsInEftLane) and callers pass identity.
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEftMode, isEftAdmin, vendorCommsInOwnerScope, revealsPaymentArrangement } from '@/lib/eft'
+import { getEftMode, isEftAdmin, vendorCommsInOwnerScope, revealsPaymentArrangement, hasEftMarker } from '@/lib/eft'
 import { isMasterOnlySender } from '@/lib/master-only-senders'
 import { withoutMerged } from '@/lib/merge'
 import { ownerCutoff, hiddenByCutoff } from '@/lib/owner-view'
@@ -179,7 +179,17 @@ export function buildLaneScope(
     // COMMS scope: a presented-but-not-reconciled vendor is walled off her inbox
     // (their conversation routes to the master lane), even though she still sees
     // them as paid on the roster/stalls (those use vendorInOwnerScope directly).
-    if (vendorCommsInOwnerScope(r.admin_notes, r.paid_at)) continue
+    //
+    // A NULL status is unclassifiable. The marker exemption in vendorInOwnerScope
+    // un-hides a bare-⟦EFT⟧ vendor; for a CLASSIFIABLE approved vendor that is
+    // correct (they paid nothing into master). But a row nobody can classify must
+    // FAIL CLOSED when it carries ⟦EFT⟧, because the exemption is not a licence to
+    // expose an unclassifiable master-lane row by phone/email/id (the exact breach
+    // this module prevents). A null-status row WITHOUT ⟦EFT⟧ (a ⟦NOEFT⟧ vendor, a
+    // settled her-channel row, a clean applicant) follows the normal comms test and
+    // is not affected by this guard.
+    const unclassifiableEft = !r.status && hasEftMarker(r.admin_notes)
+    if (!unclassifiableEft && vendorCommsInOwnerScope(r.admin_notes, r.paid_at)) continue
     ids.add(r.id)
     if (r.email) emails.add(r.email.toLowerCase())
     const k = phoneKey(r.phone)
