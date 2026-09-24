@@ -139,8 +139,10 @@ function EmailMessage({ m, defaultExpanded }: { m: CommItem; defaultExpanded: bo
 /** A run of system/auto emails (reminders, confirmations, password resets)
  *  folded into one line so the real conversation reads first (Taona 2026-09-12:
  *  "these auto-gen messages are repetitive"). Collapsed by default; one click
- *  reveals the individual notifications, each still its own collapsible row. */
-function SystemGroup({ items }: { items: CommItem[] }) {
+ *  reveals the individual notifications, each still its own collapsible row.
+ *  `title` is the subject when this run is a whole automated-only conversation,
+ *  so the collapsed line still says what it is (Taona 2026-09-24). */
+function SystemGroup({ items, title }: { items: CommItem[]; title?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="min-w-0">
@@ -151,9 +153,9 @@ function SystemGroup({ items }: { items: CommItem[] }) {
         className="w-full text-left flex items-center gap-2 px-3 py-1.5 rounded-lg border border-dashed border-neutral-200 bg-neutral-50/60 hover:bg-neutral-100 transition text-neutral-500"
       >
         <ChevronDown className={`shrink-0 w-3.5 h-3.5 transition-transform ${open ? '' : '-rotate-90'}`} />
-        <span className="text-[12px] font-medium">
-          {items.length} automated message{items.length === 1 ? '' : 's'}
-          <span className="text-neutral-400 font-normal"> · reminders, confirmations, notices</span>
+        <span className="text-[12px] font-medium truncate">
+          {title ? title : `${items.length} automated message${items.length === 1 ? '' : 's'}`}
+          <span className="text-neutral-400 font-normal">{title ? ` · ${items.length} automated` : ' · reminders, confirmations, notices'}</span>
         </span>
       </button>
       {open && (
@@ -183,15 +185,22 @@ export function EmailThread({ messages, onReply, replyTo }: {
   // One row per address in the DB, but separate CONVERSATIONS on screen, split by
   // subject (lib/inbox/email-conversations). Every conversation, automated-only
   // ones included, is ordered by its latest message so the thread reads in the
-  // order it happened (Taona 2026-09-24). An automated-only subject renders as its
-  // own section with its notices collapsed; automated notices inside a real
-  // conversation stay inline in that conversation's order.
+  // order it happened (Taona 2026-09-24). An automated-only subject collapses to a
+  // single folded line in that order; automated notices inside a real conversation
+  // stay inline in that conversation's order.
   const { conversations } = groupEmailConversations(messages)
   const replyKey = replyTo ? conversationKey(replyTo) : null
 
   return (
     <div className="flex flex-col gap-4 py-2">
       {conversations.map((c, ci) => {
+        // An automated-only conversation collapses to a single folded line in time
+        // order — no section header, no Reply button (Taona 2026-09-24: "collapse
+        // the automated sections"). The subject stays in the folded line so it still
+        // says what it is.
+        if (c.autoOnly) {
+          return <SystemGroup key={c.key || `c${ci}`} items={c.messages} title={c.title} />
+        }
         const lastRealId = [...c.messages].reverse().find((m) => !m.auto)?.id
         const blocks: Array<{ kind: 'real'; m: CommItem } | { kind: 'auto'; items: CommItem[] }> = []
         for (const m of c.messages) {
@@ -219,13 +228,11 @@ export function EmailThread({ messages, onReply, replyTo }: {
                 </button>
               )}
             </div>
-            {c.autoOnly
-              ? <SystemGroup items={c.messages} />
-              : blocks.map((b, i) =>
-                  b.kind === 'auto'
-                    ? <SystemGroup key={`sys:${ci}:${i}`} items={b.items} />
-                    : <EmailMessage key={b.m.id} m={b.m} defaultExpanded={isLatest && b.m.id === lastRealId} />
-                )}
+            {blocks.map((b, i) =>
+              b.kind === 'auto'
+                ? <SystemGroup key={`sys:${ci}:${i}`} items={b.items} />
+                : <EmailMessage key={b.m.id} m={b.m} defaultExpanded={isLatest && b.m.id === lastRealId} />
+            )}
           </section>
         )
       })}
