@@ -229,8 +229,12 @@ test('vendorInOwnerScope: unpaid is HERS unless there is a real master-EFT trace
   // nothing into master. The marker pins which bank details they SEE; it does not
   // force them out of her VIEW. So a clean unpaid ⟦EFT⟧ vendor is now HERS.
   assert.equal(vendorInOwnerScope('⟦EFT⟧', null), true, 'bare ⟦EFT⟧, no master money -> hers now (2026-09-24)')
-  // But ⟦NEWVENDOR⟧ is a lane control: that cohort stays on master and HIDDEN.
-  assert.equal(vendorInOwnerScope('⟦EFT⟧\n⟦NEWVENDOR⟧', null), false, '⟦NEWVENDOR⟧ stays hidden even with ⟦EFT⟧')
+  // ⟦NEWVENDOR⟧ alone does NOT hide an unpaid vendor either (final 2026-09-24
+  // ruling: "hold only vendors who actually paid into master").
+  assert.equal(vendorInOwnerScope('⟦EFT⟧\n⟦NEWVENDOR⟧', null), true, 'unpaid ⟦NEWVENDOR⟧, no master money -> hers now (2026-09-24)')
+  // But ⟦NEWVENDOR⟧ WITH real master money stays hidden:
+  const nvCollected = withNewVendorMarker(updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }))
+  assert.equal(vendorInOwnerScope(nvCollected, null), false, '⟦NEWVENDOR⟧ with a collected master payment stays hidden')
   // Real master money still hides:
   // 'collected' is the EFT interim state: still not hers.
   const collected = updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } })

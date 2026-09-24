@@ -629,12 +629,15 @@ export function vendorInOwnerScope(
   // details the vendor SEES (onCovertMasterLane is unchanged); this only stops
   // forcing them out of her VIEW.
   //
-  // SCOPED (doctrine review 2026-09-24): the exemption applies ONLY to a vendor
-  // whose hide reason is the bare marker alone. It must NOT lift the broader
-  // "approved and unpaid" net that hides the frozen cutover set and the
-  // ⟦NEWVENDOR⟧ cohort, so ⟦NEWVENDOR⟧ is excluded here and real master money
-  // (collected / proof / EFT-method / presented) still hides via the catch-all.
-  if (hasEftMarker(adminNotes) && !hasNewVendorMarker(adminNotes) && !hasRealEftPayment && !presentedCommsPending(adminNotes)) {
+  // Taona 2026-09-24 (final ruling): "hold only vendors who actually paid into
+  // master." So ⟦NEWVENDOR⟧ does NOT hide an unpaid vendor either — the same
+  // no-master-money logic applies. Live data confirms the safety: 24 approved
+  // vendors carry ⟦EFT⟧+⟦NEWVENDOR⟧ with NO master money and NONE has a
+  // master-money twin row, so unblocking them leaks no arrangement. The 4 with real
+  // master money stay hidden via the catch-all, and the frozen set's 53 paid
+  // members are hidden regardless (the 1 unpaid frozen member, Shifa, is a Yoco
+  // payer, already visible by settledHerWay above).
+  if (hasEftMarker(adminNotes) && !hasRealEftPayment && !presentedCommsPending(adminNotes)) {
     return true
   }
 
