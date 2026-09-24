@@ -14,6 +14,7 @@ import { requireOperator } from '@/lib/admin-rbac'
 import { capJsonbSize } from '@/lib/audit/cap'
 import {
   notifyApplicationDecision,
+  cleanReason,
   APPROVED_NOTIFIED_RE,
 } from '@/lib/applications/decision-notify'
 import { notifyOwners } from '@/lib/bot/notify'
@@ -92,6 +93,10 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const parsed = bulkSchema.parse(body)
+    // A rejection always carries the reason she chose; it is what the vendor is told.
+    if (parsed.action === 'reject' && !cleanReason(parsed.reason)) {
+      return NextResponse.json({ error: 'reason_required', message: 'Choose a reason for the rejection. It is sent to the vendor.' }, { status: 400 })
+    }
     const { ids, action } = parsed
 
     if (action === 'tag' && !(parsed.sector || '').trim()) {

@@ -32,7 +32,7 @@ import { renderTemplate } from '@/lib/interpolate'
 import { parseAllocation } from '@/lib/stalls'
 import {
   type AudienceRow,
-  buildAudience,
+  buildAudience, buildHeldAudience,
   filtersFromSearch,
   filtersFromBody,
 } from '@/lib/broadcast-audience'
@@ -88,7 +88,10 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const url = new URL(req.url)
-  const audience = await buildAudience(filtersFromSearch(url.searchParams), auth.email)
+  const fs = filtersFromSearch(url.searchParams)
+  // Held (walled) vendors are listed too so the audience reads whole; they are
+  // never delivered (whatsapp-broadcast / chase / campaign hold them).
+  const audience = [...(await buildAudience(fs, auth.email)), ...(await buildHeldAudience(fs, auth.email))]
   return NextResponse.json({
     audience: audience.slice(0, 25).map((r) => ({
       id: r.id,
@@ -131,7 +134,8 @@ export async function POST(req: NextRequest) {
   // Find an audience row to use as the preview sample. We use the supplied
   // filter set when building the audience so the preview reflects the actual
   // outbound slice.
-  const audience = await buildAudience(filtersFromBody(body.filters), gate.adminUser.email)
+  const fb = filtersFromBody(body.filters)
+  const audience = [...(await buildAudience(fb, gate.adminUser.email)), ...(await buildHeldAudience(fb, gate.adminUser.email))]
 
   const sample =
     (body.vendor_id ? audience.find((a) => a.id === body.vendor_id) : audience[0]) ||

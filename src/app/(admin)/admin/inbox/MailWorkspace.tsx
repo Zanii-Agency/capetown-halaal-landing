@@ -52,6 +52,9 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
    *  for something a vendor actually said found nothing. */
   const [bodyHits, setBodyHits] = useState<Set<string>>(new Set())
   const [panelOpen, setPanelOpen] = useState(false)
+  // Which email conversation the composer replies into (by subject). null = latest.
+  const [replyTo, setReplyTo] = useState<string | null>(null)
+  useEffect(() => { setReplyTo(null) }, [activeId])
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -232,8 +235,12 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
               <header className="px-4 py-3 border-b border-neutral-200">
                 <div className="flex items-center gap-3">
                   <div className="min-w-0">
+                    {/* Taona 2026-09-24: no specific subject up here. The thread is
+                        split into per-subject conversations below, so a single
+                        subject in the header mislabels the whole thread. The vendor
+                        line under it is the useful anchor. */}
                     <p className="truncate text-sm font-semibold text-neutral-900">
-                      {active.subject || '(no subject)'}
+                      Email conversation
                     </p>
                     {/* Same as WhatsApp: the vendor's name opens their record,
                         because "what's their status?" is the usual next thought
@@ -274,7 +281,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
               </header>
 
               <div className="flex-1 overflow-y-auto px-4 py-3">
-                <EmailThread messages={messages} />
+                <EmailThread messages={messages} onReply={setReplyTo} replyTo={replyTo} />
                 <div ref={streamEnd} />
               </div>
 
@@ -285,7 +292,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                   email={active.email}
                   applicationId={active.application_id}
                   sendingAs={sendingAs}
-                  subject={active.subject}
+                  subject={replyTo || active.subject}
                   onSent={() => { if (active) loadMessages(active); loadThreads(true) }}
                   onError={(m) => setError(m)}
                 />

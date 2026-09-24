@@ -140,7 +140,7 @@ export interface PortalState {
       installments?: Array<{ date: string; amount: number }>
       proposed_at?: string
       approved_at?: string
-      plan_status?: 'pending' | 'approved'
+      plan_status?: 'pending' | 'approved' | 'claimed'
     }
     /** MASTER-LANE SETTLEMENT SCHEDULE (Taona 2026-09-10). A covert master-lane
      *  vendor whose EFT was already collected into ...191, shown to the festival
@@ -204,6 +204,9 @@ export interface PortalState {
   staff?: StaffMember[]
   profile?: VendorProfile
   support?: SupportMessage[]
+  /** A human answered this vendor on WhatsApp/email (not in the portal thread):
+   *  closes their open case. See lib/support-case.ts. */
+  supportResolvedAt?: string
   passAllowance?: number        // gate passes this vendor is entitled to (set by organisers)
   stage?: 'approved' | 'invoiced' | 'paid' | 'docs' | 'show_ready'
   wa?: {

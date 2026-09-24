@@ -38,7 +38,7 @@ const DOC = new Set(['vendor_doc_uploaded', 'profile_logo_uploaded'])
 // secret). Everything else — withdrawals, contracts, documents, stall changes —
 // is operational and shown for ALL vendors (Taona 2026-09-07: 'everything that
 // happened, except the master EFT lane').
-const PAYMENT_EVENTS = new Set(['payment_captured', 'payment_manual', 'payment_reverted', 'payment_plan_proposed', 'payment_extension_granted', 'eft_proof_uploaded', 'payment_proof_uploaded', 'payment_collected', 'eft_collected', 'accessories_collected'])
+const PAYMENT_EVENTS = new Set(['payment_captured', 'payment_manual', 'payment_reverted', 'payment_plan_proposed', 'payment_arrangement_claimed', 'payment_extension_granted', 'eft_proof_uploaded', 'payment_proof_uploaded', 'payment_collected', 'eft_collected', 'accessories_collected'])
 
 export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr || '') ? (dateStr as string) : sastToday()
@@ -103,6 +103,7 @@ export async function loadDayDigest(dateStr?: string): Promise<DayDigest> {
     else if (e.event_type === 'payment_reverted') add('reversed', name, 'Payment reverted to unpaid', e.created_at)
     else if (e.event_type === 'vendor_withdrawn') add('withdrawn', name, `Withdrew${asObj(after.withdrawn).reason ? `: ${String(asObj(after.withdrawn).reason).slice(0, 80)}` : ''}`, e.created_at)
     else if (e.event_type === 'payment_plan_proposed') add('plan', name, `Payment plan${e.note ? `: ${e.note.slice(0, 80)}` : ''}`, e.created_at)
+    else if (e.event_type === 'payment_arrangement_claimed') add('plan', name, `Says an arrangement was agreed with the team, to confirm${e.note ? `: ${e.note.slice(0, 80)}` : ''}`, e.created_at)
     else if (e.event_type === 'payment_extension_granted') add('plan', name, `More time to pay${e.note ? `, ${e.note.slice(0, 60)}` : ''}`, e.created_at)
     else if (e.event_type === 'contract_signed') add('contract', name, 'Signed their contract', e.created_at)
     else if (DOC.has(e.event_type)) add('docs', name, 'Uploaded a document', e.created_at)

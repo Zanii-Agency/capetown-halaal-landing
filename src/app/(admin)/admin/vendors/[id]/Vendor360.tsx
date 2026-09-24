@@ -170,7 +170,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const stats = initialData.stats
 
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [drawerView, setDrawerView] = useState<'contact' | 'doc' | 'paid'>('contact')
+  const [drawerView, setDrawerView] = useState<'contact' | 'doc' | 'paid' | 'email'>('contact')
   const [previewDoc, setPreviewDoc] = useState<DocRecord | null>(null)
   const [markPaidBusy, setMarkPaidBusy] = useState(false)
   const [markPaidMethod, setMarkPaidMethod] = useState<'' | 'eft' | 'cash' | 'manual_card' | 'waived'>('')
@@ -212,6 +212,41 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   // 'rejected'; a re-approved vendor (status flips back) sheds the label.
   const isWithdrawn = !!portal.withdrawn && status === 'rejected'
 
+
+  // NEW EMAIL (Taona 2026-09-23): start a fresh email with its OWN subject, never a
+  // reply into the vendor's last conversation. Sent through the same route as inbox
+  // replies with newThread:true (subject required, no Re:, not threaded).
+  const [newSubject, setNewSubject] = useState('')
+  const [newBody, setNewBody] = useState('')
+  const [sendingNew, setSendingNew] = useState(false)
+  function openNewEmail() {
+    setNewSubject('')
+    setNewBody('')
+    setDrawerView('email')
+    setDrawerOpen(true)
+  }
+  async function sendNewEmail() {
+    const subject = newSubject.trim()
+    const text = newBody.trim()
+    if (!subject) { toast.error('Add a subject line'); return }
+    if (!text) { toast.error('Write the message'); return }
+    setSendingNew(true)
+    try {
+      const r = await fetch('/api/admin/inbox/unified/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel: 'email', email, subject, text, newThread: true }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j.ok === false) throw new Error(j.message || j.error || `HTTP ${r.status}`)
+      toast.success(`Email sent to ${email}`)
+      setDrawerOpen(false)
+    } catch (e) {
+      toast.error(`Email not sent: ${(e as Error).message}`)
+    } finally {
+      setSendingNew(false)
+    }
+  }
 
   function openContactDrawer() {
     setEditBusiness(businessName)
@@ -516,7 +551,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           icon={<Mail className="w-4 h-4" />}
           label="Send Email"
           tone="sky"
-          onClick={email ? () => router.push(`/admin/inbox/support?contact=${encodeURIComponent(email)}`) : undefined}
+          onClick={email ? openNewEmail : undefined}
         />
         <ActionChip
           icon={<CreditCard className="w-4 h-4" />}
@@ -731,7 +766,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
       <RightDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        title={drawerView === 'contact' ? 'Edit Contact Info' : drawerView === 'paid' ? 'Mark as Paid' : previewDoc ? REQUIRED_DOC_LABELS[previewDoc.type as RequiredDocType] || previewDoc.type : 'Document Preview'}
+        title={drawerView === 'contact' ? 'Edit Contact Info' : drawerView === 'email' ? 'New email' : drawerView === 'paid' ? 'Mark as Paid' : previewDoc ? REQUIRED_DOC_LABELS[previewDoc.type as RequiredDocType] || previewDoc.type : 'Document Preview'}
       >
         {drawerView === 'contact' && (
           <div className="space-y-4">
@@ -920,6 +955,57 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           </div>
         )}
 
+        {drawerView === 'email' && (
+          <div className="space-y-4">
+            <p className="text-xs text-neutral-500">
+              A new email starts its own conversation with its own subject. It does not reply into an earlier email.
+            </p>
+            <div>
+              <label className="text-xs font-medium text-neutral-600 block mb-1">To</label>
+              <div className="w-full border border-neutral-100 bg-neutral-50 rounded-md px-3 py-2 text-sm text-neutral-700">{businessName}{email ? ` <${email}>` : ''}</div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-neutral-600 block mb-1">Subject <span className="text-rose-600">*</span></label>
+              <input
+                type="text"
+                value={newSubject}
+                onChange={(e) => setNewSubject(e.target.value)}
+                maxLength={200}
+                placeholder="e.g. Your stall payment plan"
+                className="w-full border border-neutral-200 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-neutral-600 block mb-1">Message <span className="text-rose-600">*</span></label>
+              <textarea
+                value={newBody}
+                onChange={(e) => setNewBody(e.target.value)}
+                rows={10}
+                maxLength={4000}
+                placeholder={`Hi ${contactName.split(/\s+/)[0] || 'there'},`}
+                className="w-full border border-neutral-200 rounded-md px-3 py-2 text-sm leading-relaxed"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => router.push(`/admin/inbox/support?contact=${encodeURIComponent(email)}`)}
+                className="text-xs text-neutral-500 hover:text-neutral-800 underline underline-offset-2"
+              >
+                View email history
+              </button>
+              <button
+                type="button"
+                onClick={sendNewEmail}
+                disabled={sendingNew || !newSubject.trim() || !newBody.trim()}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#cd2653] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                <Mail className="w-4 h-4" />
+                {sendingNew ? 'Sending…' : 'Send email'}
+              </button>
+            </div>
+          </div>
+        )}
         {drawerView === 'paid' && (
           <div className="space-y-4">
             <p className="text-xs text-neutral-500">Logs a payment_manual audit event and flips the portal marker.</p>

@@ -93,6 +93,9 @@ export async function logEmailOutbound(opts: {
   text?: string | null
   html?: string | null
   providerMessageId?: string | null
+  /** admin_users.id of the PERSON who wrote it. Set = human email (never folded
+   *  into the inbox's "automated messages" group); unset = system/template send. */
+  sentBy?: string | null
 }): Promise<boolean> {
   const peerEmail = (opts.to || '').trim().toLowerCase()
   if (!peerEmail) return false
@@ -154,6 +157,7 @@ export async function logEmailOutbound(opts: {
       provider: 'resend' as const,
       provider_message_id: opts.providerMessageId ?? null,
       received_at: nowIso,
+      ...(opts.sentBy ? { sent_by: opts.sentBy } : {}),
     }
 
     const { error: msgErr } = await db.from('support_inbox_messages').insert(row)
@@ -162,7 +166,7 @@ export async function logEmailOutbound(opts: {
       if (code === '23505' && messageId) {
         await db
           .from('support_inbox_messages')
-          .update({ body_text: row.body_text, body_html: row.body_html })
+          .update({ body_text: row.body_text, body_html: row.body_html, ...(opts.sentBy ? { sent_by: opts.sentBy } : {}) })
           .eq('message_id', messageId)
         await broadcastInboxRefresh('outbound-log').catch(() => {})
         return true
@@ -186,6 +190,11 @@ export async function logEmailOutbound(opts: {
         .update({ body_text: row.body_text, body_html: row.body_html })
         .eq('message_id', messageId)
         .is('body_text', null)
+    }
+    // The webhook's twin row (same message_id) must carry the sender too, or it
+    // renders as an automated notice next to ours.
+    if (messageId && opts.sentBy) {
+      await db.from('support_inbox_messages').update({ sent_by: opts.sentBy }).eq('message_id', messageId).is('sent_by', null)
     }
     await broadcastInboxRefresh('outbound-log').catch(() => {})
     return true

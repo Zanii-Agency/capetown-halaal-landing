@@ -103,3 +103,17 @@ test('nextInstalment: the first instalment the money so far has not covered, wit
   // locale thousands separator is a non-breaking space; assert on the words, not the byte
   assert.match(planSummary(plan.installments), /^R5.000 by 6 September 2026, then R2.500 by 2 October 2026$/)
 })
+
+test('cleanClaimedInstallments: keeps real future dates within the cap, sorted; drops junk; no sum rule', async () => {
+  const { cleanClaimedInstallments } = await import('./payment-plan')
+  const out = cleanClaimedInstallments([
+    { date: '2026-10-20', amount: 2000 },
+    { date: '2026-10-01', amount: 1500.4 },
+    { date: '2026-09-01', amount: 1000 },   // past
+    { date: '2026-11-15', amount: 1000 },   // after cap
+    { date: 'next week', amount: 500 },     // not a date
+    { date: '2026-10-05', amount: 0 },      // no amount
+  ], '2026-09-23', '2026-10-31')
+  assert.deepEqual(out, [{ date: '2026-10-01', amount: 1500 }, { date: '2026-10-20', amount: 2000 }])
+  assert.deepEqual(cleanClaimedInstallments('R2000 on friday', '2026-09-23', '2026-10-31'), [])
+})

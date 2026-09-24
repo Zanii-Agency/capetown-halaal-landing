@@ -27,12 +27,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { notifyHeldBlast } from '@/lib/inbox/held-email'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { laneScopeFor } from '@/lib/inbox-lane'
+import { loadWalledContacts } from '@/lib/broadcast-audience'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
-import { renderTemplate, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
+import { renderTemplate, renderFreeTextEmail, type TemplateKey, type TemplateVars, TEMPLATE_KEYS } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
 import { waBroadcastVariables, PAID_VENDOR_MESSAGE_TEMPLATE_KEYS, MASTER_LANE_MESSAGE_TEMPLATE_KEYS, PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS } from '@/lib/templates/wa-meta'
@@ -164,18 +166,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'unknown wa_template' }, { status: 400 })
   }
 
-  // EFT lane: a chase is a PAYMENT message, so sending one to a master-lane vendor
-  // actively contradicts the EFT arrangement being run for them. Reject the whole
-  // batch rather than silently dropping recipients — a partial send that reports
-  // success is how an operator concludes a vendor was chased when they were not.
+  // EFT lane: a chase is a PAYMENT message and must never reach a master-lane
+  // vendor from the owner. It used to REFUSE the batch with "these vendors are on the
+  // EFT master lane", which told her the lane exists. Now (Taona 2026-09-23) walled
+  // recipients are HELD: they read as sent, are never delivered, and the master gets
+  // one summary. laneScopeFor skips non-approved rows, so the per-person wall covers
+  // twins (The Plug). Wall unavailable -> hold everyone (fail closed, no error).
+  let sendList = recipients
+  let heldList: typeof recipients = []
   {
     const scope = await laneScopeFor(gate.adminUser.email)
-    const blocked = recipients.filter((r) => scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }))
-    if (blocked.length > 0) {
-      return NextResponse.json(
-        { error: 'eft_lane_recipients', blocked: blocked.length, hint: 'These vendors are on the EFT master lane. The EFT admin handles their payment comms.' },
-        { status: 403 },
-      )
+    if (!scope.unrestricted) {
+      const walled = await loadWalledContacts()
+      // Per PERSON, from the server: the client may omit a phone, so every stored row
+      // sharing the recipient's id or email is checked too. Lookup error -> hold all.
+      const ids = recipients.map((r) => r.id).filter(Boolean) as string[]
+      const emails = recipients.map((r) => (r.email || '').trim().toLowerCase()).filter(Boolean)
+      const db = createAdminClient()
+      const [byId, byEmail] = await Promise.all([
+        ids.length ? db.from('vendor_applications').select('id, email, phone').in('id', ids) : Promise.resolve({ data: [], error: null }),
+        emails.length ? db.from('vendor_applications').select('id, email, phone').in('email', emails) : Promise.resolve({ data: [], error: null }),
+      ])
+      const lookupFailed = !!(byId.error || byEmail.error)
+      const rows = [...(byId.data || []), ...(byEmail.data || [])] as Array<{ id: string; email: string | null; phone: string | null }>
+      const rowsFor = (r: (typeof recipients)[number]) => {
+        const em = (r.email || '').trim().toLowerCase()
+        return rows.filter((x) => x.id === r.id || (!!em && (x.email || '').trim().toLowerCase() === em))
+      }
+      const isHeld = (r: (typeof recipients)[number]) =>
+        !walled || lookupFailed ||
+        scope.blocks({ email: r.email, phone: r.phone, applicationId: r.id }) || walled.blocks(r.phone ?? null, r.email ?? null) ||
+        rowsFor(r).some((x) => scope.blocks({ email: x.email, phone: x.phone, applicationId: x.id }) || walled.blocks(x.phone, x.email))
+      heldList = recipients.filter(isHeld)
+      sendList = recipients.filter((r) => !isHeld(r))
     }
   }
 
@@ -201,7 +224,7 @@ export async function POST(req: NextRequest) {
     errors: [] as Array<{ kind: 'mail' | 'wa'; to: string; error: string }>,
   }
 
-  for (const r of recipients) {
+  for (const r of sendList) {
     const vars: TemplateVars = {
       first_name: firstName(r.name),
       business_name: r.business_name || null,
@@ -228,11 +251,7 @@ export async function POST(req: NextRequest) {
             const rawText = interpolate(scrub(body.email_body), vars as InterpolateVars)
             subject = scrub(interpolate(body.email_subject || 'A note from Young at Heart Festival', vars as InterpolateVars))
             text = rawText
-            const escaped = rawText.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
-            html = `<div style="font-family:Inter,Arial,sans-serif;color:#1B1A17;line-height:1.55;font-size:15px">` +
-                   escaped.split('\n').map((l) => l.trim() ? `<p style="margin:0 0 12px">${l}</p>` : '<br/>').join('') +
-                   `<p style="margin-top:24px;font-size:12px;color:#666">Unsubscribe: <a href="${unsub}">${unsub}</a></p>` +
-                   `</div>`
+            html = await renderFreeTextEmail(rawText, subject, unsub)
           }
           const send = await sendZaniiMail({
             to: emailRaw,
@@ -339,5 +358,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // HELD tally: counters only, no send call (see the lane note above).
+  const heldNames: string[] = []
+  for (const r of heldList) {
+    const em = (r.email || '').trim().toLowerCase()
+    const ph = (r.phone || '').replace(/[^0-9]/g, '')
+    if ((channel === 'mail' || channel === 'both') && em && !seenEmails.has(em)) { seenEmails.add(em); results.mail.attempted++; results.mail.sent++ }
+    if ((channel === 'wa' || channel === 'both') && ph.length >= 9 && !seenPhones.has(ph)) { seenPhones.add(ph); results.wa.attempted++; results.wa.sent++ }
+    heldNames.push(r.business_name || r.name || em || ph)
+  }
+  if (!dryRun) {
+    await notifyHeldBlast({ viewer: gate.adminUser.email, tool: 'chase', names: heldNames, channel, subject: body.template_key || null, preview: body.email_body || body.wa_body || body.custom_vars?.custom_message || null })
+  }
   return NextResponse.json(results)
 }

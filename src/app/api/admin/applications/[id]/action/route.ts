@@ -18,6 +18,7 @@ import { capJsonbSize } from '@/lib/audit/cap'
 import { syncPortalState } from '@/lib/portal-state'
 import {
   notifyApplicationDecision,
+  cleanReason,
   APPROVED_NOTIFIED_RE,
   type DecisionNotifyResult,
 } from '@/lib/applications/decision-notify'
@@ -84,6 +85,10 @@ export async function POST(
 
     const body = await request.json()
     const parsed = bodySchema.parse(body)
+    // A rejection always carries the reason she chose; it is what the vendor is told.
+    if (parsed.action === 'reject' && !cleanReason(parsed.reason)) {
+      return NextResponse.json({ error: 'reason_required', message: 'Choose a reason for the rejection. It is sent to the vendor.' }, { status: 400 })
+    }
     const { action } = parsed
 
     // Snapshot before so we can write a meaningful before_value diff. Also pull

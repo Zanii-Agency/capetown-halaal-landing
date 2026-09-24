@@ -251,7 +251,7 @@ export async function POST(req: NextRequest) {
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
     })
-    const text = res.content[0]?.type === 'text' ? res.content[0].text : ''
+    const text = res.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
     const clean = stripEmDashes(text).trim()
     // The composer text is one click from a vendor, so a date the model was not
     // given never gets that far. The operator's own draft and the vendor's own

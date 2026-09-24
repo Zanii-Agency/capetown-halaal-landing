@@ -97,18 +97,28 @@ export default function ApplicationDetailPage() {
 
   const updateStatus = async (status: ApplicationStatus) => {
     if (!application) return
+    // A rejection always carries the reason she chooses; it is sent to the vendor.
+    let reason: string | undefined
+    if (status === 'rejected') {
+      const typed = window.prompt('Reason for the rejection (this is sent to the vendor):', 'Vendor category was full')
+      if (!typed || !typed.trim()) return
+      reason = typed.trim()
+    }
     setSaving(true)
 
     try {
       const res = await fetch(`/api/applications/${application.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, admin_notes: adminNotes }),
+        body: JSON.stringify({ status, admin_notes: adminNotes, ...(reason ? { reason } : {}) }),
       })
 
       if (res.ok) {
         const data = await res.json()
         setApplication(data.application)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        window.alert(err.message || 'Could not update the application.')
       }
     } catch (error) {
       console.error('Failed to update status:', error)
