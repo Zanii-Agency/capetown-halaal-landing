@@ -260,6 +260,15 @@ export async function POST(req: NextRequest) {
       inOwnerScope: vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null),
     }))
     if (personErr || shouldHoldNewEmail(scope, walled, peer, rows)) {
+      // Taona 2026-09-24: the held email must still SHOW in her thread as sent —
+      // otherwise a sent-then-vanishing message gives the hold away. We write the
+      // row with provider 'held' (nothing is delivered to the vendor); the messages
+      // route only surfaces the held flag to the master, so she reads it as a
+      // normal sent email while he sees "Held, not delivered". The master alert
+      // below carries the full text either way.
+      try {
+        await mirrorOutboundToSupportInbox({ to: peer, subject, text: text || ' ', sentBy: adminUser.id as string, held: true })
+      } catch (e) { console.error('[unified/reply] held-email thread mirror failed:', (e as Error).message) }
       try {
         const { notifyOwners } = await import('@/lib/bot/notify')
         await notifyOwners({

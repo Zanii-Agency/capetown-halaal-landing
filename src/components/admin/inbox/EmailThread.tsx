@@ -61,6 +61,11 @@ function EmailMessage({ m, defaultExpanded }: { m: CommItem; defaultExpanded: bo
           {out ? 'You' : m.from}
         </span>
         <span className="flex-1 text-[13px] text-neutral-500 truncate min-w-0">{snippet}</span>
+        {m.held && (
+          <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-amber-700 bg-amber-50 border-amber-200">
+            Held
+          </span>
+        )}
         <span className="shrink-0 text-[11px] text-neutral-400">{fmtSAST(m.at)}</span>
       </button>
     )
@@ -93,6 +98,11 @@ function EmailMessage({ m, defaultExpanded }: { m: CommItem; defaultExpanded: bo
                   : 'text-blue-700 bg-blue-50 border-blue-200'
               }`}>
                 {m.mailbox === 'gmail' ? 'Gmail' : 'YAH'}
+              </span>
+            )}
+            {m.held && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border text-amber-800 bg-amber-50 border-amber-200">
+                Held, not delivered
               </span>
             )}
           </span>

@@ -146,7 +146,7 @@ export async function GET(req: NextRequest) {
       const ids = threads.map((t) => t.id)
       const { data: msgs } = await db
         .from('support_inbox_messages')
-        .select('id, thread_id, direction, from_address, from_name, to_address, subject, body_text, body_html, mailbox, received_at, created_at, sent_by')
+        .select('id, thread_id, direction, from_address, from_name, to_address, subject, body_text, body_html, mailbox, received_at, created_at, sent_by, in_reply_to')
         .in('thread_id', ids)
         // DESC + limit for the same reason as the WhatsApp select, and ordered by
         // created_at (row insert) rather than received_at (the SENDER's Date
@@ -154,7 +154,7 @@ export async function GET(req: NextRequest) {
         .order('created_at', { ascending: false })
         .limit(500)
       const subjById = new Map(threads.map((t) => [t.id, t.subject]))
-      for (const m of (msgs || []) as Array<{ id: string; thread_id: string; direction: string; from_address: string; from_name: string | null; to_address: string | null; subject: string | null; body_text: string | null; body_html: string | null; mailbox: string | null; received_at: string; created_at: string | null; sent_by: string | null }>) {
+      for (const m of (msgs || []) as Array<{ id: string; thread_id: string; direction: string; from_address: string; from_name: string | null; to_address: string | null; subject: string | null; body_text: string | null; body_html: string | null; mailbox: string | null; received_at: string; created_at: string | null; sent_by: string | null; in_reply_to: string | null }>) {
         const { cleanBody, attachments } = parseAttachmentMarker(m.body_text)
         // stripRfc822Headers server-side: both mail fetchers fall back to slicing
         // raw MIME when mailparser returns no text, so some rows carry
@@ -197,6 +197,12 @@ export async function GET(req: NextRequest) {
           channel: 'email',
           direction: out ? 'out' : 'in',
           ...(isAuto ? { auto: true } : {}),
+          // A HELD email (in_reply_to 'HELD', written by the reply route when a
+          // restricted viewer's send was held) is flagged ONLY for the master, so
+          // his thread reads "Held, not delivered". The restricted viewer never
+          // receives the flag — her thread shows it as a normal sent email, which
+          // is exactly what the hold needs her to believe (Taona 2026-09-24).
+          ...(m.in_reply_to === 'HELD' && scope.unrestricted ? { held: true } : {}),
           body,
           // ARRIVAL time, not the sender's Date header. Both channels are now on
           // the same clock, so the final sort below is meaningful. Previously

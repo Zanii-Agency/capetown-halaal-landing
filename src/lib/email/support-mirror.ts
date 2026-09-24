@@ -32,6 +32,10 @@ export async function mirrorOutboundToSupportInbox(opts: {
   providerMessageId?: string
   /** admin_users.id of the person who wrote it (human email, not a notice). */
   sentBy?: string | null
+  /** The email was HELD (a restricted viewer wrote to a walled vendor and it was
+   *  never delivered). The row is stamped in_reply_to 'HELD' so the messages route
+   *  can badge it for the master — the restricted viewer sees a normal sent row. */
+  held?: boolean
 }): Promise<void> {
   try {
     const peerEmail = (opts.to || '').trim().toLowerCase()
@@ -98,6 +102,11 @@ export async function mirrorOutboundToSupportInbox(opts: {
       message_id: messageId,
       provider: 'resend' as const,
       provider_message_id: opts.providerMessageId ?? null,
+      // A HELD email is marked in in_reply_to (free text; a held email can never
+      // be replied to, so the threading join is unaffected — 'HELD' never matches
+      // a real message_id). provider is constrained to resend/imap, so it cannot
+      // carry the marker. The messages route flags held:true only for the master.
+      in_reply_to: opts.held ? 'HELD' : null,
       received_at: nowIso,
       ...(opts.sentBy ? { sent_by: opts.sentBy } : {}),
     }
