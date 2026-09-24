@@ -181,13 +181,16 @@ export function EmailThread({ messages, onReply, replyTo }: {
     )
   }
   // One row per address in the DB, but separate CONVERSATIONS on screen, split by
-  // subject (lib/inbox/email-conversations). Reminder-only subjects are pooled.
-  const { conversations, automated } = groupEmailConversations(messages)
+  // subject (lib/inbox/email-conversations). Every conversation, automated-only
+  // ones included, is ordered by its latest message so the thread reads in the
+  // order it happened (Taona 2026-09-24). An automated-only subject renders as its
+  // own section with its notices collapsed; automated notices inside a real
+  // conversation stay inline in that conversation's order.
+  const { conversations } = groupEmailConversations(messages)
   const replyKey = replyTo ? conversationKey(replyTo) : null
 
   return (
     <div className="flex flex-col gap-4 py-2">
-      {automated.length > 0 && <SystemGroup items={automated} />}
       {conversations.map((c, ci) => {
         const lastRealId = [...c.messages].reverse().find((m) => !m.auto)?.id
         const blocks: Array<{ kind: 'real'; m: CommItem } | { kind: 'auto'; items: CommItem[] }> = []
@@ -216,11 +219,13 @@ export function EmailThread({ messages, onReply, replyTo }: {
                 </button>
               )}
             </div>
-            {blocks.map((b, i) =>
-              b.kind === 'auto'
-                ? <SystemGroup key={`sys:${ci}:${i}`} items={b.items} />
-                : <EmailMessage key={b.m.id} m={b.m} defaultExpanded={isLatest && b.m.id === lastRealId} />
-            )}
+            {c.autoOnly
+              ? <SystemGroup items={c.messages} />
+              : blocks.map((b, i) =>
+                  b.kind === 'auto'
+                    ? <SystemGroup key={`sys:${ci}:${i}`} items={b.items} />
+                    : <EmailMessage key={b.m.id} m={b.m} defaultExpanded={isLatest && b.m.id === lastRealId} />
+                )}
           </section>
         )
       })}

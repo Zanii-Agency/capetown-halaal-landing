@@ -235,8 +235,12 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
               <header className="px-4 py-3 border-b border-neutral-200">
                 <div className="flex items-center gap-3">
                   <div className="min-w-0">
+                    {/* Taona 2026-09-24: no specific subject up here. The thread is
+                        split into per-subject conversations below, so a single
+                        subject in the header mislabels the whole thread. The vendor
+                        line under it is the useful anchor. */}
                     <p className="truncate text-sm font-semibold text-neutral-900">
-                      {active.subject || '(no subject)'}
+                      Email conversation
                     </p>
                     {/* Same as WhatsApp: the vendor's name opens their record,
                         because "what's their status?" is the usual next thought

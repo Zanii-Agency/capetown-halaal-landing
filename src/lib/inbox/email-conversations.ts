@@ -20,28 +20,27 @@ export function conversationTitle(subject: string | null | undefined): string {
   return String(subject || '').replace(PREFIX_RE, '').replace(/\s+/g, ' ').trim() || '(no subject)'
 }
 
-export interface EmailConversation { key: string; title: string; messages: CommItem[]; lastAt: string }
+export interface EmailConversation { key: string; title: string; messages: CommItem[]; lastAt: string; autoOnly: boolean }
 
-/** Real conversations (any human-written message) ordered oldest-first by their
- *  latest message, so the newest conversation sits at the bottom next to the
- *  reply box. Conversations that are ONLY automated notices (reminders,
- *  confirmations) are pooled into `automated`, so they don't each get a section. */
-export function groupEmailConversations(messages: CommItem[]): { conversations: EmailConversation[]; automated: CommItem[] } {
+/** Split into conversations by subject, ALL ordered oldest-first by their latest
+ *  message, so the whole thread reads in the order it happened (Taona 2026-09-24:
+ *  "the sequence of messages should be as they happened, including automated").
+ *
+ *  A conversation made up ONLY of automated notices (reminders, confirmations) is
+ *  no longer hoisted into a pool at the top — it keeps its own section in time
+ *  order, flagged `autoOnly` so the view can render it collapsed. Automated
+ *  messages inside a REAL conversation stay inline in that conversation's order. */
+export function groupEmailConversations(messages: CommItem[]): { conversations: EmailConversation[] } {
   const byKey = new Map<string, EmailConversation>()
   for (const m of messages) {
     const key = conversationKey(m.subject)
     let c = byKey.get(key)
-    if (!c) { c = { key, title: conversationTitle(m.subject), messages: [], lastAt: m.at }; byKey.set(key, c) }
+    if (!c) { c = { key, title: conversationTitle(m.subject), messages: [], lastAt: m.at, autoOnly: true }; byKey.set(key, c) }
     c.messages.push(m)
     if (m.at > c.lastAt) c.lastAt = m.at
   }
-  const conversations: EmailConversation[] = []
-  const automated: CommItem[] = []
-  for (const c of byKey.values()) {
-    if (c.messages.every((m) => m.auto)) automated.push(...c.messages)
-    else conversations.push(c)
-  }
-  automated.sort((a, b) => (a.at < b.at ? -1 : 1))
+  const conversations = [...byKey.values()]
+  for (const c of conversations) c.autoOnly = c.messages.every((m) => m.auto)
   conversations.sort((a, b) => (a.lastAt < b.lastAt ? -1 : 1))
-  return { conversations, automated }
+  return { conversations }
 }

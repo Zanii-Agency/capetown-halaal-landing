@@ -15,7 +15,7 @@ test('conversationKey strips any Re/Fwd chain and case', () => {
   assert.equal(conversationTitle(''), '(no subject)')
 })
 
-test('two subjects become two conversations; replies join their own; auto-only pooled', () => {
+test('two subjects become two conversations; replies join their own; auto-only stays in time order', () => {
   const g = groupEmailConversations([
     m('1', 'Vendor Whatsapp Group', '2026-09-14T08:00:00Z', { direction: 'out', auto: true }),
     m('2', 'Re: Vendor Whatsapp Group', '2026-09-14T09:00:00Z'),
@@ -24,8 +24,17 @@ test('two subjects become two conversations; replies join their own; auto-only p
     m('5', 'Re: Payment plan', '2026-09-23T12:00:00Z'),
     m('6', 'Re: Vendor Whatsapp Group', '2026-09-20T09:00:00Z', { direction: 'out' }),
   ])
-  assert.deepEqual(g.conversations.map((c) => c.title), ['Vendor Whatsapp Group', 'Payment plan'])
-  assert.deepEqual(g.conversations[0].messages.map((x) => x.id), ['1', '2', '6'], 'auto notice stays inside its real conversation')
-  assert.deepEqual(g.conversations[1].messages.map((x) => x.id), ['4', '5'])
-  assert.deepEqual(g.automated.map((x) => x.id), ['3'], 'a reminder-only subject is pooled, not its own section')
+  // Taona 2026-09-24: an automated-only subject keeps its own section in time order
+  // (between the two real ones by its latest message), flagged so the view renders
+  // it collapsed. It is NOT hoisted into a pool at the top.
+  assert.deepEqual(
+    g.conversations.map((c) => c.title),
+    ['Reminder, your stall fee', 'Vendor Whatsapp Group', 'Payment plan'],
+  )
+  assert.deepEqual(g.conversations.map((c) => c.autoOnly), [true, false, false])
+  const vwg = g.conversations.find((c) => c.title === 'Vendor Whatsapp Group')!
+  assert.deepEqual(vwg.messages.map((x) => x.id), ['1', '2', '6'], 'auto notice stays inside its real conversation')
+  const pp = g.conversations.find((c) => c.title === 'Payment plan')!
+  assert.deepEqual(pp.messages.map((x) => x.id), ['4', '5'])
+  assert.deepEqual(g.conversations[0].messages.map((x) => x.id), ['3'], 'the reminder-only section holds its message')
 })
