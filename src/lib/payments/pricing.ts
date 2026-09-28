@@ -109,10 +109,20 @@ export function computeVendorPricing(
   // below. This is the "reset to Other + a custom charge" she expects on clearing
   // the tier (the flower sisters: R2,000 custom charge, not R3,750 stale base
   // PLUS R2,000). A tiered vendor keeps their stored/agreed price.
+  // BUT a vendor who was never given a tier (approved straight off the form with
+  // only stall_type/stall_price stored, e.g. C&F Fresh Fruits at R3,750) has NO
+  // custom charge either, and zeroing them made the invoice read R0 while they
+  // were paying instalments. Only a custom charge signals "custom-only".
+  const hasCustomCharge = Array.isArray(reqs.electrical_custom) &&
+    reqs.electrical_custom.some((e) => e && typeof e === 'object' && Number((e as { amount?: unknown }).amount) > 0)
+  const hasStored = Number.isFinite(storedPrice) && storedPrice > 0
+  const untieredStored = !hasTier && !hasCustomCharge && hasStored
   const stallPrice = hasTier
-    ? (Number.isFinite(storedPrice) && storedPrice > 0 ? storedPrice : (tier?.price ?? 0))
-    : 0
-  const stallLabel = hasTier ? (tier?.label || tierSlug || 'Custom stall') : 'Custom (no tier)'
+    ? (hasStored ? storedPrice : (tier?.price ?? 0))
+    : untieredStored ? storedPrice : 0
+  const stallLabel = hasTier ? (tier?.label || tierSlug || 'Custom stall')
+    : untieredStored ? (String(reqs.stall_type || '').trim() || 'Stall')
+    : 'Custom (no tier)'
 
   const electrical: LineItem[] = []
   const elec = reqs.electrical_appliances
