@@ -244,3 +244,15 @@ export function tierPricingFields(
   const addOns = Math.max(0, prevTotal - prevStall)
   return { stall_type: meta.label, stall_price: meta.price, total_estimate: meta.price + addOns }
 }
+
+// special_requirements.stall_price/total_estimate are a FROZEN snapshot from the
+// apply form; tier moves, custom charges and appliance adds leave them stale (19
+// vendors on 2026-09-28, e.g. Hermanos shows R10,000, billed R7,500). Every admin
+// view that renders the blob passes it through here so it shows what is billed.
+export function withLivePricing<T extends Record<string, unknown>>(reqs: T, tier: string | null | undefined): T {
+  const p = computeVendorPricing({ preferred_booth_tier: tier ?? null, special_requirements: reqs })
+  const out: Record<string, unknown> = { ...reqs }
+  if ('stall_price' in out) out.stall_price = p.stallPrice
+  if ('total_estimate' in out) out.total_estimate = p.total
+  return out as T
+}

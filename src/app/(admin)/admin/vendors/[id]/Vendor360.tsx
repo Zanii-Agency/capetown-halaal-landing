@@ -628,7 +628,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           <LabeledField label="Items / menu" value={v.items_description ? String(v.items_description).slice(0, 200) : '—'} />
           <div className="sm:col-span-2">
             <p className="text-[11px] uppercase tracking-wide text-neutral-400 mb-1.5">Special requirements</p>
-            <SpecialRequirementsView raw={v.special_requirements as string | Record<string, unknown> | null} />
+            <SpecialRequirementsView raw={v.special_requirements as string | Record<string, unknown> | null} tier={v.preferred_booth_tier as string | null} />
           </div>
           <LabeledField label="Applied" value={v.created_at ? fmtDate(v.created_at as string) : '—'} />
         </div>

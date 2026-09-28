@@ -25,6 +25,7 @@ import {
   MessageCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { withLivePricing } from '@/lib/payments/pricing'
 
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString('en-ZA', {
@@ -308,7 +309,7 @@ export default function ApplicationDetailPage() {
               total_estimate: 'Total Estimate',
             }
             try {
-              const data = JSON.parse(application.special_requirements)
+              const data = withLivePricing(JSON.parse(application.special_requirements), application.preferred_booth_tier)
               return (
                 <div>
                   <p className="text-sm text-neutral-500 mb-3">Requirements & Details</p>
