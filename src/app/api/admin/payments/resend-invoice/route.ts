@@ -1,10 +1,9 @@
 // Admin-only resend of the vendor invoice.
 //  - PAID vendor: the payment confirmation + invoice link (the receipt), via the
 //    same VendorPaymentConfirmation template the original confirmation used.
-//  - UNPAID vendor: the invoice PDF itself (the bill, with how to pay), via the
+//  - UNPAID vendor: the invoice PDF itself (the bill: items + amount, no bank details), via the
 //    shared renderInvoicePdf so every issue path behaves the same.
-// Does NOT mutate payment state (renderInvoicePdf's gated, wall-safe hand-over
-// of a never-paid master vendor to the owner is the one exception, by design).
+// Does NOT mutate payment state or move the vendor (Taona 2026-09-28).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -156,7 +155,7 @@ async function sendUnpaidInvoice(
     '',
     `Please find attached your updated invoice for ${biz} at the Young at Heart Festival.`,
     '',
-    'The invoice shows the amount due and how to pay. Please use the reference on the invoice when you pay, so we can match your payment to your stall.',
+    'The invoice shows what you are paying for and the amount due. To pay, please log in to your portal and go to the Payments page.',
     '',
     'You can also view and download it any time by logging into your portal at https://cthalaal.co.za/exhibitor/login under Payments.',
     '',
