@@ -28,16 +28,10 @@ import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 type Row = { id: string; name: string; total: number }
 const COHORT: Row[] = [
   { id: 'd3cbc49f-8eac-4fdb-9be2-db38975e1041', name: "Joe & Co.", total: 8000 },
-  { id: '0fd788d9-aa5c-430b-aaad-9dbd30e760d1', name: "Farfashions Apparel", total: 6500 },
   { id: 'e34adba9-9444-4b2d-9eb4-ccf3bc43db43', name: "Le Sucre Artisanal Treats", total: 3700 },
   { id: 'a679018d-60b4-4d46-b38a-ffd31de0d6d3', name: "House of Rajab Ali", total: 12000 },
-  { id: '1a99e02a-db90-4ac5-8420-952cf76e918c', name: "The Velvet Crumb", total: 3700 },
   { id: 'f6882ea1-ef76-44ff-9882-c4b5698bafb0', name: "Secret", total: 6500 },
-  { id: '37598dfa-d610-4690-b2c1-a2c95cd659ac', name: "Kgotsos Pride", total: 6500 },
-  { id: 'f11314ca-6622-435b-81c4-28ee1be5325f', name: "Lafrique_officiel", total: 6500 },
-  { id: '3e284e52-5c58-4008-848e-aefa5c6eb70f', name: "MAYSABLAY", total: 3700 },
   { id: '9b869a60-0157-4ac9-9370-6842a099cb5b', name: "Zayaan Wellness", total: 3700 },
-  { id: 'c5e04692-9377-4fc4-aac8-10122c4df1aa', name: "Maddy's Home & D\u00e9cor", total: 3700 },
 ]
 
 const WINDOW = '2026-10-24..2026-11-25'
@@ -71,18 +65,19 @@ function planFor(row: Row): { date: string; amount: number }[] {
     amts.push(r); acc += r
   }
   if (amts[n - 1] <= 0) { amts[n - 2] += amts[n - 1] - 50; amts[n - 1] = 50 }
-  const span = (WINDOW_END.getTime() - WINDOW_START.getTime()) / DAY
-  const dates: string[] = []
-  let prevDay = -1
-  for (let i = 0; i < n; i++) {
-    const frac = n === 1 ? 0 : i / (n - 1)
-    const jitter = (rnd() - 0.5) * (span / (n + 1)) * 0.8
-    let day = Math.round(frac * span + jitter)
-    day = Math.max(0, Math.min(span, day))
-    if (day <= prevDay) day = Math.min(span, prevDay + 2 + Math.floor(rnd() * 4))
-    prevDay = day
-    dates.push(iso(new Date(WINDOW_START.getTime() + day * DAY)))
+  // Taona 2026-09-28: "dates too similar". Each vendor gets its own random
+  // first date (24 to 31 Oct) and last date (12 to 25 Nov); middles are random
+  // in between with at least 5 days apart, so no two schedules line up.
+  const d0 = WINDOW_START.getTime(), lastMax = (WINDOW_END.getTime() - d0) / DAY
+  const first = Math.floor(rnd() * 8)
+  const last = lastMax - Math.floor(rnd() * 14)
+  const days = [first]
+  for (let i = 1; i < n - 1; i++) {
+    const lo = days[i - 1] + 5, hi = last - 5 * (n - 1 - i)
+    days.push(lo + Math.floor(rnd() * Math.max(1, hi - lo + 1)))
   }
+  if (n > 1) days.push(last)
+  const dates = days.map((d) => iso(new Date(d0 + d * DAY)))
   return dates.map((date, i) => ({ date, amount: amts[i] }))
 }
 
