@@ -52,33 +52,24 @@ const iso = (d: Date) => d.toISOString().slice(0, 10)
 
 // Deterministic per-vendor schedule (seed from id). Count rule (Taona 2026-09-13,
 // revised): Happy Hour (R8k+) = 3, sub-R4k = 2, everyone else 2 or 3. Sums EXACTLY.
+// Taona 2026-09-28: dates must not line up across vendors. Hand-set, every
+// date distinct across the batch; amounts unchanged from the seeded split.
+const DATES: Record<string, string[]> = {
+  'a679018d-60b4-4d46-b38a-ffd31de0d6d3': ['2026-10-26', '2026-11-04', '2026-11-12', '2026-11-24'], // House of Rajab Ali
+  'd3cbc49f-8eac-4fdb-9be2-db38975e1041': ['2026-10-29', '2026-11-06', '2026-11-17', '2026-11-25'], // Joe & Co.
+  'f6882ea1-ef76-44ff-9882-c4b5698bafb0': ['2026-10-24', '2026-11-01', '2026-11-09', '2026-11-20'], // Secret
+  'e34adba9-9444-4b2d-9eb4-ccf3bc43db43': ['2026-10-31', '2026-11-18'], // Le Sucre
+  '9b869a60-0157-4ac9-9370-6842a099cb5b': ['2026-10-27', '2026-11-14'], // Zayaan
+}
+const AMOUNTS: Record<string, number[]> = {
+  'a679018d-60b4-4d46-b38a-ffd31de0d6d3': [1750, 2850, 3500, 3900],
+  'd3cbc49f-8eac-4fdb-9be2-db38975e1041': [1750, 2750, 1500, 2000],
+  'f6882ea1-ef76-44ff-9882-c4b5698bafb0': [2050, 1950, 1100, 1400],
+  'e34adba9-9444-4b2d-9eb4-ccf3bc43db43': [2100, 1600],
+  '9b869a60-0157-4ac9-9370-6842a099cb5b': [1300, 2400],
+}
 function planFor(row: Row): { date: string; amount: number }[] {
-  const rnd = mulberry32(seedFrom(row.id))
-  const n = row.total >= 6000 ? 4 : 2 // Taona 2026-09-28: 4 for the bigger totals, 2 for the easier ones
-  const weights = Array.from({ length: n }, () => 0.6 + rnd())
-  const wsum = weights.reduce((s, w) => s + w, 0)
-  const amts: number[] = []
-  let acc = 0
-  for (let i = 0; i < n; i++) {
-    if (i === n - 1) { amts.push(row.total - acc); break }
-    const r = Math.max(50, Math.round(((row.total * weights[i]) / wsum) / 50) * 50)
-    amts.push(r); acc += r
-  }
-  if (amts[n - 1] <= 0) { amts[n - 2] += amts[n - 1] - 50; amts[n - 1] = 50 }
-  // Taona 2026-09-28: "dates too similar". Each vendor gets its own random
-  // first date (24 to 31 Oct) and last date (12 to 25 Nov); middles are random
-  // in between with at least 5 days apart, so no two schedules line up.
-  const d0 = WINDOW_START.getTime(), lastMax = (WINDOW_END.getTime() - d0) / DAY
-  const first = Math.floor(rnd() * 8)
-  const last = lastMax - Math.floor(rnd() * 14)
-  const days = [first]
-  for (let i = 1; i < n - 1; i++) {
-    const lo = days[i - 1] + 5, hi = last - 5 * (n - 1 - i)
-    days.push(lo + Math.floor(rnd() * Math.max(1, hi - lo + 1)))
-  }
-  if (n > 1) days.push(last)
-  const dates = days.map((d) => iso(new Date(d0 + d * DAY)))
-  return dates.map((date, i) => ({ date, amount: amts[i] }))
+  return DATES[row.id].map((date, i) => ({ date, amount: AMOUNTS[row.id][i] }))
 }
 
 const DRY = process.argv.includes('--dry')
