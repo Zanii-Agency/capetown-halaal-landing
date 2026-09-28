@@ -201,7 +201,7 @@ export function buildInvoiceHtml(data: InvoiceData): string {
       <div class="label">Invoice #</div>
       <div class="num">${escapeHtml(data.reference)}</div>
       <div class="issued">Issued ${escapeHtml(data.issuedAt)}</div>
-      ${isPaid ? `<div class="badge paid">PAID${data.paidAt ? ' &middot; ' + escapeHtml(data.paidAt) : ''}</div>` : `<div class="badge due">${escapeHtml(data.status.toUpperCase())}</div>`}
+      ${isPaid ? `<div class="badge paid">PAID${data.paidAt ? ' &middot; ' + escapeHtml(data.paidAt) : ''}</div>` : `<div class="badge due">DUE</div>`}
     </div>
   </div>
 
