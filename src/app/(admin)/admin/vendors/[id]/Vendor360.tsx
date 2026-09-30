@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, MessageCircle, Mail, CreditCard, MapPin, Phone,
   FileText, Users, History, Eye, ChevronDown, ChevronUp, Loader2,
-  StickyNote, Plus, Check, X, Trash2, RotateCcw,
+  StickyNote, Plus, Check, X, Trash2, RotateCcw, Download,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AdminPage } from '@/components/admin/AdminPage'
@@ -129,6 +129,7 @@ interface InitialData {
   communications: CommItem[]
   events: AuditEvent[]
   stats: Stats
+  extraRequiredDocs: string[]
 }
 
 function fmtDate(d: string | null | undefined): string {
@@ -650,7 +651,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
         <VendorTimeline applicationId={String(v.id)} />
       </Section>
 
-      <VendorDocsChecklist applicationId={String(v.id)} docs={portal.docs || []} />
+      <VendorDocsChecklist applicationId={String(v.id)} docs={portal.docs || []} extraRequired={initialData.extraRequiredDocs} />
 
       <Section title="Documents" icon={<FileText className="w-4 h-4" />}>
         <DenseTable<DocRecord>
@@ -667,7 +668,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
               ),
             },
             {
-              key: 'actions', header: '', width: '210px', render: (doc) => (
+              key: 'actions', header: '', width: '290px', render: (doc) => (
                 <div className="flex items-center justify-end gap-2">
                   <button
                     onClick={(e) => { e.stopPropagation(); openDocPreview(doc) }}
@@ -675,6 +676,15 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
                   >
                     <Eye className="w-3 h-3" /> View
                   </button>
+                  {doc.path && (
+                    <a
+                      href={`/api/admin/vendor-doc?path=${encodeURIComponent(doc.path)}&download=1`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs text-blue-700 hover:underline inline-flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> Download
+                    </a>
+                  )}
                   {doc.status !== 'approved' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDocAction(doc, 'approve') }}
@@ -1146,6 +1156,14 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
                 </div>
               )}
             </div>
+            {previewDoc.path && (
+              <a
+                href={`/api/admin/vendor-doc?path=${encodeURIComponent(previewDoc.path)}&download=1`}
+                className="inline-flex items-center gap-1.5 text-sm text-blue-700 hover:underline"
+              >
+                <Download className="w-4 h-4" /> Download file
+              </a>
+            )}
             <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => handleDocAction(previewDoc, 'approve')}

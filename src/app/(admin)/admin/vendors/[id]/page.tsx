@@ -7,6 +7,7 @@ import { parseAllocation } from '@/lib/stalls'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 import { hiddenFromOwner } from '@/lib/audit-scope'
 import { Vendor360 } from './Vendor360'
+import { extraRequiredDocs } from '@/lib/exhibitor/required-docs'
 
 export const dynamic = 'force-dynamic'
 
@@ -178,6 +179,7 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
         communications: visibleComms,
         events,
         stats,
+        extraRequiredDocs: extraRequiredDocs(a.admin_notes as string | null),
       }}
     />
   )
