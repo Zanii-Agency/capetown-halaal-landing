@@ -1,9 +1,12 @@
-// BATCH 5 (Taona 2026-09-30): the remaining master payers not yet on a schedule,
-// starting mid-October. 18 vendors: 6 with master-stamped proofs (Sep FNB) + 12
-// collected into master Jul/Aug. Totals = what master actually holds (partial
-// payers settle only what they paid). 44 dates, all distinct, 15 Oct..27 Nov.
-// Rule: under R5,000 = 2 instalments, R5,000+ = 3. Excluded pending Taona's word:
-// Table Art, Amc cookware, Elegant Muslimah, Vanilla Cream, Y&K, Islamic Relief.
+// BATCH 5 (Taona 2026-09-30): the RECENT master payers plus 4 more, starting
+// mid-October. 10 vendors: the 6 Sep FNB payers with master-stamped proofs
+// (Fareed Essence, Bag Boutique, Brownie Babe, RaaRaa Studio, Suade Collections,
+// Sprinkle Syndicate) + 4 Jul/Aug payers (BAGD, Bes-Teas 3 Aug; Barfi Bliss, Punch'D
+// 2 Aug). EVERY one verified paid into ...191 by reading the proof slip itself
+// (Sprinkle via Taona's ...191 statement). Baitul Hikmah + Dailyfresh dropped: no proof
+// anywhere, account unverifiable. Taona trimmed 8 older ones the same
+// day ("just the recent paid ones and maybe 4 more"). Dates distinct, 15 Oct..26 Nov.
+// Rule: under R5,000 = 2 instalments, R5,000+ = 3.
 // Cloned from batch 4 below.
 // BATCH 4 (Taona 2026-09-29): 6 more pre-26-Aug ...191 full payers, early Nov to 1 Dec,
 // dates distinct from batch 3 and each other. Cloned from batch 3.
@@ -36,24 +39,16 @@ import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 
 type Row = { id: string; name: string; total: number }
 const COHORT: Row[] = [
-  { id: '12fa5b87-8eb3-4c8a-b76a-a1a42142d6a3', name: "Artsy Facts", total: 3750 },
-  { id: 'fa1c1e2a-21f1-49fe-9b63-74a9b6a4bec7', name: "Prawn Star", total: 4800 },
-  { id: 'e97febda-27c0-4b5e-b731-71356da086e5', name: "Mias Chill Station", total: 5000 },
-  { id: 'a64e472f-0ba0-44a6-b1af-9dcbb04c1dea', name: "NZ BAZAAR", total: 3700 },
-  { id: 'e3a452b9-8175-401b-825d-cd1dc1cb339f', name: "It\u2019s SnackTime", total: 8500 },
-  { id: '87a38f85-232e-4b57-834b-4e7120e70288', name: "Melonscape", total: 3700 },
-  { id: 'e3b885e0-4edf-49d7-bf90-437af2a82834', name: "Punch'D", total: 3700 },
-  { id: 'f3e21663-37ac-463b-9217-6e13793bf099', name: "Barfi Bliss", total: 6500 },
   { id: '54e29439-dff0-48c5-8002-9abd1247a7f3', name: "Bes-Teas Bubble Tea", total: 6500 },
   { id: '65267bc2-4625-47b4-a815-46d726f99f95', name: "BAGD", total: 6500 },
-  { id: '6484cfa4-6875-462e-96d3-5f95a7a53829', name: "Dailyfresh corn", total: 4800 },
-  { id: 'f5a08b4c-bb88-4f94-8698-9de60ea36a5b', name: "Baitul Hikmah Cape Town", total: 6500 },
   { id: 'ce713fd2-8690-445a-b9cf-a163a8489e5a', name: "Fareed Essence", total: 3700 },
   { id: '68bf3caa-2add-4566-8556-e0422567f9ad', name: "Bag Boutique", total: 3700 },
   { id: 'ad086831-12fb-475e-bbdc-85b969356544', name: "Brownie Babe", total: 3700 },
   { id: '3bc78400-7629-4053-8336-888be6cb1b8e', name: "RaaRaa Studio", total: 3700 },
   { id: '5aa7b2ff-8cab-4386-ad43-827b96ecc83e', name: "Suade Collections", total: 6500 },
   { id: '657b7cfe-16fa-4a63-90d1-52d3cac15f8e', name: "Sprinkle Syndicate", total: 5000 },
+  { id: 'f3e21663-37ac-463b-9217-6e13793bf099', name: "Barfi Bliss", total: 6500 },
+  { id: 'e3b885e0-4edf-49d7-bf90-437af2a82834', name: "Punch'D", total: 3700 },
 ]
 
 const WINDOW = '2026-10-15..2026-11-27'
@@ -77,18 +72,10 @@ const iso = (d: Date) => d.toISOString().slice(0, 10)
 // Taona 2026-09-28: dates must not line up across vendors. Hand-set, every
 // date distinct across the batch; amounts unchanged from the seeded split.
 const DATES: Record<string, string[]> = {
-  '12fa5b87-8eb3-4c8a-b76a-a1a42142d6a3': ['2026-10-28', '2026-11-10'], // Artsy Facts
-  'fa1c1e2a-21f1-49fe-9b63-74a9b6a4bec7': ['2026-11-01', '2026-11-27'], // Prawn Star
-  'e97febda-27c0-4b5e-b731-71356da086e5': ['2026-10-19', '2026-11-03', '2026-11-21'], // Mias Chill Station
-  'a64e472f-0ba0-44a6-b1af-9dcbb04c1dea': ['2026-10-23', '2026-11-20'], // NZ BAZAAR
-  'e3a452b9-8175-401b-825d-cd1dc1cb339f': ['2026-10-16', '2026-11-09', '2026-11-18'], // It’s SnackTime
-  '87a38f85-232e-4b57-834b-4e7120e70288': ['2026-10-27', '2026-11-13'], // Melonscape
   'e3b885e0-4edf-49d7-bf90-437af2a82834': ['2026-10-17', '2026-11-16'], // Punch'D
   'f3e21663-37ac-463b-9217-6e13793bf099': ['2026-10-15', '2026-11-06', '2026-11-12'], // Barfi Bliss
   '54e29439-dff0-48c5-8002-9abd1247a7f3': ['2026-10-26', '2026-11-05', '2026-11-15'], // Bes-Teas Bubble Tea
   '65267bc2-4625-47b4-a815-46d726f99f95': ['2026-10-29', '2026-11-07', '2026-11-19'], // BAGD
-  '6484cfa4-6875-462e-96d3-5f95a7a53829': ['2026-10-30', '2026-11-14'], // Dailyfresh corn
-  'f5a08b4c-bb88-4f94-8698-9de60ea36a5b': ['2026-10-20', '2026-11-04', '2026-11-11'], // Baitul Hikmah Cape Town
   'ce713fd2-8690-445a-b9cf-a163a8489e5a': ['2026-10-25', '2026-11-26'], // Fareed Essence
   '68bf3caa-2add-4566-8556-e0422567f9ad': ['2026-10-18', '2026-11-24'], // Bag Boutique
   'ad086831-12fb-475e-bbdc-85b969356544': ['2026-10-31', '2026-11-23'], // Brownie Babe
@@ -97,18 +84,10 @@ const DATES: Record<string, string[]> = {
   '657b7cfe-16fa-4a63-90d1-52d3cac15f8e': ['2026-10-24', '2026-11-02', '2026-11-17'], // Sprinkle Syndicate
 }
 const AMOUNTS: Record<string, number[]> = {
-  '12fa5b87-8eb3-4c8a-b76a-a1a42142d6a3': [2000, 1750],
-  'fa1c1e2a-21f1-49fe-9b63-74a9b6a4bec7': [2150, 2650],
-  'e97febda-27c0-4b5e-b731-71356da086e5': [1450, 1800, 1750],
-  'a64e472f-0ba0-44a6-b1af-9dcbb04c1dea': [1650, 2050],
-  'e3a452b9-8175-401b-825d-cd1dc1cb339f': [2700, 3050, 2750],
-  '87a38f85-232e-4b57-834b-4e7120e70288': [2150, 1550],
   'e3b885e0-4edf-49d7-bf90-437af2a82834': [1800, 1900],
   'f3e21663-37ac-463b-9217-6e13793bf099': [2300, 1950, 2250],
   '54e29439-dff0-48c5-8002-9abd1247a7f3': [2200, 2450, 1850],
   '65267bc2-4625-47b4-a815-46d726f99f95': [2100, 2150, 2250],
-  '6484cfa4-6875-462e-96d3-5f95a7a53829': [2250, 2550],
-  'f5a08b4c-bb88-4f94-8698-9de60ea36a5b': [2300, 2300, 1900],
   'ce713fd2-8690-445a-b9cf-a163a8489e5a': [1650, 2050],
   '68bf3caa-2add-4566-8556-e0422567f9ad': [1650, 2050],
   'ad086831-12fb-475e-bbdc-85b969356544': [1750, 1950],
