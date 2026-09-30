@@ -1,11 +1,9 @@
-// BATCH 5 (Taona 2026-09-30): the RECENT master payers plus 4 more, starting
-// mid-October. 10 vendors: the 6 Sep FNB payers with master-stamped proofs
-// (Fareed Essence, Bag Boutique, Brownie Babe, RaaRaa Studio, Suade Collections,
-// Sprinkle Syndicate) + 4 Jul/Aug payers (BAGD, Bes-Teas 3 Aug; Barfi Bliss, Punch'D
-// 2 Aug). EVERY one verified paid into ...191 by reading the proof slip itself
-// (Sprinkle via Taona's ...191 statement). Baitul Hikmah + Dailyfresh dropped: no proof
-// anywhere, account unverifiable. Taona trimmed 8 older ones the same
-// day ("just the recent paid ones and maybe 4 more"). Dates distinct, 15 Oct..26 Nov.
+// BATCH 5 (Taona 2026-09-30): the 5 most recent master payers, starting mid/late
+// October: Fareed Essence (14 Sep), RaaRaa Studio (15 Sep), Brownie Babe (16 Sep),
+// Suade Collections (20 Sep), Sprinkle Syndicate (23 Sep). Each verified paid into
+// ...191 by reading the proof slip (Sprinkle via Taona's ...191 statement).
+// Trimmed twice the same day on Taona's word ("just the recent paid ones",
+// "just add like 5"). Dates distinct, 21 Oct..26 Nov.
 // Rule: under R5,000 = 2 instalments, R5,000+ = 3.
 // Cloned from batch 4 below.
 // BATCH 4 (Taona 2026-09-29): 6 more pre-26-Aug ...191 full payers, early Nov to 1 Dec,
@@ -39,16 +37,11 @@ import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 
 type Row = { id: string; name: string; total: number }
 const COHORT: Row[] = [
-  { id: '54e29439-dff0-48c5-8002-9abd1247a7f3', name: "Bes-Teas Bubble Tea", total: 6500 },
-  { id: '65267bc2-4625-47b4-a815-46d726f99f95', name: "BAGD", total: 6500 },
   { id: 'ce713fd2-8690-445a-b9cf-a163a8489e5a', name: "Fareed Essence", total: 3700 },
-  { id: '68bf3caa-2add-4566-8556-e0422567f9ad', name: "Bag Boutique", total: 3700 },
   { id: 'ad086831-12fb-475e-bbdc-85b969356544', name: "Brownie Babe", total: 3700 },
   { id: '3bc78400-7629-4053-8336-888be6cb1b8e', name: "RaaRaa Studio", total: 3700 },
   { id: '5aa7b2ff-8cab-4386-ad43-827b96ecc83e', name: "Suade Collections", total: 6500 },
   { id: '657b7cfe-16fa-4a63-90d1-52d3cac15f8e', name: "Sprinkle Syndicate", total: 5000 },
-  { id: 'f3e21663-37ac-463b-9217-6e13793bf099', name: "Barfi Bliss", total: 6500 },
-  { id: 'e3b885e0-4edf-49d7-bf90-437af2a82834', name: "Punch'D", total: 3700 },
 ]
 
 const WINDOW = '2026-10-15..2026-11-27'
@@ -72,24 +65,14 @@ const iso = (d: Date) => d.toISOString().slice(0, 10)
 // Taona 2026-09-28: dates must not line up across vendors. Hand-set, every
 // date distinct across the batch; amounts unchanged from the seeded split.
 const DATES: Record<string, string[]> = {
-  'e3b885e0-4edf-49d7-bf90-437af2a82834': ['2026-10-17', '2026-11-16'], // Punch'D
-  'f3e21663-37ac-463b-9217-6e13793bf099': ['2026-10-15', '2026-11-06', '2026-11-12'], // Barfi Bliss
-  '54e29439-dff0-48c5-8002-9abd1247a7f3': ['2026-10-26', '2026-11-05', '2026-11-15'], // Bes-Teas Bubble Tea
-  '65267bc2-4625-47b4-a815-46d726f99f95': ['2026-10-29', '2026-11-07', '2026-11-19'], // BAGD
   'ce713fd2-8690-445a-b9cf-a163a8489e5a': ['2026-10-25', '2026-11-26'], // Fareed Essence
-  '68bf3caa-2add-4566-8556-e0422567f9ad': ['2026-10-18', '2026-11-24'], // Bag Boutique
   'ad086831-12fb-475e-bbdc-85b969356544': ['2026-10-31', '2026-11-23'], // Brownie Babe
   '3bc78400-7629-4053-8336-888be6cb1b8e': ['2026-10-22', '2026-11-25'], // RaaRaa Studio
   '5aa7b2ff-8cab-4386-ad43-827b96ecc83e': ['2026-10-21', '2026-11-08', '2026-11-22'], // Suade Collections
   '657b7cfe-16fa-4a63-90d1-52d3cac15f8e': ['2026-10-24', '2026-11-02', '2026-11-17'], // Sprinkle Syndicate
 }
 const AMOUNTS: Record<string, number[]> = {
-  'e3b885e0-4edf-49d7-bf90-437af2a82834': [1800, 1900],
-  'f3e21663-37ac-463b-9217-6e13793bf099': [2300, 1950, 2250],
-  '54e29439-dff0-48c5-8002-9abd1247a7f3': [2200, 2450, 1850],
-  '65267bc2-4625-47b4-a815-46d726f99f95': [2100, 2150, 2250],
   'ce713fd2-8690-445a-b9cf-a163a8489e5a': [1650, 2050],
-  '68bf3caa-2add-4566-8556-e0422567f9ad': [1650, 2050],
   'ad086831-12fb-475e-bbdc-85b969356544': [1750, 1950],
   '3bc78400-7629-4053-8336-888be6cb1b8e': [2050, 1650],
   '5aa7b2ff-8cab-4386-ad43-827b96ecc83e': [1900, 2150, 2450],
