@@ -24,7 +24,6 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { EmailThread } from '@/components/admin/inbox/EmailThread'
-import { groupEmailTopics, topicOf } from '@/lib/inbox/email-conversations'
 import { createClient } from '@/lib/supabase/client'
 import type { CommItem } from '@/lib/inbox/types'
 import type { ChannelThread, MailBox } from '@/lib/inbox/channel-threads'
@@ -67,11 +66,6 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
   activeIdRef.current = activeId
 
   const active = threads.find((t) => t.id === activeId) || null
-  // Topics of the open thread; the composer defaults to the newest OPEN topic
-  // (vendor waiting), else the newest topic, until the operator picks another.
-  const topics = groupEmailTopics(messages)
-  const replySubject = replyTo || (topics.find((t) => t.open) || topics[0])?.replySubject || null
-  const replyTopicKey = replySubject ? topicOf(replySubject).key : ''
 
   const loadThreads = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -220,11 +214,8 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                 <p className={`truncate text-xs ${t.unread ? 'text-neutral-900 font-medium' : 'text-neutral-700'}`}>
                   {t.subject || '(no subject)'}
                 </p>
-                <p className="flex items-center gap-1.5 text-xs text-neutral-500 min-w-0">
-                  <span className="truncate">{t.last_direction === 'out' ? 'You: ' : ''}{(t.last_preview || '').split('\n')[0]}</span>
-                  {t.needs_response && (
-                    <span className="shrink-0 text-[10px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-1.5">Open</span>
-                  )}
+                <p className="truncate text-xs text-neutral-500">
+                  {t.last_direction === 'out' ? 'You: ' : ''}{t.last_preview || ''}
                 </p>
               </>
             )}
@@ -290,32 +281,18 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
               </header>
 
               <div className="flex-1 overflow-y-auto px-4 py-3">
-                <EmailThread messages={messages} onReply={setReplyTo} replyTo={replySubject} />
+                <EmailThread messages={messages} onReply={setReplyTo} replyTo={replyTo} />
                 <div ref={streamEnd} />
               </div>
 
               <footer className="p-3 border-t border-neutral-200">
                 {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
-                {topics.length > 0 && (
-                  <label className="mb-2 flex items-center gap-2 text-xs text-neutral-500">
-                    Replying in:
-                    <select
-                      value={replyTopicKey}
-                      onChange={(e) => setReplyTo(topics.find((t) => t.key === e.target.value)?.replySubject || null)}
-                      className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs font-medium text-neutral-800"
-                    >
-                      {topics.map((t) => (
-                        <option key={t.key} value={t.key}>{t.title}{t.open ? ' (open)' : ''}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
                 <Composer
                   channel="email"
                   email={active.email}
                   applicationId={active.application_id}
                   sendingAs={sendingAs}
-                  subject={replySubject || active.subject}
+                  subject={replyTo || active.subject}
                   onSent={() => { if (active) loadMessages(active); loadThreads(true) }}
                   onError={(m) => setError(m)}
                 />

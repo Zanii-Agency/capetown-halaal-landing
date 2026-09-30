@@ -266,14 +266,14 @@ export async function POST(req: NextRequest) {
     if (code === '23505') {
       // Duplicate delivery (this webhook retried, or logEmailOutbound raced us to
       // the same message_id). If the existing row is still body-less and we now
-      // have the body, fill it. the empty-body filter (null or '') so a real body is never
+      // have the body, fill it. `.is('body_text', null)` so a real body is never
       // clobbered.
       if (bodyText || bodyHtml) {
         await db
           .from('support_inbox_messages')
           .update({ body_text: bodyText, body_html: bodyHtml })
           .eq('message_id', messageId)
-          .or('body_text.is.null,body_text.eq.')
+          .is('body_text', null)
       }
       return NextResponse.json({ ok: true, deduped: true })
     }

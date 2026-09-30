@@ -189,7 +189,7 @@ export async function logEmailOutbound(opts: {
         .from('support_inbox_messages')
         .update({ body_text: row.body_text, body_html: row.body_html })
         .eq('message_id', messageId)
-        .or('body_text.is.null,body_text.eq.')
+        .is('body_text', null)
     }
     // The webhook's twin row (same message_id) must carry the sender too, or it
     // renders as an automated notice next to ours.
