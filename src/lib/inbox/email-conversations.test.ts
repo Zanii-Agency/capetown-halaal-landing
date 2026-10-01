@@ -63,3 +63,15 @@ test('topicOf buckets subjects; unknown subjects keep their own Other section', 
   assert.equal(t[0].replySubject, 'Following up on your Young at Heart Festival stall payment')
   assert.equal(t[1].open, false)
 })
+
+test('latestReplySubject prefers the newest human inbound email', async () => {
+  const { latestReplySubject } = await import('./email-conversations')
+  const msgs = [
+    m('1', 'Payment plan', '2026-09-01T00:00:00Z'),
+    m('2', 'Re: Contract', '2026-09-03T00:00:00Z'),
+    m('3', 'Reminder, your stall fee', '2026-09-04T00:00:00Z', { auto: true } as Partial<CommItem>),
+    m('4', 'Re: Payment plan', '2026-09-05T00:00:00Z', { direction: 'out' } as Partial<CommItem>),
+  ]
+  assert.equal(latestReplySubject(msgs), 'Contract')
+  assert.equal(latestReplySubject([]), null)
+})

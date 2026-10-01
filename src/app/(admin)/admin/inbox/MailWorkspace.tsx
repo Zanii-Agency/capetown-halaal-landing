@@ -23,8 +23,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { AdminPage } from '@/components/admin/AdminPage'
-import { EmailThread } from '@/components/admin/inbox/EmailThread'
-import { groupEmailTopics, topicOf } from '@/lib/inbox/email-conversations'
+import { EmailThread, EmailTimeline } from '@/components/admin/inbox/EmailThread'
+import { groupEmailTopics, topicOf, latestReplySubject, DEFAULT_EMAIL_VIEW, type EmailView } from '@/lib/inbox/email-conversations'
 import { createClient } from '@/lib/supabase/client'
 import type { CommItem } from '@/lib/inbox/types'
 import type { ChannelThread, MailBox } from '@/lib/inbox/channel-threads'
@@ -56,6 +56,20 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
   // Which email conversation the composer replies into (by subject). null = latest.
   const [replyTo, setReplyTo] = useState<string | null>(null)
   useEffect(() => { setReplyTo(null) }, [activeId])
+  // Timeline (default) or Topics (the rollback view). Per-viewer choice in
+  // localStorage; storage can throw (private mode), so it is best-effort only.
+  const [view, setView] = useState<EmailView>(DEFAULT_EMAIL_VIEW)
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('inbox.emailView')
+      if (v === 'timeline' || v === 'topics') setView(v)
+    } catch { /* default view */ }
+  }, [])
+  function pickView(v: EmailView) {
+    setView(v)
+    setReplyTo(null)
+    try { localStorage.setItem('inbox.emailView', v) } catch { /* not persisted */ }
+  }
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -70,7 +84,9 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
   // Topics of the open thread; the composer defaults to the newest OPEN topic
   // (vendor waiting), else the newest topic, until the operator picks another.
   const topics = groupEmailTopics(messages)
-  const replySubject = replyTo || (topics.find((t) => t.open) || topics[0])?.replySubject || null
+  const replySubject = view === 'timeline'
+    ? latestReplySubject(messages)
+    : replyTo || (topics.find((t) => t.open) || topics[0])?.replySubject || null
   const replyTopicKey = replySubject ? topicOf(replySubject).key : ''
 
   const loadThreads = useCallback(async (silent = false) => {
@@ -153,7 +169,7 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
     return () => clearInterval(id)
   }, [loadThreads])
 
-  useEffect(() => { streamEnd.current?.scrollIntoView({ block: 'end' }) }, [messages])
+  useEffect(() => { streamEnd.current?.scrollIntoView({ block: 'end' }) }, [messages, view])
 
   function open(t: ChannelThread) {
     setActiveId(t.id)
@@ -278,6 +294,19 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
                       Waiting on a reply
                     </span>
                   )}
+                  <div className="flex rounded-md border border-neutral-200 overflow-hidden text-[11px] font-medium" role="group" aria-label="Thread view">
+                    {(['timeline', 'topics'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => pickView(v)}
+                        aria-pressed={view === v}
+                        className={`px-2 py-1 transition ${view === v ? 'bg-[#cd2653] text-white' : 'bg-white text-neutral-600 hover:bg-neutral-50'}`}
+                      >
+                        {v === 'timeline' ? 'Timeline' : 'Topics'}
+                      </button>
+                    ))}
+                  </div>
                   <ThreadToolbar
                     thread={active}
                     onChanged={() => loadThreads(true)}
@@ -290,13 +319,20 @@ export function MailWorkspace({ mailbox, title, subtitle, sendingAs }: Props) {
               </header>
 
               <div className="flex-1 overflow-y-auto px-4 py-3">
-                <EmailThread messages={messages} onReply={setReplyTo} replyTo={replySubject} />
+                {view === 'timeline'
+                  ? <EmailTimeline messages={messages} />
+                  : <EmailThread messages={messages} onReply={setReplyTo} replyTo={replySubject} />}
                 <div ref={streamEnd} />
               </div>
 
               <footer className="p-3 border-t border-neutral-200">
                 {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
-                {topics.length > 0 && (
+                {view === 'timeline' && replySubject && (
+                  <p className="mb-2 truncate text-xs text-neutral-500">
+                    Replying to: <span className="font-medium text-neutral-800">{replySubject}</span>
+                  </p>
+                )}
+                {view === 'topics' && topics.length > 0 && (
                   <label className="mb-2 flex items-center gap-2 text-xs text-neutral-500">
                     Replying in:
                     <select

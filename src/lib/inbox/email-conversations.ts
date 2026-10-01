@@ -92,3 +92,20 @@ export function groupEmailTopics(messages: CommItem[]): EmailTopic[] {
   }
   return [...byKey.values()].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))
 }
+
+// ── TIMELINE (Taona 2026-10-01) ─────────────────────────────────────────────
+export type EmailView = 'timeline' | 'topics'
+/** Default thread view. Flip without code via NEXT_PUBLIC_INBOX_DEFAULT_VIEW=topics. */
+export const DEFAULT_EMAIL_VIEW: EmailView =
+  process.env.NEXT_PUBLIC_INBOX_DEFAULT_VIEW === 'topics' ? 'topics' : 'timeline'
+
+/** Subject a timeline reply threads on: the vendor's newest INBOUND human email,
+ *  else the newest email of any kind. The reply route threads In-Reply-To to the
+ *  last message carrying that subject. */
+export function latestReplySubject(messages: CommItem[]): string | null {
+  const sorted = [...messages].sort((a, b) => (a.at < b.at ? -1 : 1))
+  const pick = [...sorted].reverse().find((m) => m.direction === 'in' && !m.auto)
+    || [...sorted].reverse().find((m) => m.direction === 'in')
+    || sorted[sorted.length - 1]
+  return pick ? conversationTitle(pick.subject) : null
+}
