@@ -1,11 +1,4 @@
-// BATCH 5 (Taona 2026-09-30): the 5 most recent master payers, starting mid/late
-// October: Fareed Essence (14 Sep), RaaRaa Studio (15 Sep), Brownie Babe (16 Sep),
-// Suade Collections (20 Sep), Sprinkle Syndicate (23 Sep). Each verified paid into
-// ...191 by reading the proof slip (Sprinkle via Taona's ...191 statement).
-// Trimmed twice the same day on Taona's word ("just the recent paid ones",
-// "just add like 5"). Dates distinct, 21 Oct..26 Nov.
-// Rule: under R5,000 = 2 instalments, R5,000+ = 3.
-// Cloned from batch 4 below.
+// BATCH 5 (Taona 2026-10-01): the last 2 master full payers without a plan.
 // BATCH 4 (Taona 2026-09-29): 6 more pre-26-Aug ...191 full payers, early Nov to 1 Dec,
 // dates distinct from batch 3 and each other. Cloned from batch 3.
 // MASTER-LANE SETTLEMENT SCHEDULES, BATCH 3 (Taona 2026-09-28): 11 full ...191 payers
@@ -37,14 +30,11 @@ import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 
 type Row = { id: string; name: string; total: number }
 const COHORT: Row[] = [
-  { id: 'ce713fd2-8690-445a-b9cf-a163a8489e5a', name: "Fareed Essence", total: 3700 },
-  { id: 'ad086831-12fb-475e-bbdc-85b969356544', name: "Brownie Babe", total: 3700 },
-  { id: '3bc78400-7629-4053-8336-888be6cb1b8e', name: "RaaRaa Studio", total: 3700 },
-  { id: '5aa7b2ff-8cab-4386-ad43-827b96ecc83e', name: "Suade Collections", total: 6500 },
-  { id: '657b7cfe-16fa-4a63-90d1-52d3cac15f8e', name: "Sprinkle Syndicate", total: 5000 },
+  { id: '68bf3caa-2add-4566-8556-e0422567f9ad', name: "Bag Boutique", total: 3700 },
+  { id: '12fa5b87-8eb3-4c8a-b76a-a1a42142d6a3', name: "Artsy Facts", total: 3750 },
 ]
 
-const WINDOW = '2026-10-15..2026-11-27'
+const WINDOW = '2026-11-02..2026-12-01'
 const WINDOW_START = new Date('2026-10-24T00:00:00Z')
 const WINDOW_END = new Date('2026-11-25T00:00:00Z')
 const DAY = 86400000
@@ -65,18 +55,12 @@ const iso = (d: Date) => d.toISOString().slice(0, 10)
 // Taona 2026-09-28: dates must not line up across vendors. Hand-set, every
 // date distinct across the batch; amounts unchanged from the seeded split.
 const DATES: Record<string, string[]> = {
-  'ce713fd2-8690-445a-b9cf-a163a8489e5a': ['2026-10-25', '2026-11-26'], // Fareed Essence
-  'ad086831-12fb-475e-bbdc-85b969356544': ['2026-10-31', '2026-11-23'], // Brownie Babe
-  '3bc78400-7629-4053-8336-888be6cb1b8e': ['2026-10-22', '2026-11-25'], // RaaRaa Studio
-  '5aa7b2ff-8cab-4386-ad43-827b96ecc83e': ['2026-10-21', '2026-11-08', '2026-11-22'], // Suade Collections
-  '657b7cfe-16fa-4a63-90d1-52d3cac15f8e': ['2026-10-24', '2026-11-02', '2026-11-17'], // Sprinkle Syndicate
+  '68bf3caa-2add-4566-8556-e0422567f9ad': ['2026-11-16', '2026-11-30'],
+  '12fa5b87-8eb3-4c8a-b76a-a1a42142d6a3': ['2026-11-09', '2026-11-27'],
 }
 const AMOUNTS: Record<string, number[]> = {
-  'ce713fd2-8690-445a-b9cf-a163a8489e5a': [1650, 2050],
-  'ad086831-12fb-475e-bbdc-85b969356544': [1750, 1950],
-  '3bc78400-7629-4053-8336-888be6cb1b8e': [2050, 1650],
-  '5aa7b2ff-8cab-4386-ad43-827b96ecc83e': [1900, 2150, 2450],
-  '657b7cfe-16fa-4a63-90d1-52d3cac15f8e': [1600, 1850, 1550],
+  '68bf3caa-2add-4566-8556-e0422567f9ad': [1600, 2100],
+  '12fa5b87-8eb3-4c8a-b76a-a1a42142d6a3': [2000, 1750],
 }
 function planFor(row: Row): { date: string; amount: number }[] {
   return DATES[row.id].map((date, i) => ({ date, amount: AMOUNTS[row.id][i] }))
