@@ -46,21 +46,36 @@ function admin(role: 'festival_owner' | 'master', suffix: string) {
   }
 }
 
-test('festival owner gets the neutral wall while EFT mode is on', async () => {
-  setEftMode(true)
-  const r = await handleAdminMessage(admin('festival_owner', '01'), 'how many approved vendors are paid')
-  assert.equal(r.action, 'none')
-  assert.match(r.reply, /payment period/i)
-  assert.match(r.reply, /Taona/i)
-  // No numbers, counts, or segment names leak in the wall reply.
-  assert.doesNotMatch(r.reply, /\d+/)
+test('festival owner stats and blasts never include a walled (master-lane) person', async () => {
+  // The old whole-surface lock was replaced by a per-recipient wall. Prove it
+  // withholds something (a filter that blocks nothing also shows "no leaks") and
+  // that nothing it lets through is walled, in EITHER EFT mode.
+  const { resolveSegment } = await import('./segments')
+  const { loadWalledContacts } = await import('@/lib/broadcast-audience')
+  const wall = await loadWalledContacts()
+  assert.ok(wall, 'wall must load')
+  for (const on of [true, false]) {
+    setEftMode(on)
+    for (const seg of ['approved', 'approved_unpaid', 'approved_paid'] as const) {
+      const full = await resolveSegment(seg)
+      const owner = await resolveSegment(seg, { ownerView: true })
+      const leaked: typeof owner = owner.filter((r) => wall!.blocks((r as { phone?: string }).phone, r.email))
+      assert.equal(leaked.length, 0, `${seg}: ${leaked.length} walled people reachable by the owner`)
+      assert.ok(full.length >= owner.length)
+    }
+    const all = await resolveSegment('approved')
+    const ownerAll = await resolveSegment('approved', { ownerView: true })
+    assert.ok(all.length - ownerAll.length > 0, 'the wall must withhold at least one master-lane vendor')
+  }
 })
 
-test('festival owner gets stats normally when EFT mode is off', async () => {
-  setEftMode(false)
-  const r = await handleAdminMessage(admin('festival_owner', '02'), 'give me a stats update')
-  assert.equal(r.action, 'stats')
-  assert.match(r.reply, /Current numbers/)
+test('festival owner gets stats in either EFT mode', async () => {
+  for (const on of [true, false]) {
+    setEftMode(on)
+    const r = await handleAdminMessage(admin('festival_owner', '02'), 'give me a stats update')
+    assert.equal(r.action, 'stats')
+    assert.match(r.reply, /Current numbers/)
+  }
 })
 
 test('master approve command requires confirmation', async () => {

@@ -7,6 +7,7 @@ import { parseAllocation } from '@/lib/stalls'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 import { hiddenFromOwner } from '@/lib/audit-scope'
 import { Vendor360 } from './Vendor360'
+import { extraRequiredDocs } from '@/lib/exhibitor/required-docs'
 
 export const dynamic = 'force-dynamic'
 
@@ -94,7 +95,7 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   if (threadIds.length) {
     const { data: msgs } = await admin
       .from('support_inbox_messages')
-      .select('id, thread_id, direction, from_address, to_address, subject, body_text, received_at')
+      .select('id, thread_id, direction, from_address, to_address, subject, body_text, body_html, received_at')
       .in('thread_id', threadIds)
       .order('received_at', { ascending: false })
       .limit(500)
@@ -126,10 +127,12 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   }
   for (const m of (supportMessages || []) as Array<{
     id: string; thread_id: string; direction: string; from_address: string
-    to_address: string; subject: string | null; body_text: string | null; received_at: string
+    to_address: string; subject: string | null; body_text: string | null; body_html: string | null; received_at: string
   }>) {
     const thread = threadMap.get(m.thread_id)
-    const body = m.body_text || m.subject || ''
+    // Outbound mail is often HTML-only: read the HTML before falling back to the subject.
+    const fromHtml = (m.body_html || '').replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/<br\s*\/?>|<\/p>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/[ \t]+/g, ' ').trim()
+    const body = m.body_text || fromHtml || m.subject || ''
     if (!body) continue
     communications.push({
       id: `mail:${m.id}`,
@@ -178,6 +181,7 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
         communications: visibleComms,
         events,
         stats,
+        extraRequiredDocs: extraRequiredDocs(a.admin_notes as string | null),
       }}
     />
   )

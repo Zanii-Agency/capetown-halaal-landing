@@ -9,7 +9,7 @@ import { vendorBill, accEftReference } from '@/lib/payments/vendor-bill'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
 import EftPanel from '@/components/exhibitor/EftPanel'
-import { eftBankFor, eftReference, getPaymentRail, getFullEftMode, onCovertMasterLane, resolveInEftLane, hasEftMarker } from '@/lib/eft'
+import { eftBankFor, eftReference, getPaymentRail, getFullEftMode, onCovertMasterLane, resolveInEftLane, hasEftMarker, paidSamreenVia } from '@/lib/eft'
 import { nextInstalment, planSummary } from '@/lib/payments/payment-plan'
 import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
@@ -68,9 +68,13 @@ export default async function PaymentsPage() {
   const eftSubmitted = !!state.payment?.eft_submitted_at
   const eftPending = eftSubmitted && status !== 'paid'
   const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : 'CTH'
+
   // Individual ⟦EFT⟧ marker: keeps the accessory EFT panel available to a
   // hand-picked vendor even after global EFT mode is switched off.
   const vendorHasMarker = app ? hasEftMarker(app.admin_notes as string) : false
+  // Taona 2026-09-23: a CONFIRMED Samreen payer stays on the channel they paid with
+  // (Yoco -> card, EFT -> EFT …629), whatever the rail or mode. One predicate.
+  const samreenVia = app ? paidSamreenVia(app.admin_notes as string) : null
 
   // EFT payment receipts / refund proofs an organiser uploaded for this vendor.
   // Each proof's file lives in the private vendor-docs bucket; we mint a short
@@ -364,7 +368,9 @@ export default async function PaymentsPage() {
           // switch closes the whole EFT rail (doctrine review 2026-08-04).
           // accPending always renders the EFT panel's submitted state: a proof
           // can only exist because the vendor used the EFT rail.
-          (accPending || (accDue && bill?.payClass === 'eft' && (eftModeOn || vendorHasMarker))) ? (
+          // Confirmed Samreen EFT payers see EFT only, whatever the rail/mode; for
+          // everyone else the rail switch still closes the EFT accessory panel.
+          (accPending || (accDue && (samreenVia === 'eft' || (samreenVia !== 'yoco' && bill?.payClass === 'eft' && (eftModeOn || vendorHasMarker))))) ? (
             // EFT payers settle accessories the same way they paid: EFT with a
             // -ACC reference so the deposit is identifiable on the statement.
             <EftPanel
@@ -389,6 +395,18 @@ export default async function PaymentsPage() {
               attemptedAt={attemptedAt || null}
               failedAttempts={failedAttempts}
               topUpNote="Accessory electricity, billed separately from your stall fee"
+            />
+          ) : planDue && samreenVia === 'yoco' ? (
+            // Card payer on a plan: next instalment by card too (stay on your channel).
+            <PaymentPanel
+              enabled={paymentsEnabled()}
+              status={status}
+              amount={amount}
+              outstanding={outstanding}
+              reference={reference}
+              dueDate={inst ? fmtDate(inst.date) : due}
+              attemptedAt={attemptedAt || null}
+              failedAttempts={failedAttempts}
             />
           ) : planDue ? (
             // Next instalment of an approved plan, after an earlier one settled.

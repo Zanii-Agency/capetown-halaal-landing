@@ -149,7 +149,7 @@ export async function draftReply(email: InboundEmail): Promise<string> {
       system,
       messages: [{ role: 'user', content: user }],
     })
-    const text = r.content[0]?.type === 'text' ? r.content[0].text.trim() : ''
+    const text = r.content.map((b) => (b.type === 'text' ? b.text : '')).join('').trim()
     // Same guard the WhatsApp bot passes through. It was wired into guardReply
     // only, so this second path to a vendor was never covered and the drafter
     // duly wrote "The banking details and your unique payment reference are

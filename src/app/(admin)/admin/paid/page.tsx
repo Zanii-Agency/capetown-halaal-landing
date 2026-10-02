@@ -4,6 +4,7 @@ import { CheckCircle2, ChevronDown } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { formatRand } from '@/lib/payments/pricing'
 import { loadPaidVendors, type PaidVendorRow } from '@/lib/payments/paid-vendors'
+import { VendorSearch, matchesVendor } from '@/components/admin/VendorSearch'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { EftProofConfirmButton } from '@/components/admin/EftProofConfirmButton'
 
@@ -50,12 +51,12 @@ export const dynamic = 'force-dynamic'
 
 type Tab = 'paid' | 'partial' | 'plans'
 
-export default async function PaidVendorsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+export default async function PaidVendorsPage({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/admin/login')
 
-  const { tab: rawTab } = await searchParams
+  const { tab: rawTab, q = '' } = await searchParams
   const tab: Tab = rawTab === 'partial' || rawTab === 'plans' ? rawTab : 'paid'
 
   const { rows, confirmedRows, partialRows, planRows, paidTotal, accOwingTotal } = await loadPaidVendors()
@@ -76,7 +77,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
     { key: 'partial', label: 'Partial payments', count: partialRows.length },
     { key: 'plans', label: 'Active payment plans', count: planRows.length },
   ]
-  const shown: Row[] = tab === 'paid' ? confirmedRows : tab === 'partial' ? partialRows : planRows
+  const shown: Row[] = (tab === 'paid' ? confirmedRows : tab === 'partial' ? partialRows : planRows).filter((r) => matchesVendor(q, r.name, r.contact))
 
   const instalmentStatus = (s: Row['instalments'][number]['status']) =>
     s === 'paid' ? <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Paid</span>
@@ -105,7 +106,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
         {tabs.map((t) => (
           <Link
             key={t.key}
-            href={t.key === 'paid' ? '/admin/paid' : `/admin/paid?tab=${t.key}`}
+            href={`/admin/paid?${new URLSearchParams({ ...(t.key !== 'paid' && { tab: t.key }), ...(q && { q }) })}`}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t.key ? 'border-[#cd2653] text-[#cd2653]' : 'border-transparent text-neutral-500 hover:text-neutral-800'}`}
           >
             {t.label} <span className="ml-1 text-xs text-neutral-400">{t.count}</span>
@@ -113,13 +114,15 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
         ))}
       </div>
 
+      <VendorSearch q={q} hidden={tab !== 'paid' ? { tab } : undefined} />
+
       {rows.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
           No paid vendors to show yet.
         </div>
       ) : shown.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
-          {tab === 'partial' ? 'No partial payments. A vendor on an instalment plan appears here once their first proof is in.' : tab === 'plans' ? 'No active payment plans. A plan appears here the moment a vendor commits to one, whether or not they have paid an instalment yet.' : 'No fully paid vendors yet.'}
+          {q ? `No vendors match "${q}" on this tab.` : tab === 'partial' ? 'No partial payments. A vendor on an instalment plan appears here once their first proof is in.' : tab === 'plans' ? 'No active payment plans. A plan appears here the moment a vendor commits to one, whether or not they have paid an instalment yet.' : 'No fully paid vendors yet.'}
         </div>
       ) : tab === 'partial' || tab === 'plans' ? (
         <div className="space-y-3">

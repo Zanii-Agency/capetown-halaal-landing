@@ -13,6 +13,7 @@
 
 import type { createAdminClient } from '@/lib/supabase/admin'
 import { looksLikeProofEmail, pickProofAttachment, type ProofAttachment } from '@/lib/payments/email-proof-detect'
+import { parsePortalState, hasPaid } from '@/lib/portal-state'
 
 type Db = ReturnType<typeof createAdminClient>
 
@@ -40,6 +41,12 @@ const VENDOR_COLS = 'id, business_name, contact_name, email, phone, admin_notes,
 export function isEligiblePayer(v: IntakeVendor): boolean {
   if ((v.status || '').toLowerCase() !== 'approved') return false
   if (v.paid_at) return false
+  // SETTLED BY EFT TOO, not just by card. An EFT vendor marked `collected` has no
+  // paid_at column, so Zayaan Wellness (collected 23 Aug) still read as owing and
+  // her 16 Sep email (both duplicate-payment proofs + her bank details FOR A REFUND)
+  // was filed as a new master payment. A settled vendor mailing a proof is a
+  // duplicate / refund / accessory matter for a human, never a stall payment.
+  if (hasPaid(parsePortalState(v.admin_notes))) return false
   return true
 }
 
@@ -120,7 +127,7 @@ export async function fileEmailedProof(a: IntakeArgs): Promise<string[]> {
     if (!isEligiblePayer(vendor) || portalMod.isWithdrawn(portalMod.parsePortalState(vendor.admin_notes || ''))) {
       if (looksLikeProofEmail({ subject: a.subject, body: a.body, attachments: a.attachments })) {
         const { notifyOwners } = await import('@/lib/bot/notify')
-        await notifyOwners({ event: 'system_alert', audience: 'master', body: `${vendor.business_name || a.fromAddress} (status: ${vendor.status || 'unknown'}) emailed a possible proof of payment but is not an approved paying vendor, so it was NOT auto-filed. Review the thread in /admin/inbox.` })
+        await notifyOwners({ event: 'system_alert', audience: 'master', body: `${vendor.business_name || a.fromAddress} (status: ${vendor.status || 'unknown'}) emailed a possible proof of payment but is not an approved vendor with a fee still owing (already settled means a duplicate, refund or accessory matter), so it was NOT auto-filed. Review the thread in /admin/inbox.` })
       }
       return errors
     }

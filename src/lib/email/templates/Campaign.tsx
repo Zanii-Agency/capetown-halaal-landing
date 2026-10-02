@@ -1,4 +1,4 @@
-import { Section, Text } from '@react-email/components'
+import { Text } from '@react-email/components'
 import {
   EmailLayout,
   Heading,
@@ -49,10 +49,9 @@ export function Campaign({
       {greeting && <Paragraph>{greeting}</Paragraph>}
 
       {bodyHtml ? (
-        <Section
-          style={bodyStyle}
-          dangerouslySetInnerHTML={{ __html: bodyHtml }}
-        />
+        // A plain div: react-email's Section wraps children in a table, so it cannot
+        // take dangerouslySetInnerHTML (React throws "only one of children or ...").
+        <div style={bodyStyle} dangerouslySetInnerHTML={{ __html: bodyHtml }} />
       ) : (
         paragraphs.map((p, i) => <Paragraph key={i}>{p}</Paragraph>)
       )}

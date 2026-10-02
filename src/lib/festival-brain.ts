@@ -380,7 +380,7 @@ export async function askFestivalBrain(
       system,
       messages: llmMessages,
     })
-    llmText = response.content[0]?.type === 'text' ? response.content[0].text : ''
+    llmText = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
   } catch (err) {
     console.error('[festival-brain] llm error', err)
     await escalateToHuman({ waId: context.waId, message, intent, reason: 'llm error' })

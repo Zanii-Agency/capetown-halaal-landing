@@ -29,6 +29,17 @@ function num(v: unknown): number | null {
   return typeof v === 'number' && isFinite(v) ? v : null
 }
 
+/** Appliances are stored as free text OR as a {slug: count} map (portal self-add);
+ *  a map used to render as "[object Object]". */
+export function applianceList(v: unknown): string {
+  if (v == null) return ''
+  if (typeof v !== 'object') return String(v).trim()
+  return Object.entries(v as Record<string, unknown>)
+    .filter(([, n]) => Number(n) > 0)
+    .map(([k, n]) => `${k.replace(/[-_]+/g, ' ')}${Number(n) > 1 ? ` x${Number(n)}` : ''}`)
+    .join(', ')
+}
+
 /**
  * Parse special_requirements safely. Handles null, plain-text (legacy rows that
  * stored a free-text note instead of JSON), and malformed JSON without throwing.
@@ -52,7 +63,7 @@ export function parseVendorExtras(specialRequirements: string | null | undefined
     social: str('social_media'),
     stallType: str('stall_type'),
     stallPrice: num(j['stall_price']),
-    appliances: str('electrical_appliances'),
+    appliances: applianceList(j['electrical_appliances']),
     applianceDetails: str('appliance_details'),
     usesGas: str('uses_gas'),
     totalEstimate: num(j['total_estimate']),

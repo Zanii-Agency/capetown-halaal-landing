@@ -79,6 +79,16 @@ export function ApplicationApproved({
 
       <Divider />
 
+      <Subheading>Paying in instalments</Subheading>
+      <Paragraph>
+        Once you have signed your contract, if you need a payment arrangement for your
+        stall fees, WhatsApp us at{' '}
+        <InlineLink href="https://wa.me/27682275246">+27 68 227 5246</InlineLink> and let us
+        know you would like to set up a payment plan.
+      </Paragraph>
+
+      <Divider />
+
       <Subheading>Manage your stall anytime</Subheading>
       <Paragraph>
         You do not have to wait for us. Message us on WhatsApp, on the same number

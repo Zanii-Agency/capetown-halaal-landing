@@ -78,7 +78,9 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
   }, [text])
 
   // A new inbound reopens the window, so never leave the banner up across threads.
-  useEffect(() => { setWindowClosed(false) }, [phone, email])
+  // A direction is written for ONE vendor ("tell them A12 stays"), so it must not
+  // ride along into the next thread and get spun into someone else's message.
+  useEffect(() => { setWindowClosed(false); setAiInstruction(''); setPreSpin(null) }, [phone, email])
 
   useEffect(() => {
     if (!cannedOpen || canned.length) return
@@ -331,7 +333,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-50">
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             </button>
-            <button onClick={text.trim() ? spin : aiDraft} disabled={aiBusy || spinBusy}
+            <button onClick={text.trim() || aiInstruction.trim() ? spin : aiDraft} disabled={aiBusy || spinBusy}
               title={text.trim() ? 'Regenerate with the same direction' : 'Regenerate AI draft'}
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-50">
               {aiBusy || spinBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -349,7 +351,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
             )}
             <button
               onClick={spin}
-              disabled={spinBusy || !text.trim()}
+              disabled={spinBusy || (!text.trim() && !aiInstruction.trim())}
               title={isEmail ? 'Spin: rewrite your text as an email' : 'Spin: rewrite your text for WhatsApp'}
               className="h-7 px-2 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-neutral-500 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-40"
             >

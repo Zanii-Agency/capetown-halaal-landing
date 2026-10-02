@@ -6,6 +6,8 @@ import { CreditCard, FileText, Loader2, Check, RefreshCw } from 'lucide-react'
 import { StatusPill } from '@/components/chrome/StatusPill'
 import type { PortalState } from '@/lib/portal-state'
 import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
+import { nextInstalment } from '@/lib/payments/payment-plan'
+import { hasPaid } from '@/lib/portal-state'
 
 // Maps a payment status to a StatusPill tone, mirroring statusTone in
 // Vendor360.tsx so the pill colour stays consistent across the profile.
@@ -48,6 +50,14 @@ export function VendorPaymentsSection({
   const owed = pricing.total
   const paid = portal.payment?.amount || 0
   const outstanding = Math.max(0, owed - paid)
+  // Proof uploaded but not yet confirmed: the proof carries no amount, so show
+  // the instalment it covers (plan vendors) or the whole balance. Kept OUT of
+  // `paid` so nothing counts as money until the operator confirms it.
+  const pay = portal.payment
+  const hasProof = !!(pay?.eft_submitted_at || pay?.proofs?.length || pay?.proof_path)
+  const awaiting = hasProof && !hasPaid(portal) && outstanding > 0
+    ? (nextInstalment(pay?.arrangement, paid)?.amount ?? outstanding)
+    : 0
 
   const status = portal.payment?.status || 'none'
   const method = portal.payment?.method
@@ -105,6 +115,17 @@ export function VendorPaymentsSection({
         <SummaryField label="Method" value={method || '—'} />
         <SummaryField label="Reference" value={reference || '—'} mono />
       </div>
+
+      {awaiting > 0 && (
+        <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2.5">
+          <p className="text-xs font-semibold text-sky-800">
+            Proof received, awaiting confirmation: {formatRand(awaiting)}
+          </p>
+          <p className="text-xs text-sky-700 mt-0.5">
+            Not counted as paid until the proof is confirmed on the Paid page.
+          </p>
+        </div>
+      )}
 
       {/* Additional payment due highlight: only when they have already paid
           something but still owe more (a top-up scenario). */}

@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, MessageCircle, Mail, CreditCard, MapPin, Phone,
   FileText, Users, History, Eye, ChevronDown, ChevronUp, Loader2,
-  StickyNote, Plus, Check, X, Trash2, RotateCcw,
+  StickyNote, Plus, Check, X, Trash2, RotateCcw, Download,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AdminPage } from '@/components/admin/AdminPage'
@@ -129,6 +129,7 @@ interface InitialData {
   communications: CommItem[]
   events: AuditEvent[]
   stats: Stats
+  extraRequiredDocs: string[]
 }
 
 function fmtDate(d: string | null | undefined): string {
@@ -170,7 +171,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const stats = initialData.stats
 
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [drawerView, setDrawerView] = useState<'contact' | 'doc' | 'paid'>('contact')
+  const [drawerView, setDrawerView] = useState<'contact' | 'doc' | 'paid' | 'email'>('contact')
   const [previewDoc, setPreviewDoc] = useState<DocRecord | null>(null)
   const [markPaidBusy, setMarkPaidBusy] = useState(false)
   const [markPaidMethod, setMarkPaidMethod] = useState<'' | 'eft' | 'cash' | 'manual_card' | 'waived'>('')
@@ -212,6 +213,41 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   // 'rejected'; a re-approved vendor (status flips back) sheds the label.
   const isWithdrawn = !!portal.withdrawn && status === 'rejected'
 
+
+  // NEW EMAIL (Taona 2026-09-23): start a fresh email with its OWN subject, never a
+  // reply into the vendor's last conversation. Sent through the same route as inbox
+  // replies with newThread:true (subject required, no Re:, not threaded).
+  const [newSubject, setNewSubject] = useState('')
+  const [newBody, setNewBody] = useState('')
+  const [sendingNew, setSendingNew] = useState(false)
+  function openNewEmail() {
+    setNewSubject('')
+    setNewBody('')
+    setDrawerView('email')
+    setDrawerOpen(true)
+  }
+  async function sendNewEmail() {
+    const subject = newSubject.trim()
+    const text = newBody.trim()
+    if (!subject) { toast.error('Add a subject line'); return }
+    if (!text) { toast.error('Write the message'); return }
+    setSendingNew(true)
+    try {
+      const r = await fetch('/api/admin/inbox/unified/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel: 'email', email, subject, text, newThread: true }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j.ok === false) throw new Error(j.message || j.error || `HTTP ${r.status}`)
+      toast.success(`Email sent to ${email}`)
+      setDrawerOpen(false)
+    } catch (e) {
+      toast.error(`Email not sent: ${(e as Error).message}`)
+    } finally {
+      setSendingNew(false)
+    }
+  }
 
   function openContactDrawer() {
     setEditBusiness(businessName)
@@ -516,7 +552,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           icon={<Mail className="w-4 h-4" />}
           label="Send Email"
           tone="sky"
-          onClick={email ? () => router.push(`/admin/inbox/support?contact=${encodeURIComponent(email)}`) : undefined}
+          onClick={email ? openNewEmail : undefined}
         />
         <ActionChip
           icon={<CreditCard className="w-4 h-4" />}
@@ -593,7 +629,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           <LabeledField label="Items / menu" value={v.items_description ? String(v.items_description).slice(0, 200) : '—'} />
           <div className="sm:col-span-2">
             <p className="text-[11px] uppercase tracking-wide text-neutral-400 mb-1.5">Special requirements</p>
-            <SpecialRequirementsView raw={v.special_requirements as string | Record<string, unknown> | null} />
+            <SpecialRequirementsView raw={v.special_requirements as string | Record<string, unknown> | null} tier={v.preferred_booth_tier as string | null} />
           </div>
           <LabeledField label="Applied" value={v.created_at ? fmtDate(v.created_at as string) : '—'} />
         </div>
@@ -615,7 +651,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
         <VendorTimeline applicationId={String(v.id)} />
       </Section>
 
-      <VendorDocsChecklist applicationId={String(v.id)} docs={portal.docs || []} />
+      <VendorDocsChecklist applicationId={String(v.id)} docs={portal.docs || []} extraRequired={initialData.extraRequiredDocs} />
 
       <Section title="Documents" icon={<FileText className="w-4 h-4" />}>
         <DenseTable<DocRecord>
@@ -632,7 +668,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
               ),
             },
             {
-              key: 'actions', header: '', width: '210px', render: (doc) => (
+              key: 'actions', header: '', width: '290px', render: (doc) => (
                 <div className="flex items-center justify-end gap-2">
                   <button
                     onClick={(e) => { e.stopPropagation(); openDocPreview(doc) }}
@@ -640,6 +676,15 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
                   >
                     <Eye className="w-3 h-3" /> View
                   </button>
+                  {doc.path && (
+                    <a
+                      href={`/api/admin/vendor-doc?path=${encodeURIComponent(doc.path)}&download=1`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs text-blue-700 hover:underline inline-flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> Download
+                    </a>
+                  )}
                   {doc.status !== 'approved' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDocAction(doc, 'approve') }}
@@ -731,7 +776,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
       <RightDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        title={drawerView === 'contact' ? 'Edit Contact Info' : drawerView === 'paid' ? 'Mark as Paid' : previewDoc ? REQUIRED_DOC_LABELS[previewDoc.type as RequiredDocType] || previewDoc.type : 'Document Preview'}
+        title={drawerView === 'contact' ? 'Edit Contact Info' : drawerView === 'email' ? 'New email' : drawerView === 'paid' ? 'Mark as Paid' : previewDoc ? REQUIRED_DOC_LABELS[previewDoc.type as RequiredDocType] || previewDoc.type : 'Document Preview'}
       >
         {drawerView === 'contact' && (
           <div className="space-y-4">
@@ -920,6 +965,57 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           </div>
         )}
 
+        {drawerView === 'email' && (
+          <div className="space-y-4">
+            <p className="text-xs text-neutral-500">
+              A new email starts its own conversation with its own subject. It does not reply into an earlier email.
+            </p>
+            <div>
+              <label className="text-xs font-medium text-neutral-600 block mb-1">To</label>
+              <div className="w-full border border-neutral-100 bg-neutral-50 rounded-md px-3 py-2 text-sm text-neutral-700">{businessName}{email ? ` <${email}>` : ''}</div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-neutral-600 block mb-1">Subject <span className="text-rose-600">*</span></label>
+              <input
+                type="text"
+                value={newSubject}
+                onChange={(e) => setNewSubject(e.target.value)}
+                maxLength={200}
+                placeholder="e.g. Your stall payment plan"
+                className="w-full border border-neutral-200 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-neutral-600 block mb-1">Message <span className="text-rose-600">*</span></label>
+              <textarea
+                value={newBody}
+                onChange={(e) => setNewBody(e.target.value)}
+                rows={10}
+                maxLength={4000}
+                placeholder={`Hi ${contactName.split(/\s+/)[0] || 'there'},`}
+                className="w-full border border-neutral-200 rounded-md px-3 py-2 text-sm leading-relaxed"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => router.push(`/admin/inbox/support?contact=${encodeURIComponent(email)}`)}
+                className="text-xs text-neutral-500 hover:text-neutral-800 underline underline-offset-2"
+              >
+                View email history
+              </button>
+              <button
+                type="button"
+                onClick={sendNewEmail}
+                disabled={sendingNew || !newSubject.trim() || !newBody.trim()}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#cd2653] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                <Mail className="w-4 h-4" />
+                {sendingNew ? 'Sending…' : 'Send email'}
+              </button>
+            </div>
+          </div>
+        )}
         {drawerView === 'paid' && (
           <div className="space-y-4">
             <p className="text-xs text-neutral-500">Logs a payment_manual audit event and flips the portal marker.</p>
@@ -1060,6 +1156,14 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
                 </div>
               )}
             </div>
+            {previewDoc.path && (
+              <a
+                href={`/api/admin/vendor-doc?path=${encodeURIComponent(previewDoc.path)}&download=1`}
+                className="inline-flex items-center gap-1.5 text-sm text-blue-700 hover:underline"
+              >
+                <Download className="w-4 h-4" /> Download file
+              </a>
+            )}
             <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => handleDocAction(previewDoc, 'approve')}

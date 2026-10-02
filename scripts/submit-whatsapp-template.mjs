@@ -51,6 +51,7 @@ const VAR_SAMPLES = {
   payment_check: ['Samreen', 'Your stall fee of R3,500 is still outstanding.'],
   payment_proof_request: ['Samreen', 'We do not yet see your payment on our side.'],
   payment_arrangement_check: ['Samreen', 'Your agreed instalment was due on 15 November.'],
+  vendor_more_info_needed: ['Samreen', 'Please send your proof of payment for the R2,200 you paid on 21 September.'],
 }
 const examples = VAR_SAMPLES[NAME] || []
 

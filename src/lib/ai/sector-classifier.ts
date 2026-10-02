@@ -91,8 +91,7 @@ Return JSON only.`
       system: HAIKU_SYSTEM,
       messages: [{ role: 'user', content: userMsg }],
     })
-    const block = resp.content[0]
-    const raw = block && block.type === 'text' ? block.text : ''
+    const raw = resp.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
     const parsed = safeJsonParse(raw)
     if (!parsed || !Array.isArray(parsed.suggestions)) return null
     const out: SectorSuggestion[] = []

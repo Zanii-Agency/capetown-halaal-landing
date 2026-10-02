@@ -12,6 +12,7 @@ export const dynamic = 'force-dynamic'
 // storage path, fetch it server-side, and pipe the bytes. We do NOT redirect:
 // a 302 to the cross-origin Supabase host makes the iframe load a cross-origin
 // page that Chrome blocks ("This page has been blocked"). Admin-only.
+// &download=1 serves it as an attachment (the admin Download button).
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
     status: 200,
     headers: {
       'Content-Type': upstreamType,
-      'Content-Disposition': `inline; filename="${filename}"`,
+      'Content-Disposition': `${req.nextUrl.searchParams.get('download') ? 'attachment' : 'inline'}; filename="${filename}"`,
       'X-Frame-Options': 'SAMEORIGIN',
       'Cache-Control': 'private, max-age=60',
     },

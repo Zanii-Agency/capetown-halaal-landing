@@ -70,6 +70,24 @@ export function nextInstalment(
   return null
 }
 
+/** Instalments a vendor says they agreed with the TEAM (e.g. with Samreen), cleaned
+ *  for storage: real YYYY-MM-DD dates, today or later, no later than the cap,
+ *  positive amounts, in date order, at most 6. Unlike validatePlan it does NOT
+ *  require the sum to cover the fee: the team may have agreed a different figure,
+ *  and the team confirms it. Pure. */
+export function cleanClaimedInstallments(raw: unknown, todayStr: string, lastDate: string): Installment[] {
+  if (!Array.isArray(raw)) return []
+  const out: Installment[] = []
+  for (const r of raw.slice(0, 6)) {
+    const date = String((r as { date?: unknown })?.date ?? '').trim()
+    const amount = Math.round(Number((r as { amount?: unknown })?.amount))
+    if (!DATE_RE.test(date) || isNaN(new Date(`${date}T00:00:00Z`).getTime())) continue
+    if (date < todayStr || date > lastDate || !(amount > 0)) continue
+    out.push({ date, amount })
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : 1))
+}
+
 /** One line for the vendor: "R5 000 by 6 September 2026, then R2 500 by 2 October 2026". */
 export function planSummary(plan: Installment[]): string {
   const sorted = [...plan].sort((a, b) => (a.date < b.date ? -1 : 1))

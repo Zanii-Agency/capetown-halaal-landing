@@ -16,6 +16,7 @@ import { TOOL_DEFS, executeTool } from '@/lib/bot/tools/registry'
 import { MEMORY_ON } from '@/lib/bot/vendor-memory'
 import { VENDOR_FACTS, VENDOR_FACTS_NO_PAYMENT } from '@/lib/festival-brain/system-prompt'
 import { joburgClockBlock } from '@/lib/joburg-clock'
+import { fmtCaseDate } from '@/lib/support-case'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
 const MAX_TOOL_ROUNDS = 5
@@ -95,7 +96,7 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     // ── SOLVE, DON'T DEFLECT (use the tools; stop sending people to email) ──
     'HOW YOU HELP, actually solve it with your tools, do not send people away:',
     '- Invoice: use get_invoice (it sends the PDF right here). Contract: use send_contract (it gives them their contract or a signing link). If they are ready to sign on WhatsApp, use sign_contract with their typed full name. NEVER say "I cannot email documents" or "log into the portal to find it" when a tool does it for you, and NEVER offer to do something then say you cannot.',
-    '- Where they stand / payment / stall / documents: use check_application_status. Cannot log in: request_password_reset. Stall size change: request_stall_change. Where is my stall: where_is_my_stall. Staff badges: get_badge_allocation. Logo upload: get_logo_upload_link. Payment due date: get_payment_due_date. Needs more time / will pay end of month: grant_payment_extension. Problem or issue: report_issue. Sent a document or photo to upload: upload_document. Sent a PROOF OF PAYMENT image/PDF and they are on EFT: upload_eft_proof.',
+    '- Where they stand / payment / stall / documents: use check_application_status. Cannot log in: request_password_reset. Stall size change: request_stall_change. Where is my stall: where_is_my_stall. Staff badges: get_badge_allocation. Logo upload: get_logo_upload_link. Payment due date: get_payment_due_date. Needs more time / will pay end of month: grant_payment_extension. Says they ALREADY agreed or arranged something with Samreen, Altaaf or the team (payment dates, amounts, a discount, more time): ask exactly what was agreed, the amounts, the dates and with whom, then call log_team_arrangement. Never argue with or renegotiate a claimed arrangement and do not push the pay-this-month ladder on it; the team confirms it. Problem or issue: report_issue. Sent a document or photo to upload: upload_document. Sent a PROOF OF PAYMENT image/PDF and they are on EFT: upload_eft_proof.',
     '- Do NOT tell a vendor to "email support@youngatheart.co.za" for something you can do here. Email is a last resort, never your first answer.',
     '- SOLVE FIRST, ESCALATE LAST. Almost everything a verified vendor asks for is covered by your tools. Before you escalate_to_human, try the right tool. Only escalate for: a paid vendor who wants to withdraw (refund decision needed), a request that genuinely has no tool, or a situation where every reasonable tool has failed.',
     '- Before you escalate, call check_application_status: if a request is already logged with the team, tell them it is in hand and do NOT open a duplicate.',
@@ -196,7 +197,41 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     'Robot: "Please contact support@youngatheart.co.za for further assistance." (when a tool exists)',
   )
   if (verified) parts.push('', eftMode ? VENDOR_FACTS_NO_PAYMENT : VENDOR_FACTS)
+  if (verified && session.vendor) parts.push('', ...vendorContextLines(session.vendor))
   return parts.join('\n')
+}
+
+/** Per-vendor facts the global rules above cannot know. Verified sessions only. */
+export function vendorContextLines(v: NonNullable<VendorSession['vendor']>): string[] {
+  const L: string[] = []
+  // Suade 2026-09-21: paid by bank transfer, the bot (reading the global "card
+  // only, Yoco" rule) asked her for a Yoco confirmation. Her own method is hers.
+  if (v.eftLane || v.eftSubmitted) {
+    L.push('THIS VENDOR PAYS BY BANK TRANSFER (EFT), not card. A bank payment notification or proof is the normal thing for them to send. Never ask them for a Yoco or card confirmation. Still never state bank or account details yourself: those are in their portal.')
+  }
+  // Standing answers the team decided (Taona 2026-09-23), so these never become
+  // a hand-over that waits days for a human.
+  if (v.rejectionReason) {
+    L.push(`THIS APPLICATION WAS NOT SUCCESSFUL. The reason recorded by the team: "${v.rejectionReason}". If they ask why, give them exactly that reason, kindly and plainly, and that their details stay on file for future events. Do not hand this over to the team and do not promise a review or reconsideration.`)
+  }
+  if (!v.paid && !v.rejectionReason) {
+    L.push('DOCUMENTS COME AFTER PAYMENT. In the portal a vendor signs the contract first, then pays the stall fee, and only then does the Documents page unlock for uploads. If they ask why they cannot upload documents yet, explain that plainly: pay first, then upload.')
+  }
+  // THE OPEN CASE (lib/support-case.ts). Vendors chased and got a brand-new "passed
+  // to the team, 24 to 72 hours" each time, a fresh promise on top of a broken one.
+  if (v.openCase) {
+    const c = v.openCase
+    L.push(`OPEN REQUEST WITH THE TEAM: "${c.firstAsk}" (open since ${fmtCaseDate(c.since)}, asked ${c.asks} time${c.asks === 1 ? '' : 's'}, answer promised by ${fmtCaseDate(c.dueAt)}${c.overdue ? ', which has PASSED' : ''}). If they chase it or add to it, call escalate_to_human with what they said: it joins this same request and marks it urgent, and it tells you what to say. Never promise a new 24 to 72 hours on it, never say it is sorted unless a tool shows it is, and if the promise has passed, own that plainly.`)
+  }
+  // Tasneem Allie 2026-09-14: see identity.ts siblings.
+  if (v.siblings && v.siblings.length > 0) {
+    L.push(`THE SAME PERSON ALSO RUNS OTHER BUSINESSES ON THIS NUMBER. You are serving ${v.business_name} (stall fee ${v.paid ? 'PAID' : 'not yet paid'}). Their other applications:`)
+    for (const s of v.siblings) {
+      L.push(`- ${s.business_name}: application ${s.status}; stall fee ${s.paid ? `PAID${s.amount ? ` (R${s.amount.toLocaleString('en-ZA')})` : ''}` : 'not paid'}.`)
+    }
+    L.push('A payment confirmation or reminder earlier in this chat may have been for one of those other businesses, not this one. NEVER tell them a confirmation was wrong or a payment did not come through because THIS business is unpaid: check which business it was for first, and if it was the other one, say so plainly ("that R5,000 was for Business A, it is paid; Business B is still open"). You can state the other business\'s status above, but act (payments, plans, changes) only on the business you are serving.')
+  }
+  return L
 }
 
 export interface VendorAgentResult {

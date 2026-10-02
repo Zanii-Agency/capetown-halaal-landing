@@ -12,6 +12,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { BotAdmin } from '@/lib/bot/admins'
 import { executeMasterTool, toolDefsForRole } from '@/lib/bot/tools/master-registry'
 import { revealsPaymentArrangement } from '@/lib/eft'
+import { FESTIVAL_FACTS } from '@/lib/festival-brain/system-prompt'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
 const MAX_TOOL_ROUNDS = 5
@@ -53,6 +54,9 @@ function ownerSystemPrompt(admin: BotAdmin): string {
     '- Match the warm, respectful tone the festival uses with its mostly Cape Muslim vendors (Wa alaikum assalam, jazakallah) in any vendor-facing draft.',
     '',
     'STYLE: Never use a long dash (em dash or en dash) as a sentence break. Use commas, periods, or colons instead. Be calm, warm and quick.',
+    '',
+    'FESTIVAL FACTS (answer these directly):',
+    FESTIVAL_FACTS,
   ].join('\n')
 }
 
@@ -78,6 +82,9 @@ function systemPrompt(admin: BotAdmin): string {
     '- Match the warm, respectful tone the festival uses with its mostly Cape Muslim vendors (Wa alaikum assalam, jazakallah) when you draft a vendor-facing reply.',
     '',
     'STYLE: Never use a long dash (em dash or en dash) as a sentence break. Use commas, periods, or colons instead. Be a calm, sharp operator who gets him the answer fast.',
+    '',
+    'FESTIVAL FACTS (answer these directly):',
+    FESTIVAL_FACTS,
   ].join('\n')
 }
 
