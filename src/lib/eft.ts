@@ -928,6 +928,9 @@ export function eftProofVisibleToOwner(
     .filter((f) => f.kind === 'eft_submission')
     .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
   if (stallProofs[0]?.account === 'master') return false
+  // Stamped 'samreen' at filing = paid into HER ...629, so it is hers whatever markers
+  // the vendor still carries (a ⟦NEWVENDOR⟧/⟦EFT⟧ vendor paying her on samreen_eft).
+  if (stallProofs[0]?.account === 'samreen') return true
   // Uploaded AFTER the cutover. This floor is what stops an old covert proof
   // surfacing automatically; only the hand-set marker above bypasses it.
   if (new Date(submitted).getTime() < new Date(fullEft.startedAt).getTime()) return false
@@ -939,6 +942,15 @@ export function eftProofVisibleToOwner(
   if (hasEftMarker(adminNotes)) return false
   if (hasNewVendorMarker(adminNotes)) return false
   return true
+}
+
+/** Master (...191) money in play on EITHER side, stall or accessories: a presented
+ *  EFT, a master collect (markEftCollected / markAccessoriesCollected), or ANY proof
+ *  stamped 'master', including a partial or not-yet-confirmed one. */
+export function hasMasterMoney(adminNotes: string | null | undefined): boolean {
+  const p = parsePortalState(adminNotes).payment
+  return !!(p?.presented_eft || p?.eft_collected_at || p?.status === 'collected'
+    || p?.acc?.collected_at || (p?.proofs || []).some((f) => f.account === 'master'))
 }
 
 /** How this vendor has ALREADY paid Samreen, from CONFIRMED money only.
@@ -957,12 +969,7 @@ export function eftProofVisibleToOwner(
  *  method label (Vanilla Cream: method 'yoco' but paid by EFT). */
 export function paidSamreenVia(adminNotes: string | null | undefined): 'yoco' | 'eft' | null {
   const p = parsePortalState(adminNotes).payment
-  if (!(Number(p?.amount) > 0) || p?.presented_eft) return null
-  if (p?.eft_collected_at || p?.status === 'collected') return null
-  // Any master trace on EITHER side (stall or accessories) = master money in play:
-  // a master accessory collect (markAccessoriesCollected) or ANY proof stamped master.
-  if (p?.acc?.collected_at) return null
-  if ((p?.proofs || []).some((f) => f.account === 'master')) return null
+  if (!(Number(p?.amount) > 0) || hasMasterMoney(adminNotes)) return null
   const method = String(p?.method || '')
   if (method === 'samreen_eft') return 'eft'
   if (method !== 'yoco' && method !== 'cash') return null
@@ -1009,8 +1016,18 @@ export function onCovertMasterLane(
   // master ...191 on EVERY rail. Until then it was tracking-only and the list assumed
   // each member also held ⟦EFT⟧ — Haadiya Bakes didn't (she carried ⟦NOEFT⟧ instead)
   // and paid Samreen's ...629 on the samreen_eft rail. Never again.
-  if (hasNewVendorMarker(adminNotes)) return true
   if (rail === 'master') return true
+  // Any master money already in (Taona 2026-10-06, back on samreen_eft): a vendor who
+  // paid ...191, even partially or still unconfirmed, keeps master details for the
+  // balance on every rail. Otherwise the rail flip shows them ...629, and their next
+  // proof is stamped 'samreen' and surfaces to her (7 such vendors on the flip day).
+  if (hasMasterMoney(adminNotes)) return true
+  if (MASTER_ONLY_METHODS.has(String(parsePortalState(adminNotes).payment?.method || ''))) return true
+  // samreen_eft = the WHOLE platform pays her (Taona 2026-10-06): only master money
+  // (above) keeps a vendor on ...191. ⟦NEWVENDOR⟧, ⟦EFT⟧ and the frozen set no longer
+  // pin an unpaid vendor to master on this rail (17 did on the flip day).
+  if (rail === 'samreen_eft') return false
+  if (hasNewVendorMarker(adminNotes)) return true
   if (hasEftMarker(adminNotes)) return true
   return !!fullEft && fullEft.protectedIds.has(vendorId)
 }
@@ -1046,7 +1063,8 @@ export function paymentOnOwnerSide(
     .filter((f) => f.kind === 'eft_submission')
     .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
   if (stallProofs[0]?.account === 'master') return false
-  return !onCovertMasterLane(vendorId, adminNotes, 'samreen_eft', fullEft)
+  // 'yoco' = the pinned cohort WITHOUT any rail sweep or samreen_eft short-circuit.
+  return !onCovertMasterLane(vendorId, adminNotes, 'yoco', fullEft)
 }
 
 /** How many payments have been RECEIVED in a tier since the start line: a Yoco

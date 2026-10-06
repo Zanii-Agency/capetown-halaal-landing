@@ -524,8 +524,8 @@ test('onCovertMasterLane: master sweeps everyone; else only ⟦EFT⟧ + the froz
 
   // 'samreen_eft' rail: only the pinned cohort is covert.
   assert.equal(onCovertMasterLane('x', plain, 'samreen_eft', frozen), false, 'plain vendor is Samreen’s')
-  assert.equal(onCovertMasterLane('x', marked, 'samreen_eft', frozen), true, '⟦EFT⟧ hand-pick stays covert')
-  assert.equal(onCovertMasterLane('frozen1', plain, 'samreen_eft', frozen), true, 'frozen 66 stay covert')
+  assert.equal(onCovertMasterLane('x', marked, 'samreen_eft', frozen), false, 'unpaid ⟦EFT⟧ pays Samreen on samreen_eft (2026-10-06)')
+  assert.equal(onCovertMasterLane('frozen1', plain, 'samreen_eft', frozen), false, 'unpaid frozen member pays Samreen on samreen_eft')
 
   // 'yoco' rail: a ⟦EFT⟧ carve-out vendor still pays into the covert ...191 account.
   assert.equal(onCovertMasterLane('x', marked, 'yoco', null), true)
@@ -541,10 +541,10 @@ test('onCovertMasterLane: master sweeps everyone; else only ⟦EFT⟧ + the froz
   // for Haadiya Bakes (2026-09-11): tagged ⟦NEWVENDOR⟧ + ⟦NOEFT⟧, no ⟦EFT⟧, not
   // frozen — she was shown Samreen's ...629 on the samreen_eft rail and paid it.
   const newVendor = withNewVendorMarker('')
-  assert.equal(onCovertMasterLane('x', newVendor, 'samreen_eft', frozen), true, 'new vendor is covert on samreen_eft')
+  assert.equal(onCovertMasterLane('x', newVendor, 'samreen_eft', frozen), false, 'unpaid new vendor pays Samreen on samreen_eft')
   assert.equal(onCovertMasterLane('x', newVendor, 'master', frozen), true, 'new vendor is covert on master')
   assert.equal(onCovertMasterLane('x', newVendor, 'yoco', null), true, 'new vendor is covert even on yoco')
-  assert.equal(onCovertMasterLane('x', withNoEftMarker(newVendor), 'samreen_eft', frozen), true, '⟦NOEFT⟧ cannot pull a new vendor off the master lane')
+  assert.equal(onCovertMasterLane('x', withNoEftMarker(newVendor), 'yoco', frozen), true, '⟦NOEFT⟧ cannot pull a new vendor off the master lane')
   assert.equal(onCovertMasterLane('x', withOwnerVisibleMarker(newVendor), 'master', frozen), false, '⟦OWNERVIS⟧ still hands a new vendor back to Samreen')
 })
 
@@ -724,9 +724,17 @@ test('onCovertMasterLane: a Samreen payer is never master, whatever the rail / f
   // Unchanged: master money and unpaid vendors still follow the lane rules.
   const masterPaid = withEftMarker(paidNotes({ status: 'collected', method: 'eft', amount: 3700 }))
   assert.equal(onCovertMasterLane('x', masterPaid, 'samreen_eft', null), true, 'master payer stays master')
-  assert.equal(onCovertMasterLane('x', withNewVendorMarker(''), 'samreen_eft', null), true, 'unpaid fresher stays master')
+  assert.equal(onCovertMasterLane('x', withNewVendorMarker(''), 'samreen_eft', null), false, 'unpaid fresher pays Samreen')
   assert.equal(onCovertMasterLane('x', 'plain unpaid', 'master', null), true, 'unpaid follows the master rail')
   assert.equal(eftBankFor(onCovertMasterLane('x', hersEft, 'master', null)).accountNumber.slice(-3), '629')
+})
+
+test('onCovertMasterLane: a partial master payer (proof stamped master, no marker) stays master on samreen_eft', () => {
+  const partial = paidNotes({ status: 'deferred', proofs: [{ path: 'a', kind: 'eft_submission', uploaded_at: '2026-09-20', account: 'master' }] })
+  assert.equal(onCovertMasterLane('x', partial, 'samreen_eft', null), true, 'Kuziva shape: keeps ...191 after the flip')
+  assert.equal(eftBankFor(onCovertMasterLane('x', partial, 'samreen_eft', null)).accountNumber.slice(-3), '191')
+  assert.equal(onCovertMasterLane('x', withOwnerVisibleMarker(partial), 'samreen_eft', null), false, 'deliberate hand-back still wins')
+  assert.equal(onCovertMasterLane('x', 'plain unpaid', 'samreen_eft', null), false, 'clean unpaid vendor sees Samreen')
 })
 
 test('resolveInEftLane: stay on the channel you paid Samreen with', async () => {
