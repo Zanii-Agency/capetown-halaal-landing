@@ -64,8 +64,8 @@ export function VendorDocsChecklist({
   const [upBusy, setUpBusy] = useState<string | null>(null)
   const inputs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  // Upload a doc the team already holds, on the vendor's behalf (recorded as
-  // approved, no vendor message). Direct to storage, up to 10MB.
+  // Upload a doc the team already holds, on the vendor's behalf (lands in review, still needs
+  // approve/reject; no vendor message). Direct to storage, up to 10MB.
   async function uploadFor(type: string, file: File) {
     setUpBusy(type)
     setError(null)

@@ -6,7 +6,8 @@
  * flow as the vendor portal (up to 10MB):
  *   { action:'sign', doc_type, name }          -> { path, token }
  *   { action:'commit', doc_type, path, name }  -> { ok, document }
- * Recorded as APPROVED (the team already holds and has seen the original).
+ * Recorded as PENDING (in review): the team forwards docs to the City, so an
+ * upload must still be approved/rejected (Abdusamee 2026-10-07).
  * No vendor notification, no owner fanout. Ledgered.
  */
 
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const path = String(b.path || '')
   const record = await commitDocUpload({
-    applicationId: id, docType, path, name, status: 'approved',
+    applicationId: id, docType, path, name, status: 'pending',
     note: `Uploaded by ${gate.adminUser.email || 'admin'}`,
   })
   if (!record) return NextResponse.json({ error: 'Upload not found or over 10MB' }, { status: 400 })
