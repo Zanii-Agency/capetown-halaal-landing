@@ -98,7 +98,7 @@ export default async function EftProofsPage({ searchParams }: { searchParams: Pr
                       ) : (
                         <span className="inline-flex items-center gap-2 justify-end">
                           {r.paidSoFar > 0 && <span className="text-xs text-neutral-500">{formatRand(r.paidSoFar)} paid</span>}
-                          <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount)} />
+                          <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount)} defaultAmount={r.nextAmount} />
                         </span>
                       )}
                     </td>

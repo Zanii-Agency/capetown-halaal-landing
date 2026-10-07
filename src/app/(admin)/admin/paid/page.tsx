@@ -170,7 +170,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                           {i.status === 'proof' ? (
                             <>
                               {r.proofUrl && <a href={r.proofUrl} target="_blank" rel="noopener noreferrer" className="text-[#cd2653] hover:underline font-medium">View proof</a>}
-                              <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount ?? i.amount)} />
+                              <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount ?? i.amount)} defaultAmount={r.nextAmount ?? i.amount} />
                             </>
                           ) : null}
                         </div>
@@ -183,7 +183,7 @@ export default async function PaidVendorsPage({ searchParams }: { searchParams: 
                     {r.proofPending && (
                       <span className="inline-flex items-center gap-3">
                         {r.proofUrl && <a href={r.proofUrl} target="_blank" rel="noopener noreferrer" className="text-[#cd2653] hover:underline font-medium">View proof</a>}
-                        <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount ?? r.owing)} />
+                        <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount ?? r.owing)} defaultAmount={r.nextAmount ?? r.owing} />
                       </span>
                     )}
                   </div>

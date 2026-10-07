@@ -1,5 +1,5 @@
 /**
- * POST /api/admin/eft-proofs/confirm  { applicationId }
+ * POST /api/admin/eft-proofs/confirm  { applicationId, amount? }
  *
  * The festival owner's "Mark as paid" for a vendor on HER EFT-proofs surface
  * (/admin/eft-proofs). She has checked the uploaded proof and the money is in
@@ -81,7 +81,14 @@ export async function POST(req: NextRequest) {
   const inst = nextInstalment(pay?.arrangement, bill.paidTotal)
   const priorConfirms = [...(pay?.refs || []), pay?.provider_ref || ''].filter((r) => String(r).startsWith(`eftproof-${id}`)).length
   const providerRef = priorConfirms === 0 ? `eftproof-${id}` : `eftproof-${id}-${priorConfirms + 1}`
-  const amount = inst ? Math.min(inst.amount, bill.owing) : undefined
+  // Operator-entered amount actually received (short payments stay PARTIAL:
+  // vendorBill.partial while paid < stall price). Capped at the balance owing.
+  // Absent (old clients) -> the instalment / full balance, as before.
+  const entered = Math.round(Number(body.amount))
+  if (body.amount !== undefined && !(entered > 0)) return NextResponse.json({ error: 'invalid amount' }, { status: 400 })
+  const amount = body.amount !== undefined
+    ? Math.min(entered, bill.owing)
+    : inst ? Math.min(inst.amount, bill.owing) : undefined
   const result = await confirmPayment({
     applicationId: id,
     method: 'samreen_eft',
