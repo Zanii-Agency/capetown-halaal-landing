@@ -8,9 +8,10 @@
 //
 // No em-dashes anywhere vendor-facing (CTH-DOCTRINE Law 7).
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, Clock, X, AlertCircle, Loader2, Send, Plus } from 'lucide-react'
+import { Check, Clock, X, AlertCircle, Loader2, Send, Plus, Upload } from 'lucide-react'
+import { uploadDocDirect } from '@/lib/client/prepare-upload'
 import { StatusPill } from '@/components/chrome/StatusPill'
 import { REQUIRED_DOC_TYPES, REQUIRED_DOC_LABELS } from '@/app/(admin)/admin/vendors/[id]/doc-types'
 import type { DocRecord } from '@/lib/portal-state'
@@ -60,6 +61,23 @@ export function VendorDocsChecklist({
   const [busy, setBusy] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [upBusy, setUpBusy] = useState<string | null>(null)
+  const inputs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  // Upload a doc the team already holds, on the vendor's behalf (recorded as
+  // approved, no vendor message). Direct to storage, up to 10MB.
+  async function uploadFor(type: string, file: File) {
+    setUpBusy(type)
+    setError(null)
+    try {
+      await uploadDocDirect(`/api/admin/vendors/${applicationId}/documents`, type, file)
+      router.refresh()
+    } catch (e) {
+      setError((e as Error).message || 'Upload failed')
+    } finally {
+      setUpBusy(null)
+    }
+  }
 
   const types = Array.from(new Set<string>([...REQUIRED_DOC_TYPES, ...extraRequired]))
   const rows = types.map((type) => ({
@@ -146,6 +164,22 @@ export function VendorDocsChecklist({
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <StatusPill tone={meta.tone} label={meta.label} />
+                <input
+                  ref={(el) => { inputs.current[row.type] = el }}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadFor(row.type, f) }}
+                />
+                <button
+                  onClick={() => inputs.current[row.type]?.click()}
+                  disabled={upBusy === row.type}
+                  title="Upload this document for the vendor"
+                  className="inline-flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs hover:bg-neutral-50 disabled:opacity-50"
+                >
+                  {upBusy === row.type ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                  {row.state === 'missing' ? 'Upload' : 'Replace'}
+                </button>
                 {row.extra && (
                   <button
                     onClick={() => toggleRequired(row.type, false)}
