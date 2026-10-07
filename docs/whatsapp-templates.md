@@ -347,6 +347,35 @@ Hi {{1}}, thank you for applying to Young at Heart Festival 2026. After a carefu
 
 ---
 
+## 15. `vendor_more_info_needed`
+
+Ask a vendor for more information on anything (payment, proof, documents,
+appliances). Two-way UTILITY, same `[first_name, message]` shape as the other
+suites. The body carries no amount, bank detail or PII; {{2}} says what is needed.
+
+**Body:**
+
+```
+Hi {{1}}, the Young at Heart Festival 2026 team needs a little more information from you about your stall:
+
+{{2}}
+
+Please reply to us here on WhatsApp so we can sort it out quickly. The YAH Team.
+```
+
+**Parameters:**
+- {{1}} = vendor first name
+- {{2}} = what the team needs from them (free text)
+
+**Sample (Samreen example):**
+> Hi Samreen, the Young at Heart Festival 2026 team needs a little more information from you about your stall:
+>
+> Please send your proof of payment for the R2,200 you paid on 21 September.
+>
+> Please reply to us here on WhatsApp so we can sort it out quickly. The YAH Team.
+
+---
+
 ## How to submit to Meta
 
 ### Option A: Auto-submit via Graph API (fastest)

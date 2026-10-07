@@ -23,6 +23,7 @@ import { assertRole } from '@/lib/admin-rbac'
 import { broadcastInboxRefresh } from '@/lib/inbox-realtime'
 import { mentionsEft, markVendorToldEft } from '@/lib/eft'
 import { z } from 'zod'
+import { resolveSupportCase } from '@/lib/support-case'
 
 /**
  * Which mailbox does this peer's conversation live on? The two inbound
@@ -64,6 +65,9 @@ const bodySchema = z.object({
   email: z.string().email().max(160).optional(),
   text: z.string().max(4000).optional(),
   subject: z.string().max(200).optional(),
+  // Start a NEW email conversation (vendor profile 'Send Email'): subject required,
+  // no 'Re:', no In-Reply-To, so it never lands inside an older conversation.
+  newThread: z.boolean().optional(),
   // Optional attachment (~4.5MB binary). Email -> Resend attachment; WhatsApp ->
   // uploaded + sent as a media message (in-window only).
   attachment: z.object({
@@ -112,6 +116,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'text or attachment required' }, { status: 400 })
   }
   const text = body.text?.trim() || ''
+  // A human answered this vendor: close their open case (lib/support-case.ts) so the
+  // To Do and the bot stop treating it as waiting. Every success path returns via this.
+  const done = async <T extends object>(p: T) => { await resolveSupportCase(db, { phone: body.phone, email: body.email }); return okAndRefresh(p) }
 
   // No EFT lane gate (2026-07-26): replying is ordinary support work and both
   // admins see the alerts that prompt it. PAYMENT actions stay walled — see
@@ -143,7 +150,7 @@ export async function POST(req: NextRequest) {
         provider_message_id: res.messageId || null,
         metadata: { sent_by: adminUser.email, attachment: body.attachment.filename },
       })
-      return okAndRefresh({ ok: true, channel: 'whatsapp', via: 'media' })
+      return done({ ok: true, channel: 'whatsapp', via: 'media' })
     }
 
     // Template path: reach a contact who is outside the 24h window.
@@ -162,7 +169,7 @@ export async function POST(req: NextRequest) {
         provider_message_id: res.messageId || null,
         metadata: { sent_by: adminUser.email, via: 'template' },
       })
-      return okAndRefresh({ ok: true, channel: 'whatsapp', via: 'template' })
+      return done({ ok: true, channel: 'whatsapp', via: 'template' })
     }
 
     const res = await sendText(e164, text)
@@ -188,7 +195,7 @@ export async function POST(req: NextRequest) {
     })
     // Told a vendor about EFT -> move their comms onto the Master lane.
     if (mentionsEft(text)) await markVendorToldEft({ phone: e164 })
-    return okAndRefresh({ ok: true, channel: 'whatsapp' })
+    return done({ ok: true, channel: 'whatsapp' })
   }
 
   // email — thread into the recipient's existing conversation.
@@ -202,19 +209,76 @@ export async function POST(req: NextRequest) {
     .limit(1)
   const thread = threads?.[0] as { id: string; subject: string | null } | undefined
 
-  let subject = body.subject || thread?.subject || 'Young at Heart Festival'
-  if (thread?.subject && !/^re:/i.test(subject)) subject = 'Re: ' + thread.subject.replace(/^re:\s*/i, '')
-
+  // Three shapes (Taona 2026-09-23 "keep them separate"):
+  //  - newThread: a fresh email, the operator's subject verbatim, not threaded.
+  //  - reply to a chosen conversation: "Re: <that subject>", threaded to ITS last
+  //    message. (This used to overwrite a passed subject with the thread's latest
+  //    subject, so every reply became "Re: <whatever came last>".)
+  //  - no subject: reply to the latest conversation, as before.
+  let subject: string
   let inReplyTo: string | undefined
-  if (thread?.id) {
-    const { data: lastMsg } = await db
-      .from('support_inbox_messages')
-      .select('message_id')
-      .eq('thread_id', thread.id)
-      .not('message_id', 'is', null)
-      .order('received_at', { ascending: false })
-      .limit(1)
-    inReplyTo = (lastMsg?.[0]?.message_id as string | undefined) || undefined
+  if (body.newThread) {
+    subject = (body.subject || '').trim()
+    if (!subject) return NextResponse.json({ error: 'subject required for a new email' }, { status: 400 })
+  } else {
+    const base = (body.subject || thread?.subject || 'Young at Heart Festival').replace(/^\s*((re|fwd?)\s*:\s*)+/i, '').trim()
+    subject = 'Re: ' + base
+    if (thread?.id) {
+      const { data: recent } = await db
+        .from('support_inbox_messages')
+        .select('message_id, subject')
+        .eq('thread_id', thread.id)
+        .not('message_id', 'is', null)
+        .order('received_at', { ascending: false })
+        .limit(50)
+      const { conversationKey } = await import('@/lib/inbox/email-conversations')
+      const want = conversationKey(base)
+      const inConv = (recent || []).find((r) => conversationKey(r.subject as string) === want)
+      inReplyTo = ((inConv || (body.subject ? undefined : recent?.[0]))?.message_id as string | undefined) || undefined
+    }
+  }
+
+  // Law 2 (doctrine review 2026-09-23) + Taona 2026-09-23: a restricted viewer (the
+  // festival owner) may email a vendor walled from her (paid into master; new email OR reply,
+  // Taona 2026-09-24), and it reads as sent, but it is NEVER delivered to the vendor. It is
+  // held and forwarded to the master, so nothing she writes is lost. If the wall
+  // cannot be proven, HOLD (never deliver, never reveal the wall with an error).
+  const { laneScopeFor } = await import('@/lib/inbox-lane')
+  const scope = await laneScopeFor(adminUser.email as string | null)
+  if (!scope.unrestricted) {
+    const { loadWalledContacts } = await import('@/lib/broadcast-audience')
+    const walled = await loadWalledContacts()
+    const { shouldHoldNewEmail } = await import('@/lib/inbox/held-email')
+    // Every application row with this email, so a same-phone twin is caught.
+    const { data: personRows, error: personErr } = await db.from('vendor_applications').select('id, phone, admin_notes, paid_at').ilike('email', peer)
+    // Lookup error -> hold (fail closed; email-only would miss a phone-walled twin).
+    const { isOwnerVisible, vendorInOwnerScope } = await import('@/lib/eft')
+    const rows = (personRows || []).map((r) => ({
+      id: r.id as string,
+      phone: (r.phone as string | null) ?? null,
+      handedToOwner: isOwnerVisible(r.admin_notes as string | null) && vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null),
+      inOwnerScope: vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null),
+    }))
+    if (personErr || shouldHoldNewEmail(scope, walled, peer, rows)) {
+      // Taona 2026-09-24: the held email must still SHOW in her thread as sent —
+      // otherwise a sent-then-vanishing message gives the hold away. We write the
+      // row with provider 'held' (nothing is delivered to the vendor); the messages
+      // route only surfaces the held flag to the master, so she reads it as a
+      // normal sent email while he sees "Held, not delivered". The master alert
+      // below carries the full text either way.
+      try {
+        await mirrorOutboundToSupportInbox({ to: peer, subject, text: text || ' ', sentBy: adminUser.id as string, held: true })
+      } catch (e) { console.error('[unified/reply] held-email thread mirror failed:', (e as Error).message) }
+      try {
+        const { notifyOwners } = await import('@/lib/bot/notify')
+        await notifyOwners({
+          event: 'system_alert',
+          audience: 'master',
+          body: `HELD EMAIL (not delivered): ${adminUser.email} wrote ${body.newThread ? 'a new email' : 'a reply'} to ${peer}, a vendor walled from her.\nSubject: ${subject}\n\n${text.slice(0, 1500)}`,
+        })
+      } catch (e) { console.error('[unified/reply] held-email master notify failed:', (e as Error).message) }
+      return okAndRefresh({ ok: true, channel: 'email', via: 'support' })
+    }
   }
 
   const mailbox = await mailboxForPeer(db, peer)
@@ -239,9 +303,9 @@ export async function POST(req: NextRequest) {
       // Resend's sendEmail mirrors into the Support Inbox automatically; the
       // raw nodemailer path here must do it explicitly so the reply appears
       // in the thread same as a support@ reply does.
-      await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ' })
+      await mirrorOutboundToSupportInbox({ to: body.email, subject, text: text || ' ', sentBy: adminUser.id as string })
       if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
-      return okAndRefresh({ ok: true, channel: 'email', via: 'gmail' })
+      return done({ ok: true, channel: 'email', via: 'gmail' })
     } catch (e) {
       const msg = (e as Error).message
       console.error('[unified/reply] gmail send failed:', msg)
@@ -257,10 +321,11 @@ export async function POST(req: NextRequest) {
       ? [{ filename: body.attachment.filename, content: body.attachment.dataBase64, contentType: body.attachment.contentType }]
       : undefined,
     extraHeaders: inReplyTo ? { 'In-Reply-To': inReplyTo, 'References': inReplyTo } : undefined,
+    sentBy: adminUser.id as string,
   })
   if (!res.ok) {
     return NextResponse.json({ ok: false, channel: 'email', reason: res.error, message: `Email failed: ${res.error}` }, { status: 502 })
   }
   if (mentionsEft(text)) await markVendorToldEft({ email: body.email })
-  return okAndRefresh({ ok: true, channel: 'email', via: 'support' })
+  return done({ ok: true, channel: 'email', via: 'support' })
 }

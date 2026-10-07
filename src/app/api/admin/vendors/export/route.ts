@@ -19,6 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parseVendorExtras } from '@/lib/vendor-extras'
 import { rosterPaid, reconciledPaid, isEftAdmin } from '@/lib/eft'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { parsePortalState } from '@/lib/portal-state'
 
 export const dynamic = 'force-dynamic'
@@ -41,6 +42,7 @@ const COLUMNS: Array<[string, number, boolean]> = [
   ['Est. total (R)', 14, false],
   ['Allocated stall', 14, false],
   ['Payment status', 14, false],
+  ['Still owing (R)', 14, false],
   ['Contract signed', 16, false],
   ['Application status', 16, false],
 ]
@@ -159,6 +161,11 @@ export async function GET(req: NextRequest) {
     const { stall } = parseAllocation(notes)
     const cats = (r.product_categories as string[] | null) || []
     const contractSigned = !!(r.contract_signed_at || r.contract_pdf_path)
+    // 'partial' only where the viewer already sees 'paid' (never loosens the
+    // master-lane wall): money landed but the stall fee is not covered yet.
+    const bill = vendorBill({ id: r.id as string, preferred_booth_tier: r.preferred_booth_tier as string, special_requirements: r.special_requirements, admin_notes: notes, paid_at: r.paid_at as string | null })
+    const seenPaid = eftAdmin ? rosterPaid(notes, r.paid_at as string | null) : reconciledPaid(notes, r.paid_at as string | null)
+    const payStatus = !seenPaid ? 'unpaid' : bill.partial ? 'partially paid' : 'paid'
 
     ws.addRow([
       cats.join(', '),
@@ -174,7 +181,8 @@ export async function GET(req: NextRequest) {
       extras.usesGas,
       extras.totalEstimate ?? '',
       stall || '',
-      (eftAdmin ? rosterPaid(notes, r.paid_at as string | null) : reconciledPaid(notes, r.paid_at as string | null)) ? 'paid' : 'unpaid',
+      payStatus,
+      payStatus === 'unpaid' ? '' : bill.owing,
       contractSigned ? 'Yes' : 'No',
       (r.status as string) || '',
     ])
@@ -186,6 +194,7 @@ export async function GET(req: NextRequest) {
   ws.getColumn(12).numFmt = '"R" #,##0'
   ws.getColumn(6).alignment = { vertical: 'top' }
   ws.getColumn(12).alignment = { vertical: 'top', horizontal: 'right' }
+  ws.getColumn(15).numFmt = '"R" #,##0' // Still owing
 
   // Wrap the long text columns.
   COLUMNS.forEach(([, , wrap], i) => {

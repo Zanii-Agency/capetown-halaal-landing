@@ -98,6 +98,7 @@ export async function sendEmail({
   replyTo,
   extraHeaders,
   confirmDelivery,
+  sentBy,
 }: {
   to: string
   subject: string
@@ -115,6 +116,8 @@ export async function sendEmail({
    *  recipient surfaces as ok:false instead of a silent drop. Leave off for
    *  batch/cron sends where the latency multiplies. */
   confirmDelivery?: boolean
+  /** admin_users.id of the person who wrote this (a manual inbox email). */
+  sentBy?: string | null
 }): Promise<SendResult> {
   let html: string | undefined
   if (react) {
@@ -157,7 +160,7 @@ export async function sendEmail({
     // Mirror into the Support Inbox as a threaded message (best-effort, never
     // blocks the send). Makes the Sent tab a real two-way surface and refreshes
     // any open admin inbox.
-    await logEmailOutbound({ to, subject, html, text, providerMessageId })
+    await logEmailOutbound({ to, subject, html, text, providerMessageId, sentBy })
 
     if (confirmDelivery && providerMessageId) {
       const dead = await detectDeadDelivery(providerMessageId)

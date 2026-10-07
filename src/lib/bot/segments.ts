@@ -4,6 +4,8 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
+import { vendorCommsInOwnerScope } from '@/lib/eft'
+import { loadWalledContacts } from '@/lib/broadcast-audience'
 
 // Canonical "paid" test for the CTH table. There is NO payment_status column
 // here (verified against information_schema); the only real top-level payment
@@ -57,7 +59,20 @@ export function matchSegment(phrase: string): SegmentKey | null {
   return null
 }
 
-export async function resolveSegment(key: SegmentKey): Promise<Recipient[]> {
+// ownerView: the festival owner (Samreen) asked. Anyone outside her world (a
+// master-lane payer, by ROW or by PERSON across twin rows) is dropped, and if
+// the wall cannot be loaded the segment is empty: fail closed, never open.
+export async function resolveSegment(key: SegmentKey, opts: { ownerView?: boolean } = {}): Promise<Recipient[]> {
+  const rows = await resolveSegmentRaw(key)
+  if (!opts.ownerView) return rows.map(({ owner: _o, ...r }) => r)
+  const wall = await loadWalledContacts()
+  if (!wall) throw new Error('owner wall unavailable, refusing segment')
+  return rows.filter((r) => r.owner && !wall.blocks(r.phone, r.email)).map(({ owner: _o, ...r }) => r)
+}
+
+type RawRecipient = Recipient & { owner: boolean; phone?: string | null }
+
+async function resolveSegmentRaw(key: SegmentKey): Promise<RawRecipient[]> {
   const db = createAdminClient()
 
   if (key === 'ticket_buyers') {
@@ -70,6 +85,7 @@ export async function resolveSegment(key: SegmentKey): Promise<Recipient[]> {
       .map((r) => ({
         email: r.email as string,
         name: r.name || null,
+        owner: true,
       }))
   }
 
@@ -77,12 +93,13 @@ export async function resolveSegment(key: SegmentKey): Promise<Recipient[]> {
   const baseStatus = key === 'approved_unpaid' || key === 'approved_paid' ? 'approved' : key
   const { data } = await db
     .from('vendor_applications')
-    .select('id, email, business_name, contact_name, admin_notes, paid_at')
+    .select('id, email, phone, business_name, contact_name, admin_notes, paid_at')
     .eq('status', baseStatus)
     .limit(5000)
   let rows = (data || []) as Array<{
     id: string
     email: string | null
+    phone: string | null
     business_name: string | null
     contact_name: string | null
     admin_notes: string | null
@@ -105,10 +122,12 @@ export async function resolveSegment(key: SegmentKey): Promise<Recipient[]> {
       name: r.contact_name,
       business_name: r.business_name,
       application_id: r.id,
+      phone: r.phone,
+      owner: vendorCommsInOwnerScope(r.admin_notes, r.paid_at),
     }))
 }
 
-export async function segmentCount(key: SegmentKey): Promise<number> {
-  const rows = await resolveSegment(key)
+export async function segmentCount(key: SegmentKey, opts: { ownerView?: boolean } = {}): Promise<number> {
+  const rows = await resolveSegment(key, opts)
   return rows.length
 }

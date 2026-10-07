@@ -10,7 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { prepareUploadFile, FileTooLargeError, tooLargeMessage } from '@/lib/client/prepare-upload'
+import { uploadDocDirect, FileTooLargeError } from '@/lib/client/prepare-upload'
+import { DOC_LABEL, type DocType } from '@/lib/exhibitor/required-docs'
 
 export interface DocView {
   type: string
@@ -40,7 +41,15 @@ const STATUS: Record<string, { label: string; cls: string; Icon: typeof CheckCir
   rejected: { label: 'Rejected', cls: 'bg-red-50 text-red-700 border-red-200', Icon: XCircle },
 }
 
-export default function DocumentsManager({ docs }: { docs: DocView[] }) {
+export default function DocumentsManager({ docs, extraRequired = [] }: { docs: DocView[]; extraRequired?: string[] }) {
+  // Admin-added requirements for this vendor (⟦REQDOC:..⟧): flag the existing
+  // slot as required, or add a slot for a type not shown by default.
+  const slots = [
+    ...REQUIRED.map((r) => (extraRequired.includes(r.type) ? { ...r, required: true, hint: 'The festival team has asked you for this document.' } : r)),
+    ...extraRequired
+      .filter((t) => !REQUIRED.some((r) => r.type === t))
+      .map((t) => ({ type: t, label: DOC_LABEL[t as DocType] || t, required: true, hint: 'The festival team has asked you for this document.' })),
+  ]
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -52,15 +61,8 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
   async function upload(docType: string, file: File) {
     setError(null); setBusy(docType)
     try {
-      // Shrink oversized photos so they clear Vercel's ~4.5MB request-body cap;
-      // a too-big PDF throws FileTooLargeError with a real "email it instead" msg.
-      const toSend = await prepareUploadFile(file)
-      const fd = new FormData()
-      fd.append('file', toSend); fd.append('doc_type', docType)
-      const res = await fetch('/api/exhibitor/documents', { method: 'POST', body: fd })
-      if (res.status === 413) throw new Error(tooLargeMessage(toSend.size))
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Upload failed')
+      // Direct to storage (up to 10MB); oversized photos are shrunk first.
+      await uploadDocDirect('/api/exhibitor/documents', docType, file)
       setSuccessDoc(docType)
       router.refresh()
     } catch (e) {
@@ -71,7 +73,7 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
     }
   }
 
-  const successLabel = successDoc ? REQUIRED.find((r) => r.type === successDoc)?.label : null
+  const successLabel = successDoc ? slots.find((r) => r.type === successDoc)?.label : null
 
   return (
     <>
@@ -94,7 +96,7 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
       <div className="space-y-4">
         {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
 
-        {REQUIRED.map((r) => {
+        {slots.map((r) => {
         const doc = byType[r.type]
         const st = doc ? STATUS[doc.status] : null
         return (
@@ -145,7 +147,7 @@ export default function DocumentsManager({ docs }: { docs: DocView[] }) {
           </div>
         )
       })}
-      <p className="text-xs text-neutral-400 px-1">A photo of any size works (we shrink large photos for you), or a PDF up to 4MB. Documents are reviewed by the organisers before show day.</p>
+      <p className="text-xs text-neutral-400 px-1">A photo of any size works (we shrink large photos for you), or a PDF up to 10MB. Documents are reviewed by the organisers before show day.</p>
     </div>
     </>
   )

@@ -79,6 +79,7 @@ export default async function Overview() {
   const requiredDocs = getRequiredDocs({
     productCategories,
     boothTier: (app?.preferred_booth_tier as string) || null,
+    admin_notes: (app?.admin_notes as string) || null,
   })
   const docsUploaded = requiredDocs.length === 0 ? 0 : requiredDocs.filter((t) => docTypes.has(t)).length
   const docsLabel = requiredDocs.length === 0 ? 'no docs required' : 'documents in'

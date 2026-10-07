@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
       messages: [{ role: 'user', content: userMsg }],
     })
 
-    const raw = response.content[0]?.type === 'text' ? response.content[0].text : ''
+    const raw = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
     // Post-generation em-dash filter (CTH-DOCTRINE law 7). The system prompt
     // already asks the model not to use them, but we never trust LLM output.
     const variants = parseVariants(raw).map((v) => stripEmDashes(v))

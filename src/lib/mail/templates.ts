@@ -345,3 +345,41 @@ export function validateMailTemplate(
   if (missing.length === 0) return { ok: true }
   return { ok: false, error: `Missing: ${missing.join(', ')}`, missing }
 }
+
+// ---- free text in the branded layout ---------------------------------------
+
+// The FIRST LINE must be only a sign-off phrase ("Thank you for your payment." is a sentence, not a sign-off).
+const SIGNOFF_RE = /^(((kind|warm|best)\s+)?regards|thanks|thank you|many thanks|sincerely|cheers)[,.!]?$/i
+const noDash = (s: string) => s.replace(/\s*[\u2013\u2014]\s*/g, ', ') // Law 7, subject + body
+
+/** Split an operator's typed email into paragraphs (blank line = new paragraph,
+ *  single newline kept) and pull a trailing sign-off off the body so the branded
+ *  layout's own sign-off line uses THEIR words instead of repeating one. */
+export function freeTextParts(text: string): { paragraphs: string[]; signoff?: string } {
+  const paragraphs = text.replace(/\r\n/g, '\n').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+  const last = paragraphs[paragraphs.length - 1]
+  const lines = last ? last.split('\n').map((l) => l.trim()).filter(Boolean) : []
+  if (lines.length && lines.length <= 3 && SIGNOFF_RE.test(lines[0])) {
+    // Keep every word she typed: "Kind regards,\nSamreen" -> "Kind regards, Samreen".
+    paragraphs.pop()
+    return { paragraphs, signoff: lines.join(' ') }
+  }
+  return { paragraphs }
+}
+
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
+
+/** Free-text email in the SAME branded Campaign layout the templates use (Taona
+ *  2026-09-24: "keep the formatting of the email that would have been sent"). */
+export async function renderFreeTextEmail(text: string, subject: string, unsubscribeUrl?: string | null): Promise<string> {
+  subject = noDash(subject)
+  const { paragraphs, signoff } = freeTextParts(noDash(text))
+  const bodyHtml = paragraphs.map((p) => `<p style="margin:0 0 16px">${esc(p).replace(/\n/g, '<br/>')}</p>`).join('')
+  return render(createElement(Campaign, {
+    preview: (paragraphs[0] || subject).slice(0, 120),
+    heading: subject,
+    bodyHtml,
+    signoff,
+    unsubscribeUrl: unsubscribeUrl ?? undefined,
+  }))
+}

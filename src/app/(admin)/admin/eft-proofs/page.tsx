@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getEftBankDetails } from '@/lib/eft'
 import { formatRand } from '@/lib/payments/pricing'
 import { loadEftProofs } from '@/lib/payments/eft-proofs-list'
+import { VendorSearch, matchesVendor } from '@/components/admin/VendorSearch'
 import { AdminPage } from '@/components/admin/AdminPage'
 import { EftProofConfirmButton } from '@/components/admin/EftProofConfirmButton'
 
@@ -14,13 +15,15 @@ export const dynamic = 'force-dynamic'
 // covert cohort). Enforced entirely by eftProofVisibleToOwner — the wall
 // (vendorInOwnerScope) is untouched, so nothing about the old cohort can surface
 // here. Safe for any operator (incl. the festival owner) to open.
-export default async function EftProofsPage() {
+export default async function EftProofsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/admin/login')
 
   const bank = getEftBankDetails()
-  const { ownerEftActive, fullEft, rows, totalAmount, paidAmount } = await loadEftProofs()
+  const { q = '' } = await searchParams
+  const { ownerEftActive, fullEft, rows: allRows, totalAmount, paidAmount } = await loadEftProofs()
+  const rows = allRows.filter((r) => matchesVendor(q, r.name, r.contact, r.reference, r.expectedReference))
 
   const fmtDate = (iso: string) =>
     iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
@@ -41,13 +44,14 @@ export default async function EftProofsPage() {
           <p className="text-xs text-neutral-400 mt-3">These are the exact details shown to vendors on their payment page.</p>
         </div>
       )}
+      {fullEft && allRows.length > 0 && <VendorSearch q={q} />}
       {!fullEft ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
           EFT mode is not active yet. Once it is, vendors who upload EFT proof will appear here.
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-5 py-10 text-center text-neutral-500 text-sm">
-          No EFT proofs uploaded yet.
+          {q ? `No EFT proofs match "${q}".` : 'No EFT proofs uploaded yet.'}
         </div>
       ) : (
         <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
@@ -94,21 +98,21 @@ export default async function EftProofsPage() {
                       ) : (
                         <span className="inline-flex items-center gap-2 justify-end">
                           {r.paidSoFar > 0 && <span className="text-xs text-neutral-500">{formatRand(r.paidSoFar)} paid</span>}
-                          <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount)} />
+                          <EftProofConfirmButton applicationId={r.id} name={r.name} amount={formatRand(r.nextAmount)} defaultAmount={r.nextAmount} />
                         </span>
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
+              {!q && <tfoot>
                 <tr className="border-t-2 border-neutral-200 bg-neutral-50 font-semibold text-neutral-900">
                   <td className="px-5 py-3" colSpan={2}>Total · {rows.length} proof{rows.length === 1 ? '' : 's'}</td>
                   <td className="px-5 py-3 text-right">{formatRand(totalAmount)}</td>
                   <td className="px-5 py-3" colSpan={2} />
                   <td className="px-5 py-3 text-right text-emerald-700">{formatRand(paidAmount)} paid</td>
                 </tr>
-              </tfoot>
+              </tfoot>}
             </table>
           </div>
         </div>

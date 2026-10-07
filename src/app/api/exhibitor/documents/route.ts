@@ -3,6 +3,7 @@ import { getExhibitorContext } from '@/lib/exhibitor'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { updatePortalState, parsePortalState, type DocRecord } from '@/lib/portal-state'
 import { recordVendorAction } from '@/lib/vendor-action-log'
+import { signDocUpload, commitDocUpload } from '@/lib/vendor-doc-upload'
 
 const BUCKET = 'vendor-docs'
 // Canonical doc-type keys. Must match portal.docs[].type and the admin
@@ -44,6 +45,25 @@ export async function POST(req: NextRequest) {
   if (!ctx?.application) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const applicationId = ctx.application.id as string
 
+  // Direct-to-storage flow (up to 10MB, bypasses Vercel's ~4.5MB body cap):
+  // { action:'sign', doc_type, name } -> { path, token }, browser uploads,
+  // then { action:'commit', doc_type, path, name } records it.
+  if ((req.headers.get('content-type') || '').includes('application/json')) {
+    const b = await req.json().catch(() => ({}))
+    const docType = String(b.doc_type || '')
+    const name = String(b.name || '')
+    if (!ALLOWED.includes(docType)) return NextResponse.json({ error: 'Invalid document type' }, { status: 400 })
+    if (b.action === 'sign') {
+      try { return NextResponse.json(await signDocUpload(applicationId, docType, name)) }
+      catch (e) { console.error('[documents] sign failed:', (e as Error).message); return NextResponse.json({ error: 'Upload failed' }, { status: 500 }) }
+    }
+    if (b.action !== 'commit') return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
+    const record = await commitDocUpload({ applicationId, docType, path: String(b.path || ''), name, status: 'pending' })
+    if (!record) return NextResponse.json({ error: 'Upload not found or over 10MB. Please try again.' }, { status: 400 })
+    await afterUpload(ctx, applicationId, record)
+    return NextResponse.json({ success: true, document: record })
+  }
+
   const form = await req.formData().catch(() => null)
   const file = form?.get('file')
   const docType = String(form?.get('doc_type') || '')
@@ -78,6 +98,19 @@ export async function POST(req: NextRequest) {
     docs: [...(s.docs || []).filter((d) => d.type !== docType), record],
   }))
 
+  await afterUpload(ctx, applicationId, record)
+  return NextResponse.json({ success: true, document: record })
+}
+
+// Activity log + site_events + owner notification for a vendor's own upload.
+async function afterUpload(
+  ctx: NonNullable<Awaited<ReturnType<typeof getExhibitorContext>>>,
+  applicationId: string,
+  record: DocRecord,
+) {
+  const admin = createAdminClient()
+  const { type: docType, path } = record
+  const file = { name: record.name }
   // Activity timeline + admin notification fanout. site_events drives both
   // the admin inbox feed and the vendor profile Activity tab.
   await recordVendorAction({
@@ -108,7 +141,7 @@ export async function POST(req: NextRequest) {
   // Best-effort owner notification. Failure here never blocks the vendor's upload.
   try {
     const { notifyOwners } = await import('@/lib/bot/notify')
-    const bizName = String(ctx.application.business_name || 'Vendor')
+    const bizName = String(ctx.application?.business_name || 'Vendor')
     await notifyOwners({
       event: 'document_uploaded',
       body: `New document uploaded by ${bizName}: ${docType}.`,
@@ -120,6 +153,4 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error('[documents] notifyOwners failed:', (e as Error).message)
   }
-
-  return NextResponse.json({ success: true, document: record })
 }

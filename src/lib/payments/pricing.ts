@@ -109,10 +109,20 @@ export function computeVendorPricing(
   // below. This is the "reset to Other + a custom charge" she expects on clearing
   // the tier (the flower sisters: R2,000 custom charge, not R3,750 stale base
   // PLUS R2,000). A tiered vendor keeps their stored/agreed price.
+  // BUT a vendor who was never given a tier (approved straight off the form with
+  // only stall_type/stall_price stored, e.g. C&F Fresh Fruits at R3,750) has NO
+  // custom charge either, and zeroing them made the invoice read R0 while they
+  // were paying instalments. Only a custom charge signals "custom-only".
+  const hasCustomCharge = Array.isArray(reqs.electrical_custom) &&
+    reqs.electrical_custom.some((e) => e && typeof e === 'object' && Number((e as { amount?: unknown }).amount) > 0)
+  const hasStored = Number.isFinite(storedPrice) && storedPrice > 0
+  const untieredStored = !hasTier && !hasCustomCharge && hasStored
   const stallPrice = hasTier
-    ? (Number.isFinite(storedPrice) && storedPrice > 0 ? storedPrice : (tier?.price ?? 0))
-    : 0
-  const stallLabel = hasTier ? (tier?.label || tierSlug || 'Custom stall') : 'Custom (no tier)'
+    ? (hasStored ? storedPrice : (tier?.price ?? 0))
+    : untieredStored ? storedPrice : 0
+  const stallLabel = hasTier ? (tier?.label || tierSlug || 'Custom stall')
+    : untieredStored ? (String(reqs.stall_type || '').trim() || 'Stall')
+    : 'Custom (no tier)'
 
   const electrical: LineItem[] = []
   const elec = reqs.electrical_appliances
@@ -233,4 +243,16 @@ export function tierPricingFields(
   const prevTotal = Number(prev.total_estimate) || prevStall
   const addOns = Math.max(0, prevTotal - prevStall)
   return { stall_type: meta.label, stall_price: meta.price, total_estimate: meta.price + addOns }
+}
+
+// special_requirements.stall_price/total_estimate are a FROZEN snapshot from the
+// apply form; tier moves, custom charges and appliance adds leave them stale (19
+// vendors on 2026-09-28, e.g. Hermanos shows R10,000, billed R7,500). Every admin
+// view that renders the blob passes it through here so it shows what is billed.
+export function withLivePricing<T extends Record<string, unknown>>(reqs: T, tier: string | null | undefined): T {
+  const p = computeVendorPricing({ preferred_booth_tier: tier ?? null, special_requirements: reqs })
+  const out: Record<string, unknown> = { ...reqs }
+  if ('stall_price' in out) out.stall_price = p.stallPrice
+  if ('total_estimate' in out) out.total_estimate = p.total
+  return out as T
 }

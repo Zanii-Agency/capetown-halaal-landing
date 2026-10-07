@@ -106,7 +106,12 @@ export function vendorBill(app: BillApp): VendorBill {
     partial: settled && paidTotal > 0 && paidTotal < pricing.stallPrice,
     liveTotal: pricing.total,
     paidTotal,
-    owing: settled ? accOwing : Math.max(0, pricing.total - paidTotal),
+    // A PARTIAL stall payment is settled but still owes the stall shortfall. Counting
+    // accessories only here showed plan vendors as R0 owing and blocked her confirm of
+    // their next instalment (WITH LUV ZHAA, 2026-10-06).
+    owing: settled
+      ? accOwing + (paidTotal > 0 && paidTotal < pricing.stallPrice ? pricing.stallPrice - paidTotal : 0)
+      : Math.max(0, pricing.total - paidTotal),
     pricing,
     acc,
   }
