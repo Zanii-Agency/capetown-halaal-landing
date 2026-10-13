@@ -2,7 +2,8 @@ import { redirect, notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parsePortalState } from '@/lib/portal-state'
-import { viewerSafePayment } from '@/lib/eft'
+import { viewerSafePayment, teamPaidRecord, isEftAdmin } from '@/lib/eft'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { parseAllocation } from '@/lib/stalls'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
 import { hiddenFromOwner } from '@/lib/audit-scope'
@@ -66,6 +67,14 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   const portal = {
     ...portalRaw,
     payment: viewerSafePayment(portalRaw.payment, a.admin_notes as string | null, a.paid_at as string | null, user.email),
+  }
+  // Team-only paid record (⟦TEAMPAID⟧, Abdusamee 2026-10-13): on a master-lane
+  // vendor the team's Mark as Paid writes only this marker, so show it on the
+  // profile badge for non-EFT-admin viewers. Display only; the wall is untouched.
+  const team = isEftAdmin(user.email) ? null : teamPaidRecord(a.admin_notes as string | null)
+  if (team && portal.payment?.status !== 'paid') {
+    const total = vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: a.admin_notes as string, paid_at: a.paid_at as string | null }).liveTotal
+    portal.payment = { ...(portal.payment || {}), status: team.amount < total ? 'partial' : 'paid', amount: team.amount, method: team.method } as typeof portal.payment
   }
   const { stall } = parseAllocation((a.admin_notes as string) || '')
 

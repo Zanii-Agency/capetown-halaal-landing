@@ -150,7 +150,7 @@ function fmtMoney(n?: number | null): string {
 function statusTone(status: string): 'success' | 'warn' | 'danger' | 'info' | 'neutral' {
   switch (status) {
     case 'approved': case 'paid': case 'confirmed': case 'active': return 'success'
-    case 'pending': case 'invoiced': case 'deferred': return 'warn'
+    case 'pending': case 'invoiced': case 'deferred': case 'partial': return 'warn'
     case 'rejected': case 'cancelled': case 'failed': return 'danger'
     case 'reviewed': case 'submitted': return 'info'
     default: return 'neutral'
