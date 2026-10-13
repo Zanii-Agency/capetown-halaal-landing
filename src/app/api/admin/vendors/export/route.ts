@@ -18,7 +18,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation, tierLabel } from '@/lib/stalls'
 import { parseVendorExtras } from '@/lib/vendor-extras'
-import { rosterPaid, reconciledPaid, isEftAdmin } from '@/lib/eft'
+import { rosterPaid, reconciledPaid, isEftAdmin, teamPaidRecord } from '@/lib/eft'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { parsePortalState } from '@/lib/portal-state'
 
@@ -164,8 +164,11 @@ export async function GET(req: NextRequest) {
     // 'partial' only where the viewer already sees 'paid' (never loosens the
     // master-lane wall): money landed but the stall fee is not covered yet.
     const bill = vendorBill({ id: r.id as string, preferred_booth_tier: r.preferred_booth_tier as string, special_requirements: r.special_requirements, admin_notes: notes, paid_at: r.paid_at as string | null })
-    const seenPaid = eftAdmin ? rosterPaid(notes, r.paid_at as string | null) : reconciledPaid(notes, r.paid_at as string | null)
-    const payStatus = !seenPaid ? 'unpaid' : bill.partial ? 'partially paid' : 'paid'
+    const teamPaid = eftAdmin ? null : teamPaidRecord(notes)
+    const seenPaid = eftAdmin ? rosterPaid(notes, r.paid_at as string | null) : reconciledPaid(notes, r.paid_at as string | null) || !!teamPaid
+    const teamPartial = !!teamPaid && teamPaid.amount < bill.liveTotal
+    const payStatus = !seenPaid ? 'unpaid' : (teamPartial || bill.partial) ? 'partially paid' : 'paid'
+    const owing = teamPaid ? Math.max(0, bill.liveTotal - teamPaid.amount) : bill.owing
 
     ws.addRow([
       cats.join(', '),
@@ -182,7 +185,7 @@ export async function GET(req: NextRequest) {
       extras.totalEstimate ?? '',
       stall || '',
       payStatus,
-      payStatus === 'unpaid' ? '' : bill.owing,
+      payStatus === 'unpaid' ? '' : owing,
       contractSigned ? 'Yes' : 'No',
       (r.status as string) || '',
     ])

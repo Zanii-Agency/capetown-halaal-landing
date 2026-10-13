@@ -19,6 +19,7 @@ import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { requireOperator } from '@/lib/admin-rbac'
 import { laneScopeFor } from '@/lib/inbox-lane'
 import { recordAdminAction } from '@/lib/zanii-ledger'
+import { withTeamPaid } from '@/lib/eft'
 
 const ALLOWED: PaymentMethod[] = ['eft', 'cash', 'manual_card', 'waived']
 
@@ -34,10 +35,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { user } = gate
   const db = createAdminClient()
 
-  // The festival owner cannot record payments against master-lane vendors.
-  const scope = await laneScopeFor(user.email)
-  if (scope.blocksApplicationId(id)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-
   const body = await req.json().catch(() => ({}))
   const method = String(body.method || '').trim() as PaymentMethod
   if (!ALLOWED.includes(method)) {
@@ -46,6 +43,56 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const amount = typeof body.amount === 'number' ? body.amount : undefined
   const reference = body.reference ? String(body.reference).slice(0, 80) : undefined
   const note = body.note ? String(body.note).slice(0, 500) : `Marked paid manually by admin (${method}).`
+
+  // The festival owner cannot mutate master-lane payment state. A blocked admin
+  // may still record a team-local paid view, stored only as an admin_notes marker.
+  const scope = await laneScopeFor(user.email)
+  if (scope.blocksApplicationId(id)) {
+    if (!(typeof body.amount === 'number' && Number.isFinite(body.amount) && body.amount > 0)) {
+      return NextResponse.json({ error: 'amount is required and must be greater than 0' }, { status: 400 })
+    }
+    const teamAmount = Math.floor(body.amount)
+    if (teamAmount <= 0) {
+      return NextResponse.json({ error: 'amount is required and must be at least 1' }, { status: 400 })
+    }
+    const at = new Date().toISOString()
+    const { data: app, error: readError } = await db
+      .from('vendor_applications')
+      .select('admin_notes')
+      .eq('id', id)
+      .maybeSingle()
+    if (readError) return NextResponse.json({ error: readError.message }, { status: 500 })
+    if (!app) return NextResponse.json({ error: 'application not found' }, { status: 404 })
+
+    const adminNotes = withTeamPaid(app.admin_notes as string | null, { amount: teamAmount, method, at })
+    const { error: updateError } = await db
+      .from('vendor_applications')
+      .update({ admin_notes: adminNotes })
+      .eq('id', id)
+    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
+
+    try {
+      await db.from('vendor_application_events').insert({
+        application_id: id,
+        event_type: 'payment_team_record',
+        after_value: { amount: teamAmount, method, reference, note },
+        actor_email: user.email || null,
+        actor_role: 'admin',
+        note,
+      })
+    } catch (e) {
+      console.warn('mark-paid: team event log insert failed:', (e as Error).message)
+    }
+
+    await recordAdminAction({
+      actor: { email: gate.adminUser.email, role: gate.role },
+      action: 'team_paid_record',
+      vendorId: id,
+      payload: { method, amount: teamAmount, reference: reference ?? null, note },
+    })
+
+    return NextResponse.json({ ok: true, teamRecord: true })
+  }
 
   // Route through the SAME confirmPayment authority as the Yoco webhook and the
   // vendor-ops mark-paid, so a manual payment ACCUMULATES into the cumulative

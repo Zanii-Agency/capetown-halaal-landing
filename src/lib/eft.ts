@@ -48,6 +48,36 @@ const NOEFT_RE = /⟦NOEFT⟧/
 const NEWVENDOR_MARKER = '⟦NEWVENDOR⟧'
 const NEWVENDOR_RE = /⟦NEWVENDOR⟧/
 
+const TEAMPAID_RE = /⟦TEAMPAID:(\d+)\|([^|\]⟧]+)\|([^|\]⟧]+)⟧/g
+
+export interface TeamPaidRecord {
+  amount: number
+  method: string
+  at: string
+}
+
+export function teamPaidRecord(adminNotes: string | null | undefined): TeamPaidRecord | null {
+  const notes = adminNotes || ''
+  let latest: TeamPaidRecord | null = null
+  for (const match of notes.matchAll(TEAMPAID_RE)) {
+    latest = {
+      amount: Number(match[1]) || 0,
+      method: match[2] || '',
+      at: match[3] || '',
+    }
+  }
+  return latest
+}
+
+export function withTeamPaid(adminNotes: string | null | undefined, rec: TeamPaidRecord): string {
+  const clean = (adminNotes || '').replace(TEAMPAID_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+  const amount = Math.max(0, Math.floor(Number(rec.amount) || 0))
+  const method = String(rec.method || '').replace(/[|⟦⟧\n\r]/g, '').trim()
+  const at = String(rec.at || '').replace(/[|⟦⟧\n\r]/g, '').trim()
+  const marker = `⟦TEAMPAID:${amount}|${method}|${at}⟧`
+  return clean ? `${clean}\n${marker}` : marker
+}
+
 /** The confined mailbox that RECEIVES EFT backstops (a real, monitored inbox).
  *  Distinct from the set of identities allowed to OPERATE the EFT surface below;
  *  notify.ts and master-only-senders.ts want this single address. Env-overridable. */
@@ -127,6 +157,7 @@ export function rosterPaymentStatus(
   const raw = parsePortalState(adminNotes).payment?.status || (paidAt ? 'paid' : 'none')
   if (isEftAdmin(viewerEmail)) return raw
   if (reconciledPaid(adminNotes, paidAt)) return 'paid'
+  if (teamPaidRecord(adminNotes)) return 'paid'
   return raw === 'paid' || raw === 'collected' ? 'none' : raw
 }
 
@@ -167,7 +198,7 @@ export function viewerSafePayment(
 // and edits the human prose and the ⟦STALL:..⟧ allocation, but must never see
 // the EFT arrangement (CTH Law 2). ⟦STALL:..⟧ is deliberately NOT in this set.
 // Global flag so .match() returns every occurrence for the merge below.
-const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦NEWVENDOR⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
+const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦NEWVENDOR⟧|⟦TEAMPAID:\d+\|[^|\]⟧]+\|[^|\]⟧]+⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
 
 /** admin_notes with every covert money/lane marker removed, for a non-EFT-admin
  *  viewer (owner/operator). Human prose and ⟦STALL:..⟧ survive; null/undefined

@@ -179,6 +179,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const [markPaidRef, setMarkPaidRef] = useState('')
   const [markPaidNote, setMarkPaidNote] = useState('')
   const [markPaidErr, setMarkPaidErr] = useState<string | null>(null)
+  const [markPaidOk, setMarkPaidOk] = useState<string | null>(null)
 
   // --- EFT payment / refund proof upload state ---
   const [proofFile, setProofFile] = useState<File | null>(null)
@@ -379,6 +380,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
     setMarkPaidRef('')
     setMarkPaidNote('')
     setMarkPaidErr(null)
+    setMarkPaidOk(null)
     setDrawerOpen(true)
   }
 
@@ -386,6 +388,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
     if (!markPaidMethod) { setMarkPaidErr('Pick how they paid.'); return }
     setMarkPaidBusy(true)
     setMarkPaidErr(null)
+    setMarkPaidOk(null)
     try {
       const r = await fetch(`/api/admin/vendors/${v.id}/mark-paid`, {
         method: 'POST',
@@ -400,6 +403,11 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
       const j = await r.json().catch(() => ({}))
       if (!r.ok) { setMarkPaidErr(j.error || 'Failed'); return }
       setDrawerOpen(false)
+      if (j.teamRecord) {
+        setMarkPaidOk('Saved. Marked as paid for your team.')
+        toast.success('Saved. Marked as paid for your team.')
+        router.refresh()
+      }
     } catch (e) {
       setMarkPaidErr((e as Error).message)
     } finally {
@@ -1066,6 +1074,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
               />
             </div>
             {markPaidErr && <p className="text-xs text-red-600">{markPaidErr}</p>}
+            {markPaidOk && <p className="text-xs text-emerald-700">{markPaidOk}</p>}
             <button
               onClick={handleMarkPaid}
               disabled={markPaidBusy || !markPaidMethod}

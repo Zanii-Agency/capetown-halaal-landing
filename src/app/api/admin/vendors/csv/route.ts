@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation } from '@/lib/stalls'
-import { rosterPaid, reconciledPaid, isEftAdmin } from '@/lib/eft'
+import { rosterPaid, reconciledPaid, isEftAdmin, teamPaidRecord } from '@/lib/eft'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { parsePortalState } from '@/lib/portal-state'
 
@@ -131,9 +131,12 @@ export async function GET(req: NextRequest) {
   for (const row of rows) {
     const { stall } = parseAllocation(row.admin_notes || '')
     const sector = row.product_categories?.[0] || ''
-    const seenPaid = eftAdmin ? rosterPaid(row.admin_notes, row.paid_at) : reconciledPaid(row.admin_notes, row.paid_at)
+    const teamPaid = eftAdmin ? null : teamPaidRecord(row.admin_notes)
+    const seenPaid = eftAdmin ? rosterPaid(row.admin_notes, row.paid_at) : reconciledPaid(row.admin_notes, row.paid_at) || !!teamPaid
     const bill = vendorBill({ id: row.id, preferred_booth_tier: row.preferred_booth_tier, special_requirements: row.special_requirements, admin_notes: row.admin_notes, paid_at: row.paid_at })
-    const paymentStatus = !seenPaid ? 'unpaid' : bill.partial ? 'partially paid' : 'paid'
+    const teamPartial = !!teamPaid && teamPaid.amount < bill.liveTotal
+    const paymentStatus = !seenPaid ? 'unpaid' : (teamPartial || bill.partial) ? 'partially paid' : 'paid'
+    const owing = teamPaid ? Math.max(0, bill.liveTotal - teamPaid.amount) : bill.owing
     lines.push([
       escapeCsv(row.business_name),
       escapeCsv(row.contact_name),
@@ -144,7 +147,7 @@ export async function GET(req: NextRequest) {
       escapeCsv(row.status),
       escapeCsv(stall),
       escapeCsv(paymentStatus),
-      escapeCsv(paymentStatus === 'unpaid' ? '' : String(bill.owing)),
+      escapeCsv(paymentStatus === 'unpaid' ? '' : String(owing)),
       escapeCsv(row.contract_signed_at),
     ].join(','))
   }
