@@ -22,13 +22,17 @@ export interface Installment { date: string; amount: number }
 // No plan is offered until at least two genuine attempts to get the vendor to pay
 // as much as they can THIS month; only then a plan, capped at this date.
 // Was 2026-11-30, and 2026-12-12 before that (the festival itself).
-export const PLAN_LAST_DATE = '2026-10-31'
+// Taona 2026-10-14: cap moved to 14 November 2026, and every plan opens with a
+// deposit of at least 20% of the outstanding fee (DEPOSIT_MIN_RATIO).
+export const PLAN_LAST_DATE = '2026-11-14'
+export const DEPOSIT_MIN_RATIO = 0.2
 
 // The flipped new-vendor cohort (⟦NEWVENDOR⟧, /admin/new-vendors) is capped tighter
 // (Taona 2026-09-10): every plan instalment or single extension lands by 10 October,
 // not the general 31 October ceiling. Keyed on the SAME marker that defines the
 // cohort, so there is no new state and the whole fresher cohort moves together.
-export const NEW_VENDOR_PLAN_LAST_DATE = '2026-10-10'
+// 2026-10-14: the 10 Oct date has passed, so the cohort now shares the 14 Nov cap.
+export const NEW_VENDOR_PLAN_LAST_DATE = PLAN_LAST_DATE
 export function planLastDateFor(adminNotes: string | null | undefined): string {
   return hasNewVendorMarker(adminNotes) ? NEW_VENDOR_PLAN_LAST_DATE : PLAN_LAST_DATE
 }
@@ -132,6 +136,10 @@ export function validatePlan(
     if (i > 0 && plan[i].date <= plan[i - 1].date) {
       return { ok: false, error: `The instalment dates need to be in order, each one later than the one before. Please put them in date order.` }
     }
+  }
+  const deposit = Math.ceil(owing * DEPOSIT_MIN_RATIO)
+  if (plan[0].amount < deposit) {
+    return { ok: false, error: `Your first payment is the deposit and needs to be at least ${rand(deposit)} (20% of your outstanding ${rand(owing)}). You have been accepted as a vendor and we have vendors waiting for a space, so please make the first payment at least ${rand(deposit)}.` }
   }
   const sum = plan.reduce((s, p) => s + p.amount, 0)
   if (sum < owing) {
