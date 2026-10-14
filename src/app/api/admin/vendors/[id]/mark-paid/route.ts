@@ -19,7 +19,7 @@ import { confirmPayment, type PaymentMethod } from '@/lib/payments/confirm'
 import { requireOperator } from '@/lib/admin-rbac'
 import { laneScopeFor } from '@/lib/inbox-lane'
 import { recordAdminAction } from '@/lib/zanii-ledger'
-import { withTeamPaid } from '@/lib/eft'
+import { withTeamPaid, teamPaidRecord } from '@/lib/eft'
 
 const ALLOWED: PaymentMethod[] = ['eft', 'cash', 'manual_card', 'waived']
 
@@ -64,7 +64,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (readError) return NextResponse.json({ error: readError.message }, { status: 500 })
     if (!app) return NextResponse.json({ error: 'application not found' }, { status: 404 })
 
-    const adminNotes = withTeamPaid(app.admin_notes as string | null, { amount: teamAmount, method, at })
+    // A second payment ADDS to the team record (R8 500 then R2 200 = R10 700).
+    // replace:true is the correction path: the amount becomes the new total paid.
+    const prior = body.replace === true ? 0 : (teamPaidRecord(app.admin_notes as string | null)?.amount || 0)
+    const adminNotes = withTeamPaid(app.admin_notes as string | null, { amount: prior + teamAmount, method, at })
     const { error: updateError } = await db
       .from('vendor_applications')
       .update({ admin_notes: adminNotes })

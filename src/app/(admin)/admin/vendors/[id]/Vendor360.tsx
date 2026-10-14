@@ -176,6 +176,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
   const [markPaidBusy, setMarkPaidBusy] = useState(false)
   const [markPaidMethod, setMarkPaidMethod] = useState<'' | 'eft' | 'cash' | 'manual_card' | 'waived'>('')
   const [markPaidAmount, setMarkPaidAmount] = useState('')
+  const [markPaidReplace, setMarkPaidReplace] = useState(false)
   const [markPaidRef, setMarkPaidRef] = useState('')
   const [markPaidNote, setMarkPaidNote] = useState('')
   const [markPaidErr, setMarkPaidErr] = useState<string | null>(null)
@@ -376,6 +377,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
     const paidSoFar = portal.payment?.amount || 0
     const outstanding = Math.max(0, total - paidSoFar)
     setMarkPaidAmount(outstanding > 0 ? String(outstanding) : '')
+    setMarkPaidReplace(false)
     setMarkPaidMethod('')
     setMarkPaidRef('')
     setMarkPaidNote('')
@@ -398,6 +400,7 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
           amount: markPaidAmount ? Number(markPaidAmount) : undefined,
           reference: markPaidRef || undefined,
           note: markPaidNote || undefined,
+          replace: markPaidReplace || undefined,
         }),
       })
       const j = await r.json().catch(() => ({}))
@@ -1052,6 +1055,10 @@ export function Vendor360({ initialData }: { initialData: InitialData }) {
                 className="w-full border border-neutral-200 rounded-md px-3 py-2 text-sm"
                 placeholder="e.g. 6500"
               />
+              <label className="mt-2 flex items-center gap-2 text-xs text-neutral-600">
+                <input type="checkbox" checked={markPaidReplace} onChange={(e) => setMarkPaidReplace(e.target.checked)} />
+                Correct a mistake: this is the new TOTAL paid, not an extra payment
+              </label>
             </div>
             <div>
               <label className="text-xs font-medium text-neutral-600 block mb-1">Reference</label>
