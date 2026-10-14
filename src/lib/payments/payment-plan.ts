@@ -26,6 +26,12 @@ export interface Installment { date: string; amount: number }
 // deposit of at least 20% of the outstanding fee (DEPOSIT_MIN_RATIO).
 export const PLAN_LAST_DATE = '2026-11-14'
 export const DEPOSIT_MIN_RATIO = 0.2
+// Taona 2026-10-14: the deposit is a real commitment, not a promise, so it must
+// land within DEPOSIT_WITHIN_DAYS. Same window caps a deposit-free extension.
+export const DEPOSIT_WITHIN_DAYS = 7
+export function addDaysISO(d: string, n: number): string {
+  const t = new Date(`${d}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10)
+}
 
 // The flipped new-vendor cohort (⟦NEWVENDOR⟧, /admin/new-vendors) is capped tighter
 // (Taona 2026-09-10): every plan instalment or single extension lands by 10 October,
@@ -138,6 +144,10 @@ export function validatePlan(
     }
   }
   const deposit = Math.ceil(owing * DEPOSIT_MIN_RATIO)
+  const depositBy = addDaysISO(today, DEPOSIT_WITHIN_DAYS)
+  if (plan[0].date > depositBy) {
+    return { ok: false, error: `Your first payment is the deposit and needs to be paid within ${DEPOSIT_WITHIN_DAYS} days, by ${fmt(depositBy)} at the latest. You have been accepted as a vendor and we have vendors waiting for a space, so the deposit is what holds your stall.` }
+  }
   if (plan[0].amount < deposit) {
     return { ok: false, error: `Your first payment is the deposit and needs to be at least ${rand(deposit)} (20% of your outstanding ${rand(owing)}). You have been accepted as a vendor and we have vendors waiting for a space, so please make the first payment at least ${rand(deposit)}.` }
   }
@@ -299,5 +309,5 @@ export function planSubmittedMsg(plan: Installment[]): string {
 }
 
 export function planApprovedMsg(plan: Installment[]): string {
-  return `Good news, your payment plan is approved:\n${planLines(plan)}\nPlease pay each instalment through Payments in your portal by its date. Your spot stays reserved as long as you keep to the plan. Send your proof of payment to support@youngatheart.co.za after each one.`
+  return `Good news, your payment plan is approved:\n${planLines(plan)}\nPlease pay each instalment through Payments in your portal by its date. Your spot stays reserved as long as you keep to the plan. After each payment, upload your proof of payment in your exhibitor portal (Payments, upload proof of payment) so the team can mark it.`
 }

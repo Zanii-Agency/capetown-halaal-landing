@@ -26,7 +26,7 @@ import { computeVendorPricing } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
-import { proposePaymentPlan, planLastDateFor, cleanClaimedInstallments, planSummary } from '@/lib/payments/payment-plan'
+import { proposePaymentPlan, planLastDateFor, addDaysISO, DEPOSIT_WITHIN_DAYS, cleanClaimedInstallments, planSummary } from '@/lib/payments/payment-plan'
 import { appendVendorAtom } from '@/lib/bot/vendor-memory'
 import { recordVendorAction } from '@/lib/vendor-action-log'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
@@ -180,13 +180,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'grant_payment_extension',
-    description: "Give THIS vendor more time to pay their stall fee in full, in ONE payment, by a single agreed date on or before 14 November 2026 (2026-11-14), never later. Only use this when they commit to the full amount by one date; if they need to split it, use propose_payment_plan (which requires a deposit of at least 20% first). Never accept an open-ended \"I will get back to you\". Call AFTER confirming the date with them. If they are already paid, do not call it.",
+    description: "Give THIS vendor a short hold to pay their stall fee in FULL, in ONE payment, by a single date within the next 7 days. Anything later is refused: the vendor must instead pay a deposit of at least 20% within 7 days and set up a plan via propose_payment_plan, with every payment by 14 November 2026. Never hold a stall on a promise alone. Call AFTER confirming the date with them. If they are already paid, do not call it.",
     strict: true,
-    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. On or before 2026-11-14, never later.' } }, required: ['final_date'] },
+    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Within the next 7 days.' } }, required: ['final_date'] },
   },
   {
     name: 'propose_payment_plan',
-    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into dated instalments. Rules enforced by the handler: the FIRST instalment is the DEPOSIT and must be at least 20% of their outstanding fee, paid as soon as possible (within the next few days); 2 to 6 instalments, each a real future date in order; EVERY date on or before 14 NOVEMBER 2026 (2026-11-14), never later; amounts must add up to at least the full outstanding fee. Propose the dates and amounts yourself (front-loaded) and confirm with the vendor, then call this. Do not invent figures the vendor has not agreed. For a single full payment by one date, use grant_payment_extension instead.",
+    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into dated instalments. Rules enforced by the handler: the FIRST instalment is the DEPOSIT: at least 20% of their outstanding fee, dated within the next 7 days; 2 to 6 instalments, each a real future date in order; EVERY date on or before 14 NOVEMBER 2026 (2026-11-14), never later; amounts must add up to at least the full outstanding fee. Propose the dates and amounts yourself (front-loaded) and confirm with the vendor, then call this. Do not invent figures the vendor has not agreed. For a single full payment by one date, use grant_payment_extension instead.",
     // NOT strict on purpose: a nested-array argument, and claude-sonnet-5 caps
     // strict tools at 20 (adding a 21st 400s every vendor call, see
     // get_badge_allocation). The handler validates every field defensively.
@@ -986,6 +986,13 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   let until = (finalDate || '').trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || until <= today) until = DEFAULT
   if (until > CAP) until = CAP
+  // Taona 2026-10-14: no deposit-free hold. A promise to pay in full weeks away
+  // holds a stall with no commitment, so a single date must be within the deposit
+  // window; anything later is a payment plan with a 20% deposit first.
+  const holdBy = addDaysISO(today, DEPOSIT_WITHIN_DAYS)
+  if (until > holdBy) {
+    return `To hold your stall we need a commitment now. You have been accepted as a vendor and we have vendors on the waiting list, so either pay in full by ${new Date(`${holdBy}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}, or pay a deposit of at least 20% of your outstanding fee within ${DEPOSIT_WITHIN_DAYS} days and put a payment plan in place for the rest by 14 November 2026.`
+  }
   const { grantExtension } = await import('@/lib/eft')
   await grantExtension(vendorId, until, `extension to ${until} granted via WhatsApp`)
   // Record the commitment as a ONE-instalment approved plan so it shows under
