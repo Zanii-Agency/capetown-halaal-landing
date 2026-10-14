@@ -180,13 +180,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'grant_payment_extension',
-    description: "Give THIS vendor a short hold to pay their stall fee in FULL, in ONE payment, by a single date within the next 7 days. Anything later is refused: the vendor must instead pay a deposit of at least 20% within 7 days and set up a plan via propose_payment_plan, with every payment by 14 November 2026. Never hold a stall on a promise alone. Call AFTER confirming the date with them. If they are already paid, do not call it.",
+    description: "Give THIS vendor a short hold to pay their stall fee in FULL, in ONE payment, by a single date within the next 2 days. Anything later is refused: the vendor must instead pay a deposit of at least 20% within 2 days and set up a plan via propose_payment_plan, with every payment by 14 November 2026. Never hold a stall on a promise alone. Call AFTER confirming the date with them. If they are already paid, do not call it.",
     strict: true,
-    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Within the next 7 days.' } }, required: ['final_date'] },
+    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Within the next 2 days.' } }, required: ['final_date'] },
   },
   {
     name: 'propose_payment_plan',
-    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into dated instalments. Rules enforced by the handler: the FIRST instalment is the DEPOSIT: at least 20% of their outstanding fee, dated within the next 7 days; 2 to 6 instalments, each a real future date in order; EVERY date on or before 14 NOVEMBER 2026 (2026-11-14), never later; amounts must add up to at least the full outstanding fee. Propose the dates and amounts yourself (front-loaded) and confirm with the vendor, then call this. Do not invent figures the vendor has not agreed. For a single full payment by one date, use grant_payment_extension instead.",
+    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into dated instalments. Rules enforced by the handler: the FIRST instalment is the DEPOSIT: at least 20% of their outstanding fee, dated within the next 2 days; 2 to 6 instalments, each a real future date in order; EVERY date on or before 14 NOVEMBER 2026 (2026-11-14), never later; amounts must add up to at least the full outstanding fee. Propose the dates and amounts yourself (front-loaded) and confirm with the vendor, then call this. Do not invent figures the vendor has not agreed. For a single full payment by one date, use grant_payment_extension instead.",
     // NOT strict on purpose: a nested-array argument, and claude-sonnet-5 caps
     // strict tools at 20 (adding a 21st 400s every vendor call, see
     // get_badge_allocation). The handler validates every field defensively.

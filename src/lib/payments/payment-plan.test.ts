@@ -5,7 +5,7 @@ import { validatePlan, planApprovedMsg, planLastDateFor } from './payment-plan'
 // Fixed "today" so this never rots like a date-relative test.
 const TODAY = '2026-09-04'
 const OWING = 6500
-const ok2 = [{ date: '2026-09-10', amount: 3000 }, { date: '2026-10-31', amount: 3500 }]
+const ok2 = [{ date: '2026-09-06', amount: 3000 }, { date: '2026-10-31', amount: 3500 }]
 
 test('a valid 2-instalment plan that covers the fee is accepted', () => {
   const r = validatePlan(ok2, OWING, TODAY)
@@ -14,11 +14,11 @@ test('a valid 2-instalment plan that covers the fee is accepted', () => {
 })
 
 test('instalments summing to MORE than owing are fine', () => {
-  assert.equal(validatePlan([{ date: '2026-09-10', amount: 4000 }, { date: '2026-10-31', amount: 4000 }], OWING, TODAY).ok, true)
+  assert.equal(validatePlan([{ date: '2026-09-06', amount: 4000 }, { date: '2026-10-31', amount: 4000 }], OWING, TODAY).ok, true)
 })
 
 test('instalments summing to LESS than owing are rejected', () => {
-  const r = validatePlan([{ date: '2026-09-10', amount: 2000 }, { date: '2026-10-31', amount: 3000 }], OWING, TODAY)
+  const r = validatePlan([{ date: '2026-09-06', amount: 2000 }, { date: '2026-10-31', amount: 3000 }], OWING, TODAY)
   assert.equal(r.ok, false)
   if (!r.ok) assert.match(r.error, /cover the full amount/i)
 })
@@ -40,18 +40,18 @@ test('a past or today date is rejected', () => {
 test('a date after the plan cap (14 Nov 2026) is rejected, for every cohort', () => {
   assert.equal(planLastDateFor('⟦NEWVENDOR⟧'), '2026-11-14')
   assert.equal(planLastDateFor(null), '2026-11-14')
-  const r = validatePlan([{ date: '2026-09-10', amount: 3000 }, { date: '2026-11-15', amount: 3500 }], OWING, TODAY)
+  const r = validatePlan([{ date: '2026-09-06', amount: 3000 }, { date: '2026-11-15', amount: 3500 }], OWING, TODAY)
   assert.equal(r.ok, false)
   if (!r.ok) assert.match(r.error, /paid by 14 November 2026/i)
-  assert.equal(validatePlan([{ date: '2026-09-10', amount: 3000 }, { date: '2026-11-14', amount: 3500 }], OWING, TODAY).ok, true)
+  assert.equal(validatePlan([{ date: '2026-09-06', amount: 3000 }, { date: '2026-11-14', amount: 3500 }], OWING, TODAY).ok, true)
 })
 
 test('the first instalment must be a deposit of at least 20% of the outstanding fee', () => {
   const dep = Math.ceil(OWING * 0.2)
-  const low = validatePlan([{ date: '2026-09-10', amount: dep - 1 }, { date: '2026-11-14', amount: OWING }], OWING, TODAY)
+  const low = validatePlan([{ date: '2026-09-06', amount: dep - 1 }, { date: '2026-11-14', amount: OWING }], OWING, TODAY)
   assert.equal(low.ok, false)
   if (!low.ok) assert.match(low.error, /deposit/i)
-  assert.equal(validatePlan([{ date: '2026-09-10', amount: dep }, { date: '2026-11-14', amount: OWING - dep }], OWING, TODAY).ok, true)
+  assert.equal(validatePlan([{ date: '2026-09-06', amount: dep }, { date: '2026-11-14', amount: OWING - dep }], OWING, TODAY).ok, true)
 })
 
 test('out-of-order dates are rejected', () => {
@@ -78,7 +78,7 @@ test('non-array input is rejected, not thrown', () => {
 test('the approval message is dash-free (Law 7) and lists the dates', () => {
   const msg = planApprovedMsg(ok2)
   assert.ok(!/[—–]/.test(msg), 'no em or en dashes')
-  assert.match(msg, /10 September 2026/)
+  assert.match(msg, /6 September 2026/)
   assert.match(msg, /exhibitor portal/)
 })
 
@@ -113,9 +113,9 @@ test('cleanClaimedInstallments: keeps real future dates within the cap, sorted; 
   assert.deepEqual(cleanClaimedInstallments('R2000 on friday', '2026-09-23', '2026-10-31'), [])
 })
 
-test('the deposit must land within 7 days', () => {
-  const late = validatePlan([{ date: '2026-09-12', amount: 3000 }, { date: '2026-11-14', amount: 3500 }], OWING, TODAY)
+test('the deposit must land within 2 days', () => {
+  const late = validatePlan([{ date: '2026-09-07', amount: 3000 }, { date: '2026-11-14', amount: 3500 }], OWING, TODAY)
   assert.equal(late.ok, false)
-  if (!late.ok) assert.match(late.error, /within 7 days/i)
-  assert.equal(validatePlan([{ date: '2026-09-11', amount: 3000 }, { date: '2026-11-14', amount: 3500 }], OWING, TODAY).ok, true)
+  if (!late.ok) assert.match(late.error, /within 2 days/i)
+  assert.equal(validatePlan([{ date: '2026-09-06', amount: 3000 }, { date: '2026-11-14', amount: 3500 }], OWING, TODAY).ok, true)
 })

@@ -28,7 +28,7 @@ export const PLAN_LAST_DATE = '2026-11-14'
 export const DEPOSIT_MIN_RATIO = 0.2
 // Taona 2026-10-14: the deposit is a real commitment, not a promise, so it must
 // land within DEPOSIT_WITHIN_DAYS. Same window caps a deposit-free extension.
-export const DEPOSIT_WITHIN_DAYS = 7
+export const DEPOSIT_WITHIN_DAYS = 2
 export function addDaysISO(d: string, n: number): string {
   const t = new Date(`${d}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10)
 }
