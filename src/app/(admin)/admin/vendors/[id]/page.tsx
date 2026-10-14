@@ -72,7 +72,7 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   // vendor the team's Mark as Paid writes only this marker, so show it on the
   // profile badge for non-EFT-admin viewers. Display only; the wall is untouched.
   const team = isEftAdmin(user.email) ? null : teamPaidRecord(a.admin_notes as string | null)
-  if (team && portal.payment?.status !== 'paid') {
+  if (team && !portal.payment?.amount) {
     const total = vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: a.admin_notes as string, paid_at: a.paid_at as string | null }).liveTotal
     portal.payment = { ...(portal.payment || {}), status: team.amount < total ? 'partial' : 'paid', amount: team.amount, method: team.method } as typeof portal.payment
   }

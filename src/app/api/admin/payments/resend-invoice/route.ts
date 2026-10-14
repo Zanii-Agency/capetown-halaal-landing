@@ -124,8 +124,9 @@ async function sendUnpaidInvoice(
   const { renderInvoicePdf } = await import('@/lib/payments/invoice-pdf')
   const { paymentReference } = await import('@/lib/payments')
   const { sendEmail } = await import('@/lib/email/resend')
-  let amount = state.payment?.amount
-  if (amount == null) {
+  // The bill shows the live total (stall + add-ons), never a stale paid figure.
+  let amount = 0
+  {
     try {
       amount = computeVendorPricing({ preferred_booth_tier: app.preferred_booth_tier || '', special_requirements: app.special_requirements }).total
     } catch { amount = 0 }
