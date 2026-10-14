@@ -6,7 +6,7 @@ import { viewerSafePayment, teamPaidRecord, isEftAdmin } from '@/lib/eft'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { parseAllocation } from '@/lib/stalls'
 import { hidesEftContent, stripEftMessages, laneScopeFor } from '@/lib/inbox-lane'
-import { hiddenFromOwner } from '@/lib/audit-scope'
+import { hiddenFromOwner, revealsLaneActivity, LANE_ACTIVITY_ALREADY_SEEN } from '@/lib/audit-scope'
 import { Vendor360 } from './Vendor360'
 import { extraRequiredDocs } from '@/lib/exhibitor/required-docs'
 
@@ -162,8 +162,13 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
     at: (m) => m.at,
   })
 
+  // Master-lane vendor viewed by anyone but the EFT admin: drop the EFT rows
+  // (details revealed / proof uploaded) that give the lane away. The 12 the team
+  // already saw keep their log as it was (Taona 2026-10-14).
+  const hideLaneRows = hide && scope.blocks({ email: emailRaw, phone: phoneRaw, applicationId: id }) && !LANE_ACTIVITY_ALREADY_SEEN.has(id)
   const events = ((eventsRes.data || []) as AuditEvent[]).filter((e) =>
-    !hiddenFromOwner({ event_type: e.event_type, note: e.note }, true),
+    !hiddenFromOwner({ event_type: e.event_type, note: e.note }, true) &&
+    !(hideLaneRows && revealsLaneActivity(e.event_type)),
   )
 
   // Do not ship the internal admin_notes blob to the browser.
