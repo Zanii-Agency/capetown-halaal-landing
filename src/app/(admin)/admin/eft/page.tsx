@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, hasNoEftMarker, getPaymentRail, getEftBankDetails, getMasterBankDetails, eftReference, onEftLane, vendorCommsInOwnerScope, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
+import { isEftAdmin, hasEftMarker, hasNoEftMarker, getPaymentRail, getEftBankDetails, eftReference, onEftLane, vendorCommsInOwnerScope, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
 import { isTestVendor } from '@/lib/test-vendors'
 import { parsePortalState } from '@/lib/portal-state'
@@ -364,7 +364,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     <div className="p-6">
       {header}
       <OpsPanel digest={digest} />
-      <EftAdminClient rail={rail} masterBank={getMasterBankDetails()} samreenBank={getEftBankDetails()} rows={rows} candidates={candidates} excluded={excluded} />
+      <EftAdminClient rail={rail} samreenBank={getEftBankDetails()} rows={rows} candidates={candidates} excluded={excluded} />
     </div>
   )
 }

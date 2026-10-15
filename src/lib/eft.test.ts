@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, paymentOnOwnerSide, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, getMasterBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane, paidSamreenVia } from './eft'
+import { maskRetiredAccounts, vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, paymentOnOwnerSide, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane, paidSamreenVia } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -577,21 +577,31 @@ test('paymentOnOwnerSide: rail-INDEPENDENT whose-money test (the /admin/paid fen
   assert.equal(paymentOnOwnerSide('frozen1', withOwnerVisibleMarker('note'), frozen), true, '⟦OWNERVIS⟧ hands a frozen member back')
 })
 
-test('eftBankFor picks the covert ...191 account only when covert', () => {
-  assert.equal(eftBankFor(true).accountNumber, getMasterBankDetails().accountNumber)
+test('every vendor gets the one live account, covert or not (retired account removed 2026-10-15)', () => {
+  assert.equal(eftBankFor(true).accountNumber, getEftBankDetails().accountNumber)
   assert.equal(eftBankFor(false).accountNumber, getEftBankDetails().accountNumber)
-  assert.notEqual(getMasterBankDetails().accountNumber, getEftBankDetails().accountNumber, 'the two rails must never share an account')
 })
 
-test('revealsPaymentArrangement strips the covert ...191 account, not just Samreen\'s ...629', () => {
-  const master = getMasterBankDetails().accountNumber
-  const samreen = getEftBankDetails().accountNumber
-  // The covert account quoted back to Samreen must be hidden (this was the leak).
-  assert.equal(revealsPaymentArrangement(`Payment done to ${master}, thanks`), true, 'covert ...191 must be stripped')
-  // Samreen's own account still hidden (unchanged).
-  assert.equal(revealsPaymentArrangement(`Payment done to ${samreen}, thanks`), true)
-  // A refusal is still shown even if it names EFT (unchanged carve-out).
+test('the retired account is masked everywhere it is quoted, and only it', () => {
+  const retired = '6314' + '1269191' // built by concatenation so the digits never appear whole in src
+  for (const v of [retired, '6314 126 9191', '63-1412-69191']) {
+    assert.equal(maskRetiredAccounts(`Paid to ${v} thanks`), 'Paid to [account hidden] thanks', v)
+  }
+  const live = getEftBankDetails().accountNumber
+  assert.equal(maskRetiredAccounts(`Pay ${live}`), `Pay ${live}`)
+  assert.equal(maskRetiredAccounts('WA +27 76 506 3002 subscribed'), 'WA +27 76 506 3002 subscribed')
+  assert.equal(revealsPaymentArrangement(`Payment done to ${retired}, thanks`), true)
   assert.equal(revealsPaymentArrangement('Stall fees are card only through Yoco, there are no banking details.'), false)
+})
+
+test('the retired account digits appear nowhere in src', async () => {
+  const { readdirSync, readFileSync, statSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const needle = '6314' + '1269191'
+  const hits: string[] = []
+  const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|json|md)$/.test(f) && readFileSync(p, 'utf8').includes(needle)) hits.push(p) } }
+  walk('src')
+  assert.deepEqual(hits, [])
 })
 
 test('eftProofVisibleToOwner never surfaces a ⟦EFT⟧ vendor, even with a post-cutover proof', () => {
@@ -731,8 +741,8 @@ test('onCovertMasterLane: a Samreen payer is never master, whatever the rail / f
 
 test('onCovertMasterLane: a partial master payer (proof stamped master, no marker) stays master on samreen_eft', () => {
   const partial = paidNotes({ status: 'deferred', proofs: [{ path: 'a', kind: 'eft_submission', uploaded_at: '2026-09-20', account: 'master' }] })
-  assert.equal(onCovertMasterLane('x', partial, 'samreen_eft', null), true, 'Kuziva shape: keeps ...191 after the flip')
-  assert.equal(eftBankFor(onCovertMasterLane('x', partial, 'samreen_eft', null)).accountNumber.slice(-3), '191')
+  assert.equal(onCovertMasterLane('x', partial, 'samreen_eft', null), true, 'Kuziva shape: stays on the covert lane after the flip')
+  assert.equal(eftBankFor(onCovertMasterLane('x', partial, 'samreen_eft', null)).accountNumber.slice(-3), '629', 'retired 2026-10-15: even a covert vendor is shown ...629')
   assert.equal(onCovertMasterLane('x', withOwnerVisibleMarker(partial), 'samreen_eft', null), false, 'deliberate hand-back still wins')
   assert.equal(onCovertMasterLane('x', 'plain unpaid', 'samreen_eft', null), false, 'clean unpaid vendor sees Samreen')
 })

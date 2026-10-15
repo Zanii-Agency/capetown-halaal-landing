@@ -81,9 +81,8 @@ function BankCard({ title, bank, active, note }: { title: string; bank: Bank; ac
   )
 }
 
-export default function EftAdminClient({ rail, masterBank, samreenBank, rows, candidates, excluded }: {
+export default function EftAdminClient({ rail, samreenBank, rows, candidates, excluded }: {
   rail: PaymentRail
-  masterBank: Bank   // the covert master-lane account (...191)
   samreenBank: Bank  // the owner-reconciled Samreen-EFT account (...629)
   rows: Row[]
   candidates: Candidate[]
@@ -211,12 +210,6 @@ export default function EftAdminClient({ rail, masterBank, samreenBank, rows, ca
         <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
           <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Receiving accounts</p>
           <div className="space-y-3">
-            <BankCard
-              title="Master lane (yours, hidden)"
-              bank={masterBank}
-              active={rail === 'master'}
-              note={rail === 'master' ? 'Every unpaid vendor pays here now.' : 'Covert cohort (⟦EFT⟧ + frozen set) always pays here.'}
-            />
             <BankCard
               title="Samreen EFT (she reconciles)"
               bank={samreenBank}

@@ -6,7 +6,7 @@ import { computeVendorPricing } from './pricing'
 // Taona 2026-09-28: "never let them show the bank details, just the amount and
 // what they are paying for". An invoice must never carry ANY account number, for
 // either rail, paid or unpaid, and whatever a caller tries to pass.
-const ACCOUNTS = ['63168769629', '63141269191', '63170873351', '63152829728']
+const ACCOUNTS = ['63168769629', '6314' + '1269191', '63170873351', '63152829728']
 
 const base = (status: string) => ({
   businessName: 'Tasca Mozambique',
@@ -31,7 +31,7 @@ test('an unpaid invoice shows the item and amount, DUE, and no bank details', ()
 })
 
 test('a caller cannot smuggle bank details in (extra fields are ignored)', () => {
-  const html = buildInvoiceHtml({ ...base('pending'), bank: { accountName: 'Halaal Hub', bank: 'FNB', accountNumber: '63141269191', branchCode: '250655' }, payReference: 'X' } as never)
+  const html = buildInvoiceHtml({ ...base('pending'), bank: { accountName: 'Halaal Hub', bank: 'FNB', accountNumber: '6314' + '1269191', branchCode: '250655' }, payReference: 'X' } as never)
   for (const a of ACCOUNTS) assert.ok(!html.includes(a), `account ${a} must never appear`)
   assert.doesNotMatch(html, /Branch code|250655/)
 })

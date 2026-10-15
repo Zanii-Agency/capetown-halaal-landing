@@ -354,11 +354,9 @@ export interface EftBankDetails {
 // values supplied by the operator 2026-07-23; branch 250655 is FNB's universal
 // EFT branch code. Overridable via env without a code change.
 //
-// ACCOUNT CHANGED 2026-07-27 on Taona's instruction: 63170873351 -> 63141269191.
-// ACCOUNT CHANGED 2026-08-26 on Taona's instruction: 63141269191 -> 63168769629,
-//   name 'Halaal Hub' -> 'Halaal Hub (Pty) Ltd', + Gold Business Account type, as
-//   part of the full-EFT cutover. Vendors mid-transfer may still hit the old
-//   account 63141269191 for a while; watch both.
+// ACCOUNT CHANGED 2026-08-26 on Taona's instruction to 63168769629,
+//   name 'Halaal Hub (Pty) Ltd', Gold Business Account type, as part of the
+//   full-EFT cutover. The previous account is retired (see RETIRED_ACCOUNT_FNV).
 // This constant is the ONLY place the number appears in the repo and no
 // EFT_BANK_ACCOUNT_NUMBER override is set in production, so this line alone
 // governs what every vendor sees: portal EftPanel, the admin EFT tab, invoices,
@@ -375,8 +373,7 @@ const DEFAULT_BANK: EftBankDetails = {
  *  the account can change without a deploy. Always returns a value.
  *
  *  This is the SAMREEN-EFT (owner-reconciled) account (...629): what a vendor on
- *  the visible EFT rail pays into. The covert master lane has its OWN account,
- *  getMasterBankDetails() below. eftBankFor(covert) picks between them. */
+ *  the EFT rail pays into, and since 2026-10-15 the ONLY account any vendor sees. */
 export function getEftBankDetails(): EftBankDetails {
   return {
     accountName: process.env.EFT_BANK_ACCOUNT_NAME || DEFAULT_BANK.accountName,
@@ -387,35 +384,45 @@ export function getEftBankDetails(): EftBankDetails {
   }
 }
 
-// The COVERT MASTER-LANE receiving account (Taona's own, ...191). A vendor on the
-// covert lane pays HERE, never into Samreen's account, and this arrangement is
-// walled from her. Distinct from DEFAULT_BANK (Samreen's ...629) so the two rails
-// can never share a number. Per Taona 2026-09-02: identical to the Samreen account
-// in every field EXCEPT the account number (same name, bank, branch, type). Kept in
-// sync by deriving from DEFAULT_BANK; every field stays env-overridable so it can
-// change without a deploy.
-const MASTER_BANK: EftBankDetails = {
-  ...DEFAULT_BANK,
-  accountNumber: '63141269191',
-}
+// RETIRED ACCOUNT (Taona 2026-10-15): the old master-lane account is removed from
+// the platform and must never be shown to anyone again. Only a one-way FNV-1a 64
+// fingerprint of its digits is kept, so stored messages that quote it can be
+// masked on read without the number living in the code.
+const RETIRED_ACCOUNT_FNV = '7d4ff5cd63fcbfc2'
 
-/** The covert master-lane EFT account (...191) shown to vendors on the master lane.
- *  Env overrides the in-code defaults. Always returns a value. */
-export function getMasterBankDetails(): EftBankDetails {
-  return {
-    accountName: process.env.EFT_MASTER_BANK_ACCOUNT_NAME || MASTER_BANK.accountName,
-    bank: process.env.EFT_MASTER_BANK_NAME || MASTER_BANK.bank,
-    accountNumber: process.env.EFT_MASTER_BANK_ACCOUNT_NUMBER || MASTER_BANK.accountNumber,
-    branchCode: process.env.EFT_MASTER_BANK_BRANCH_CODE || MASTER_BANK.branchCode,
-    accountType: process.env.EFT_MASTER_BANK_ACCOUNT_TYPE || MASTER_BANK.accountType,
+const FNV_OFFSET = BigInt('0xcbf29ce484222325')
+const FNV_PRIME = BigInt('0x100000001b3')
+const MASK64 = BigInt('0xffffffffffffffff')
+
+function fnv1a64(s: string): string {
+  let h = FNV_OFFSET
+  for (let i = 0; i < s.length; i++) {
+    h ^= BigInt(s.charCodeAt(i))
+    h = (h * FNV_PRIME) & MASK64
   }
+  return h.toString(16)
 }
 
-/** Pick the receiving account for a vendor: the covert master lane (...191) when
- *  covert, else Samreen's reconciled account (...629). One chooser so no call site
- *  can route money to the wrong account by hand. */
-export function eftBankFor(covert: boolean): EftBankDetails {
-  return covert ? getMasterBankDetails() : getEftBankDetails()
+const DIGIT_RUN_RE = /\d(?:[\s-]?\d){8,13}/g
+
+/** Replace any digit run (spaces/dashes allowed) matching the retired account with
+ *  "[account hidden]". Read-side only; never written back to the database. */
+export function maskRetiredAccounts<T extends string | null | undefined>(text: T): T {
+  if (!text) return text
+  return text.replace(DIGIT_RUN_RE, (run) =>
+    fnv1a64(run.replace(/[\s-]/g, '')) === RETIRED_ACCOUNT_FNV ? '[account hidden]' : run,
+  ) as T
+}
+
+function containsRetiredAccount(text: string): boolean {
+  return maskRetiredAccounts(text) !== text
+}
+
+/** The receiving account for every vendor. Since 2026-10-15 there is only one
+ *  (...629): the old master account is retired, so `covert` no longer changes it.
+ *  Kept as the one chooser so no call site can route money by hand. */
+export function eftBankFor(_covert?: boolean): EftBankDetails {
+  return getEftBankDetails()
 }
 
 /** THE GLOBAL PAYMENT RAIL. One of three positions, chosen ONLY by the EFT admin
@@ -1254,11 +1261,10 @@ const COORDINATES_RE = new RegExp([
 // number is matched EXACTLY instead, which cannot false-positive at all.
 function containsRealBankValues(text: string): boolean {
   const haystack = text.replace(/\s/g, '')
-  // BOTH receiving accounts, not just Samreen's ...629. The covert master-lane
-  // account (...191) is the whole point of the wall: a message quoting 63141269191
-  // back to Samreen must be stripped exactly like one quoting her own number, or
-  // the covert account leaks to her the moment a master-lane vendor confirms payment.
-  for (const d of [getEftBankDetails(), getMasterBankDetails()]) {
+  // The live account AND the retired one (matched by fingerprint, never by its
+  // digits): a message quoting the retired account must be stripped too.
+  if (containsRetiredAccount(text)) return true
+  for (const d of [getEftBankDetails()]) {
     for (const v of [d.accountNumber, d.branchCode]) {
       const s = String(v || '').replace(/\s/g, '')
       if (s.length >= 5 && haystack.includes(s)) return true
