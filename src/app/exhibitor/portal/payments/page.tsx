@@ -145,6 +145,11 @@ export default async function PaymentsPage() {
     ? `Instalment ${inst.index + 1} of ${inst.count}, due ${fmtDate(inst.date)}. Your plan: ${planSummary(plan.installments)}.`
     : null
   const planDue = settled && (outstanding || 0) > 0 && !!inst && !accPending
+  // FORCED EFT (2026-10-15): anyone with a balance owing sees the ...629 EFT panel,
+  // on any rail except card-only 'yoco'. Overrides the stay-on-your-channel rule and
+  // the settled branch, which left part-paid vendors with a card button or nothing.
+  // A vendor whose stall EFT proof is in and pending keeps the normal submitted view.
+  const forceEft = !!app && rail !== 'yoco' && (outstanding || 0) > 0 && !(eftPending && !settled)
 
   // Countdown banner. Until the vendor pays, the rest of the portal is locked
   // (requirePaid on every other route redirects them here). The banner makes
@@ -356,7 +361,21 @@ export default async function PaymentsPage() {
           </Card>
         )}
 
-        {settled ? (
+        {forceEft ? (
+          // FORCED EFT (Taona 2026-10-15): every vendor who still owes anything pays
+          // by EFT into the one live account (...629), whatever channel they paid
+          // with before. Accessory-only balances keep their -ACC reference.
+          <EftPanel
+            purpose={settled && accDue && !planDue ? 'accessories' : undefined}
+            submitted={accPending}
+            bank={eftBank}
+            reference={settled && accDue && !planDue && app ? accEftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : eftRef}
+            amount={settled && accDue && !planDue ? accOwing : (instAmount ?? outstanding ?? amount)}
+            dueDate={inst ? fmtDate(inst.date) : due}
+            planNote={planDue || !settled ? planNote : undefined}
+            businessName={(app?.business_name as string) || 'your business'}
+          />
+        ) : settled ? (
           // Settled vendors: only the accessory balance can be payable here.
           // The EFT accessory panel additionally requires the lane switch to be
           // on (global EFT mode or an individual marker): when the lane is
