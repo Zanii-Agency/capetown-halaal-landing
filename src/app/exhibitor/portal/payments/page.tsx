@@ -47,13 +47,9 @@ export default async function PaymentsPage() {
   const rail = await getPaymentRail()
   const eftModeOn = rail !== 'yoco'
   const fullEft = await getFullEftMode()
-  // Which account this vendor pays into: the covert master lane (...191) when they
-  // are on it, else Samreen's reconciled account (...629). onCovertMasterLane keys
-  // on the rail + the frozen protected set, so a master-mode sweep, a hand-picked
-  // ⟦EFT⟧ vendor, and a frozen-66 member all correctly land on ...191.
-  const eftBank = eftBankFor(
-    app ? onCovertMasterLane(app.id as string, app.admin_notes as string, rail, fullEft) : false,
-  )
+  // Which account this vendor pays into: since 2026-10-15 every vendor, covert or
+  // not, pays into the one live account (...629). The old master account is retired.
+  const eftBank = eftBankFor()
   // Paid vendors are excluded from the lane (they keep their normal paid view even
   // under global mode); only unpaid lane vendors see the EFT panel.
   // Per-tier rotation (2 Yoco:1 EFT on small tiers, 2 EFT:1 Yoco on the rest),

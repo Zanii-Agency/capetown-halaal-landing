@@ -594,13 +594,14 @@ test('the retired account is masked everywhere it is quoted, and only it', () =>
   assert.equal(revealsPaymentArrangement('Stall fees are card only through Yoco, there are no banking details.'), false)
 })
 
-test('the retired account digits appear nowhere in src', async () => {
+test('the retired account digits appear nowhere in src or scripts', async () => {
   const { readdirSync, readFileSync, statSync } = await import('node:fs')
   const { join } = await import('node:path')
   const needle = '6314' + '1269191'
   const hits: string[] = []
   const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|json|md)$/.test(f) && readFileSync(p, 'utf8').includes(needle)) hits.push(p) } }
   walk('src')
+  walk('scripts')
   assert.deepEqual(hits, [])
 })
 
