@@ -100,6 +100,19 @@ export default function MaintenancePage() {
           </a>
 
           <a
+            href="https://wa.me/27849644860"
+            style={{
+              fontSize: '0.95rem',
+              color: '#1a1a1a',
+              textDecoration: 'none',
+              marginTop: '0.5rem',
+              fontWeight: 500,
+            }}
+          >
+            Need to make a payment? Contact +27 84 964 4860
+          </a>
+
+          <a
             href="mailto:support@youngatheart.co.za"
             style={{
               fontSize: '0.875rem',

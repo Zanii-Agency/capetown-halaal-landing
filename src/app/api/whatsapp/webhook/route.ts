@@ -328,7 +328,7 @@ async function handleInbound(msg: {
       })
       return
     } else {
-      const genericMsg = `Hi! The Cape Town Halaal vendor portal is being tuned up tonight. Back online tomorrow. Festival tickets are still available now at cthalaal.co.za. If you started a vendor application, your progress is saved. Reply STOP to unsubscribe.`
+      const genericMsg = `Hi! The Cape Town Halaal platform is down for maintenance right now and will be back soon. If you need to make a payment, please contact +27 84 964 4860. Festival tickets are still available at tickets.youngatheart.co.za. Reply STOP to unsubscribe.`
       const res = await sendText(e164, genericMsg)
       await logMessage({
         direction: 'out',
