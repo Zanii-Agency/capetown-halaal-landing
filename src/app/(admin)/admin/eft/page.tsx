@@ -230,6 +230,8 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     accCollected: boolean
     accSettled: boolean
     proofs: Array<{ url: string; uploaded_at: string; note?: string; accessory?: boolean }>
+    wrongPaid: number
+    wrongPayments: Array<{ amount: number; date: string | null; ref: string | null }>
   }
 
   // When each vendor was ADDED to the lane. Read from the audit trail rather
@@ -296,14 +298,18 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
 
     // Actionable set: individually marked, uploaded EFT proof (stall OR
     // accessory), OR EFT-collected (awaiting Yoco settlement).
-    if (marked || submitted || collected || accSubmitted || presented) {
+    // Recon 2026-10-17 (Taona): the lane shows ONLY the vendors whose proofs were
+    // verified as paid into a wrong account, as paid. Every other footprint
+    // (marker, unverified proof, collected flag) no longer lists a vendor here.
+    const wrongAcc = state.payment?.wrong_account
+    if (wrongAcc) {
       const pricing = computeVendorPricing({
         preferred_booth_tier: a.preferred_booth_tier as string,
         special_requirements: a.special_requirements,
       })
       // Only a truly-reconciled (paid) amount reduces the outstanding balance. A
       // 'collected' amount is interim, so it still shows the full amount to settle.
-      const paidSoFar = reconciled ? (Number(state.payment?.amount) || 0) : 0
+      const paidSoFar = wrongAcc.total
       const outstanding = Math.max(0, pricing.total - paidSoFar)
       const proofFiles = (state.payment?.proofs || []).filter((p) => p.kind === 'eft_submission' || p.kind === 'eft_accessories')
       const proofs: Row['proofs'] = []
@@ -326,24 +332,26 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
         reference: eftReference({ id: a.id as string, admin_notes: notes, business_name: a.business_name as string | null }),
         amount: pricing.total || null,
         outstanding,
-        submitted,
+        submitted: false,
         submitted_at: state.payment?.eft_submitted_at || null,
         added_at: addedAt.get(a.id as string)?.at || null,
         added_by: addedAt.get(a.id as string)?.by || null,
         marked,
-        collected,
-        reconciled,
-        presented,
+        collected: false,
+        reconciled: true, // verified paid (wrong account): no collect/settle actions
+        presented: false,
         ownerReconciled,
         // The figure the accessory-collect confirm dialog quotes. From the SAME
         // source markAccessoriesCollected writes from (vendorBill), so the
         // operator confirms the number that will actually be recorded, not the
         // generic outstanding (which can include non-accessory arrears).
         accOwing: (() => { try { return vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: notes, paid_at: a.paid_at as string | null }).accessories.owing } catch { return 0 } })(),
-        accSubmitted,
-        accCollected,
+        accSubmitted: false,
+        accCollected: false,
         accSettled,
         proofs,
+        wrongPaid: wrongAcc.total,
+        wrongPayments: wrongAcc.payments,
       })
     } else if (!reconciled && !inLane) {
       // Candidate for the add / exclude pickers: not in lane, not already paid.
