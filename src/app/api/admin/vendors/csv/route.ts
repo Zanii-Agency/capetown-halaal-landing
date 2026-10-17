@@ -15,7 +15,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseAllocation } from '@/lib/stalls'
-import { rosterPaid, reconciledPaid, isEftAdmin } from '@/lib/eft'
+import { rosterPaid, reconciledPaid, isEftAdmin, teamPaidRecord } from '@/lib/eft'
+import { vendorBill } from '@/lib/payments/vendor-bill'
 import { parsePortalState } from '@/lib/portal-state'
 
 export const dynamic = 'force-dynamic'
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
   const CSV_MAX_ROWS = 1000
   let q = db
     .from('vendor_applications')
-    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, paid_at, contract_signed_at, is_duplicate')
+    .select('id, business_name, contact_name, email, phone, product_categories, business_description, status, admin_notes, paid_at, contract_signed_at, is_duplicate, preferred_booth_tier, special_requirements')
     .order('business_name', { ascending: true })
     .limit(CSV_MAX_ROWS)
   if (ids && ids.length) q = q.in('id', ids)
@@ -78,6 +79,8 @@ export async function GET(req: NextRequest) {
     paid_at: string | null
     contract_signed_at: string | null
     is_duplicate: boolean | null
+    preferred_booth_tier: string | null
+    special_requirements: unknown
   }>)
 
   // NO row-scoping. The lane hides payment POSTURE, not the pipeline: every
@@ -122,13 +125,18 @@ export async function GET(req: NextRequest) {
 
   const headers = [
     'business_name', 'contact_name', 'phone', 'email', 'sector', 'description',
-    'status', 'stall_code', 'payment_status', 'contract_signed_at',
+    'status', 'stall_code', 'payment_status', 'still_owing', 'contract_signed_at',
   ]
   const lines: string[] = [headers.join(',')]
   for (const row of rows) {
     const { stall } = parseAllocation(row.admin_notes || '')
     const sector = row.product_categories?.[0] || ''
-    const paymentStatus = (eftAdmin ? rosterPaid(row.admin_notes, row.paid_at) : reconciledPaid(row.admin_notes, row.paid_at)) ? 'paid' : 'unpaid'
+    const teamPaid = eftAdmin ? null : teamPaidRecord(row.admin_notes)
+    const seenPaid = eftAdmin ? rosterPaid(row.admin_notes, row.paid_at) : reconciledPaid(row.admin_notes, row.paid_at) || !!teamPaid
+    const bill = vendorBill({ id: row.id, preferred_booth_tier: row.preferred_booth_tier, special_requirements: row.special_requirements, admin_notes: row.admin_notes, paid_at: row.paid_at })
+    const teamPartial = !!teamPaid && teamPaid.amount < bill.liveTotal
+    const paymentStatus = !seenPaid ? 'unpaid' : (teamPartial || bill.partial) ? 'partially paid' : 'paid'
+    const owing = teamPaid ? Math.max(0, bill.liveTotal - teamPaid.amount) : bill.owing
     lines.push([
       escapeCsv(row.business_name),
       escapeCsv(row.contact_name),
@@ -139,6 +147,7 @@ export async function GET(req: NextRequest) {
       escapeCsv(row.status),
       escapeCsv(stall),
       escapeCsv(paymentStatus),
+      escapeCsv(paymentStatus === 'unpaid' ? '' : String(owing)),
       escapeCsv(row.contract_signed_at),
     ].join(','))
   }

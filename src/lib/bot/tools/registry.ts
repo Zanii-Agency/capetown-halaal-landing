@@ -26,7 +26,8 @@ import { computeVendorPricing } from '@/lib/payments/pricing'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { paymentReference } from '@/lib/payments'
 import { recordEftProof } from '@/lib/payments/eft-proof-shared'
-import { proposePaymentPlan, planLastDateFor } from '@/lib/payments/payment-plan'
+import { proposePaymentPlan, planLastDateFor, addDaysISO, DEPOSIT_WITHIN_DAYS, cleanClaimedInstallments, planSummary } from '@/lib/payments/payment-plan'
+import { appendVendorAtom } from '@/lib/bot/vendor-memory'
 import { recordVendorAction } from '@/lib/vendor-action-log'
 import { renderSignedContractPdf } from '@/lib/contract/render-pdf'
 import { typedSignatureDataUrl } from '@/lib/contract/typed-signature'
@@ -34,6 +35,9 @@ import { CONTRACT_VERSION, cancellationTermsText } from '@/lib/contract/copy'
 import { startVendorVerification } from '@/lib/bot/vendor-session'
 import { buildSendable } from '@/lib/inbox/send-library'
 import { APPROVED_NOTIFIED_RE } from '@/lib/applications/decision-notify'
+import { openCase, openCaseFor, fmtCaseDate } from '@/lib/support-case'
+import { saveVendorLogo } from '@/lib/vendor-logo'
+import { seeImageBytes } from '@/lib/bot/see-image'
 
 const PORTAL_LOGIN = 'cthalaal.co.za/exhibitor/login'
 
@@ -176,13 +180,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'grant_payment_extension',
-    description: "Give THIS vendor more time to pay their stall fee in full, in ONE payment, by a single agreed date. FIRST make at least TWO genuine attempts to get them to pay as much as they can THIS month (September): push the full amount this month first (final_date 2026-09-30). Only if that is genuinely tight, the firm fallback is 15 October 2026 (final_date 2026-10-15), and 31 October 2026 (final_date 2026-10-31) is the very latest, never past it. Always steer them to a single payment, or at most two instalments via propose_payment_plan. Call AFTER confirming the date with them; pass it as final_date (default 2026-09-30). If they are already paid, do not call it.",
+    description: "Give THIS vendor a short hold to pay their stall fee in FULL, in ONE payment, by a single date within the next 2 days. Anything later is refused: the vendor must instead pay a deposit of at least 20% within 2 days and set up a plan via propose_payment_plan, with every payment by 14 November 2026. Never hold a stall on a promise alone. Call AFTER confirming the date with them. If they are already paid, do not call it.",
     strict: true,
-    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Offer 2026-09-30 first; only if that is tight, 2026-10-15; 2026-10-31 at the very latest.' } }, required: ['final_date'] },
+    input_schema: { type: 'object', additionalProperties: false, properties: { final_date: { type: 'string', description: 'The single full-payment date agreed with the vendor, YYYY-MM-DD. Within the next 2 days.' } }, required: ['final_date'] },
   },
   {
     name: 'propose_payment_plan',
-    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into instalments they will pay by their own exact dates. Call ONLY after you have made at least TWO genuine attempts to get them to pay as much as they can THIS month (September), AND a verified, unpaid vendor still wants to pay in instalments, AND has given you the exact DATE and AMOUNT of each instalment (for example 'R3000 on 10 October and R3500 on 31 October'). ALWAYS push for one to two payments: TWO instalments is the most you should normally do (a third only as an absolute last resort, never more than three). Each instalment needs a real future date and a Rand amount; every date must be on or before 31 OCTOBER 2026, and the amounts must add up to at least their full outstanding fee. A plan is the fallback only after a large payment this month is declined: pay as much as possible now, and set the final instalment no later than 31 October 2026. If they have not given exact dates and amounts, ask for them first. Do not invent dates or amounts. For a single full payment with more time, use grant_payment_extension instead.",
+    description: "Submit a PAYMENT PLAN for THIS vendor: split their outstanding stall fee into dated instalments. Rules enforced by the handler: the FIRST instalment is the DEPOSIT: at least 20% of their outstanding fee, dated within the next 2 days; 2 to 6 instalments, each a real future date in order; EVERY date on or before 14 NOVEMBER 2026 (2026-11-14), never later; amounts must add up to at least the full outstanding fee. Propose the dates and amounts yourself (front-loaded) and confirm with the vendor, then call this. Do not invent figures the vendor has not agreed. For a single full payment by one date, use grant_payment_extension instead.",
     // NOT strict on purpose: a nested-array argument, and claude-sonnet-5 caps
     // strict tools at 20 (adding a 21st 400s every vendor call, see
     // get_badge_allocation). The handler validates every field defensively.
@@ -203,6 +207,27 @@ export const TOOL_DEFS = [
         },
       },
       required: ['installments'],
+    },
+  },
+  {
+    name: 'log_team_arrangement',
+    description: "Record a payment arrangement THIS vendor says they ALREADY agreed directly with the team (for example with Samreen or Altaaf), so the whole team can see it and reminders follow it. Call when a verified vendor says things like 'I made an arrangement with Samreen', 'Samreen said I can pay later', 'I agreed with the team to pay on X'. FIRST ask them exactly what was agreed: the amount(s) and the date(s), and who they agreed it with. Never argue with, contradict or renegotiate a claimed arrangement, and do NOT push the pay-this-month ladder on it: the team confirms it. Pass installments only if they gave exact dates and amounts. This is NOT for a new plan with you (use propose_payment_plan) or more time from you (use grant_payment_extension).",
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        with_whom: { type: 'string', description: 'Who they say they agreed it with, e.g. Samreen, Altaaf, the team' },
+        details: { type: 'string', description: 'What was agreed, in their own words, one or two sentences' },
+        installments: {
+          type: 'array',
+          description: 'Only if they gave exact dates and amounts. Each has a date (YYYY-MM-DD) and an amount in Rand.',
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: { date: { type: 'string' }, amount: { type: 'number' } },
+            required: ['date', 'amount'],
+          },
+        },
+      },
+      required: ['with_whom', 'details'],
     },
   },
   {
@@ -263,7 +288,7 @@ export const TOOL_DEFS = [
 const SCOPED_TOOLS = new Set<string>([
   'check_application_status', 'get_payment_status', 'get_invoice', 'get_badge_allocation',
   'send_contract', 'sign_contract', 'get_logo_upload_link', 'request_password_reset', 'update_my_email', 'request_stall_change',
-  'get_payment_due_date', 'grant_payment_extension', 'propose_payment_plan', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'upload_eft_proof',
+  'get_payment_due_date', 'grant_payment_extension', 'propose_payment_plan', 'log_team_arrangement', 'withdraw_application', 'where_is_my_stall', 'report_issue', 'upload_document', 'upload_eft_proof',
   'escalate_to_human',
 ])
 
@@ -956,11 +981,18 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   // new-vendor cohort). A missing/invalid/too-late date defaults to the ladder
   // floor so the tool never writes a passed or out-of-policy date.
   const CAP = planLastDateFor(row.admin_notes)
-  const DEFAULT = '2026-09-30' // push as much as possible THIS month first; 15 Oct fallback (Taona 2026-09-09)
+  const DEFAULT = CAP // 2026-10-14: old 30 Sep default had passed; fall back to the cap
   const today = new Date().toISOString().slice(0, 10)
   let until = (finalDate || '').trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || until <= today) until = DEFAULT
   if (until > CAP) until = CAP
+  // Taona 2026-10-14: no deposit-free hold. A promise to pay in full weeks away
+  // holds a stall with no commitment, so a single date must be within the deposit
+  // window; anything later is a payment plan with a 20% deposit first.
+  const holdBy = addDaysISO(today, DEPOSIT_WITHIN_DAYS)
+  if (until > holdBy) {
+    return `To hold your stall we need a commitment now. You have been accepted as a vendor and we have vendors on the waiting list, so either pay in full by ${new Date(`${holdBy}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}, or pay a deposit of at least 20% of your outstanding fee within ${DEPOSIT_WITHIN_DAYS} days and put a payment plan in place for the rest by 14 November 2026.`
+  }
   const { grantExtension } = await import('@/lib/eft')
   await grantExtension(vendorId, until, `extension to ${until} granted via WhatsApp`)
   // Record the commitment as a ONE-instalment approved plan so it shows under
@@ -999,6 +1031,87 @@ async function grantPaymentExtension(vendorId: string, finalDate?: string): Prom
   await recordVendorAction({ applicationId: vendorId, eventType: 'payment_extension_granted', note: `Extension to ${until} granted via WhatsApp`, afterValue: until }).catch(() => {})
   const nice = new Date(`${until}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
   return `Done, you have until ${nice} to settle your stall fee in full. Your spot stays reserved until then, just pay through Payments in your portal when you're ready.`
+}
+
+/** Who is told about a claimed arrangement. A covert master-lane vendor's alert
+ *  carries payment details (amounts, dates, their own words), so it goes to the
+ *  master only, never the festival owner (doctrine review 2026-09-23). */
+export function teamArrangementAudience(
+  vendorId: string,
+  adminNotes: string | null | undefined,
+  rail: import('@/lib/eft').PaymentRail,
+  fullEft: { protectedIds: Set<string> } | null,
+  onCovert: (id: string, n: string | null | undefined, r: import('@/lib/eft').PaymentRail, f: { protectedIds: Set<string> } | null) => boolean,
+): 'master' | 'all' {
+  return onCovert(vendorId, adminNotes, rail, fullEft) ? 'master' : 'all'
+}
+
+/** A vendor says they ALREADY agreed an arrangement with the team (Samreen,
+ *  Altaaf...). Taona 2026-09-23: "these are all things the bot should have memory
+ *  of". Saves it where the bot, the reminders and the team all see it, and asks
+ *  the team to confirm. NEVER auto-approves (status 'claimed', which the plan
+ *  cron ignores) and NEVER overwrites a plan already approved with the vendor. */
+async function logTeamArrangement(vendorId: string, args: { with_whom?: string; details?: string; installments?: unknown }): Promise<string> {
+  const row = await ownRow(vendorId)
+  if (!row) return 'I could not load your application just now. Please try again shortly.'
+  const st = parsePortalState(row.admin_notes || '')
+  // Owing, not status: a partial payer on a plan has status 'paid' but still owes.
+  const owing = vendorBill({ id: vendorId, preferred_booth_tier: row.preferred_booth_tier, special_requirements: row.special_requirements, admin_notes: row.admin_notes, paid_at: null }).owing
+  if (st.payment?.status === 'waived' || owing <= 0) {
+    return 'There is nothing outstanding on your stall fee, thank you, so there is nothing to arrange.'
+  }
+  // One active claim at a time: a repeat within 24h is acknowledged, not re-alerted.
+  const prev = st.payment?.arrangement
+  if (prev?.plan_status === 'claimed' && prev.proposed_at && Date.now() - new Date(prev.proposed_at).getTime() < 24 * 3600 * 1000) {
+    return 'Thank you, I already have your arrangement noted and the team has been asked to confirm it. Someone will come back to you here on WhatsApp.'
+  }
+  const clean = (t: unknown, n: number) => String(t || '').replace(/[\u2013\u2014]/g, ',').replace(/\s+/g, ' ').trim().slice(0, n)
+  const who = clean(args.with_whom, 60) || 'the team'
+  const details = clean(args.details, 400)
+  const today = new Date().toISOString().slice(0, 10)
+  const plan = cleanClaimedInstallments(args.installments, today, planLastDateFor(row.admin_notes))
+  const nowIso = new Date().toISOString()
+  const hasApprovedPlan = st.payment?.arrangement?.plan_status === 'approved' && (st.payment.arrangement.installments?.length ?? 0) > 0
+  await appendVendorAtom(vendorId, {
+    fact: `Says they agreed with ${who}: ${details}${plan.length ? ` (${planSummary(plan)})` : ''}. Awaiting team confirmation.`,
+    source: 'whatsapp',
+    at: nowIso,
+  }).catch((e) => console.error('[log_team_arrangement] memory write failed:', (e as Error).message))
+  // Dated schedule -> pause overdue reminders until the last date they gave (the
+  // chase suppressor keys on status 'deferred' + arrangement.until), unless the
+  // vendor already has a plan agreed with us, which stays authoritative.
+  if (plan.length && !hasApprovedPlan) {
+    await updatePortalState(vendorId, (s) => ({
+      ...s,
+      payment: {
+        ...s.payment,
+        status: 'deferred',
+        arrangement: {
+          until: plan[plan.length - 1].date,
+          agreed_at: nowIso,
+          note: `claimed arrangement with ${who}, awaiting team confirmation`,
+          installments: plan,
+          proposed_at: nowIso,
+          plan_status: 'claimed',
+        },
+      },
+    }))
+  }
+  await recordVendorAction({ applicationId: vendorId, eventType: 'payment_arrangement_claimed', note: `Says agreed with ${who}: ${details}`.slice(0, 200) }).catch(() => {})
+  try {
+    const { getPaymentRail, getFullEftMode, onCovertMasterLane } = await import('@/lib/eft')
+    // Fail CLOSED: if the frozen-set read fails (null), we cannot tell who is covert,
+    // so the payment-detail alert goes to the master only.
+    const fullEft = await getFullEftMode()
+    const audience = fullEft ? teamArrangementAudience(vendorId, row.admin_notes, await getPaymentRail(), fullEft, onCovertMasterLane) : 'master'
+    await notifyOwners({
+      event: 'system_alert',
+      vendorId,
+      audience,
+      body: `ARRANGEMENT TO CONFIRM: ${row.business_name || 'a vendor'} says they agreed with ${who}: "${details}".${plan.length ? ` Dates given: ${planSummary(plan)}.` : ' No exact dates given.'}${plan.length && !hasApprovedPlan ? ' Their overdue reminders are paused until then.' : ''}${hasApprovedPlan ? ' Note: they already have an approved plan with us, which was left unchanged.' : ''} Please confirm or correct it with them.`,
+    })
+  } catch (e) { console.error('[log_team_arrangement] notify failed:', (e as Error).message) }
+  return `Thank you, I have noted your arrangement with ${who} and passed it to the team to confirm.${plan.length && !hasApprovedPlan ? ` Your reminders will follow the dates you gave me: ${planSummary(plan)}.` : ''} Someone from the team will confirm it with you here on WhatsApp.`
 }
 
 async function whereIsMyStall(vendorId: string): Promise<string> {
@@ -1123,25 +1236,18 @@ export async function uploadDocument(session: VendorSession): Promise<string> {
       .eq('id', vendorId)
       .maybeSingle()
     const hasLogo = !!parsePortalState((vrow as { admin_notes?: string | null } | null)?.admin_notes || '').profile?.logo_path
-    if (!hasLogo) {
-      const logoPath = `${vendorId}/logo-${Date.now()}.${ext}`
-      const { error: logoErr } = await db.storage.from('vendor-docs').upload(logoPath, fetched.bytes, {
-        contentType: media.mimeType || fetched.contentType || `image/${ext}`,
-        upsert: true,
-      })
-      if (logoErr) {
-        console.error('[tool upload_document] logo upload failed:', logoErr.message)
+    // Never file a payment screenshot as a logo: look first. A vision miss (null)
+    // keeps the old behaviour, since the vendor chose to send this image.
+    const seen = await seeImageBytes(fetched.bytes, media.mimeType || fetched.contentType)
+    // No logo yet: any non-proof image is their logo. Has one: a clear new logo replaces it.
+    if (!seen?.isPaymentProof && (!hasLogo || seen?.isLogo)) {
+      // One save path for every channel (lib/vendor-logo): the PUBLIC bucket the
+      // listings read. This branch used to write to vendor-docs, which left 4
+      // vendors "uploaded" but broken on the public site (2026-09-23).
+      const logoPath = await saveVendorLogo({ vendorId, bytes: fetched.bytes, contentType: media.mimeType || fetched.contentType, filename: media.filename, source: 'whatsapp' })
+      if (!logoPath) {
         return `I could not save that logo just now. Please try uploading it in your portal at ${PORTAL_LOGIN} under Profile.`
       }
-      await updatePortalState(vendorId, (s) => ({ ...s, profile: { ...(s.profile || {}), logo_path: logoPath } }))
-      try {
-        await db.from('site_events').insert({
-          session_id: `vendor-${vendorId}`,
-          event_type: 'profile_logo_uploaded',
-          path: '/exhibitor/portal/profile',
-          metadata: { vendor_application_id: vendorId, file_name: safeName, storage_path: logoPath, source: 'whatsapp' },
-        })
-      } catch { /* telemetry never blocks the reply */ }
       return `Done, jazakallah, your logo is uploaded and will show on your public profile. If your tagline/description is filled in on your portal Profile page, you are all set to go live in the sector listings.`
     }
   }
@@ -1312,10 +1418,29 @@ async function escalateToHuman(session: VendorSession, note: string): Promise<st
   const row = await ownRow(vendorId)
   const biz = row?.business_name || 'a vendor'
   const clean = (note || '').trim().slice(0, 1000)
-  await updatePortalState(vendorId, (s) => ({
+  // ONE CASE PER VENDOR (lib/support-case.ts). A chase joins the open case: it is
+  // recorded (the ask count is what ranks it), but it is not a fresh hand-over with
+  // a fresh 72h promise, and the vendor is told the truth about where it stands.
+  const before = row ? openCaseFor(row as { status?: string; admin_notes?: string | null; reviewed_at?: string | null }) : null
+  const s2 = await updatePortalState(vendorId, (s) => ({
     ...s,
     support: [...(s.support || []), { id: randomUUID(), from: 'vendor' as const, body: clean, at: new Date().toISOString() }],
   }))
+  const now = openCase(s2)
+  if (before && now) {
+    const since = fmtCaseDate(now.openedAt)
+    try {
+      await notifyOwners({
+        event: 'vendor_support_message',
+        body: `VENDOR CHASING (asked ${now.asks} times since ${since}${now.overdue ? ', PAST the 72h we promised' : ''}) via WhatsApp (unverified free text)\nBusiness (on file): ${biz}\nFirst ask: "${now.firstAsk.slice(0, 160)}"\nLatest: "${clean.slice(0, 160)}"`,
+        audience: 'all',
+        vendorId: row ? vendorId : undefined,
+      })
+    } catch (e) { console.error('[tool escalate_to_human] chase notify failed:', (e as Error).message) }
+    return now.overdue
+      ? `This has been with the team since ${since}, which is longer than we promised, and I am sorry. I have added your message and pushed it to the top of their list as urgent. They will come back to you here.`
+      : `This is already with the team (since ${since}). I have added your message and marked it urgent. They will come back to you here by ${fmtCaseDate(now.dueAt)}.`
+  }
   try {
     await notifyOwners({
       event: 'vendor_support_message',
@@ -1365,6 +1490,7 @@ export async function executeTool(session: VendorSession, name: string, args: un
       case 'get_payment_due_date': content = await getPaymentDueDate(session.vendorId!); break
       case 'grant_payment_extension': content = await grantPaymentExtension(session.vendorId!, (args as { final_date?: string })?.final_date); break
       case 'propose_payment_plan': content = await proposePaymentPlan(session.vendorId!, (args as { installments?: unknown })?.installments); break
+      case 'log_team_arrangement': content = await logTeamArrangement(session.vendorId!, args as { with_whom?: string; details?: string; installments?: unknown }); break
       case 'withdraw_application': content = await withdrawSelf(session, (args as { reason?: string; confirmed?: boolean })); break
       case 'where_is_my_stall': content = await whereIsMyStall(session.vendorId!); break
       case 'report_issue': content = await reportIssue(session, args as { issue_type?: string; description?: string }); break

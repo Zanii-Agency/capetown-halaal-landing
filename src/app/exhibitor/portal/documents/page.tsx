@@ -7,6 +7,7 @@ import GeneratedDocsPanel, { type StaffBadgeRef } from '@/components/exhibitor/G
 import { PageShell, PageHeader } from '@/components/chrome/PageChrome'
 import { requirePaid } from '@/lib/exhibitor-paygate'
 import MiniTaskStrip from '@/components/exhibitor/MiniTaskStrip'
+import { extraRequiredDocs } from '@/lib/exhibitor/required-docs'
 
 export const dynamic = 'force-dynamic'
 
@@ -79,7 +80,7 @@ export default async function DocumentsPage() {
           <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-[#1B1A17]/55 mb-3">
             Compliance documents you upload
           </h2>
-          <DocumentsManager docs={views} />
+          <DocumentsManager docs={views} extraRequired={extraRequiredDocs((app.admin_notes as string) || null)} />
         </section>
       </div>
     </PageShell>

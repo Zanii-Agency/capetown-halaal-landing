@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { redactNotesForViewer, mergeNotesFromViewer } from './eft'
 
 // The festival owner (Samreen) is not an EFT admin; taona@ is (EFT_ADMIN_EMAILS).
-const OWNER = 'capetownhalaal@gmail.com'
+const OWNER = 'demo@cthalaal.co.za'
 const EFT_ADMIN = 'taona@cthalaal.co.za'
 
 // A real covert master-lane vendor's admin_notes: human prose + a stall

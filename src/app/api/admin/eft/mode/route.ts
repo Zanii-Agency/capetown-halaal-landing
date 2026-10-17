@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, type PaymentRail } from '@/lib/eft'
+import { isMasterOperator, isEftAdmin, type PaymentRail } from '@/lib/eft'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
@@ -17,7 +17,7 @@ const RAILS: readonly PaymentRail[] = ['yoco', 'samreen_eft', 'master']
 export async function POST(req: NextRequest) {
   const gate = await requireOperator()
   if (!gate.ok) return gate.response
-  if (!isEftAdmin(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  if (!isMasterOperator(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const body = (await req.json().catch(() => ({}))) as { mode?: string; on?: boolean }
   const mode: PaymentRail | null =

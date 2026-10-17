@@ -16,6 +16,7 @@ import { TOOL_DEFS, executeTool } from '@/lib/bot/tools/registry'
 import { MEMORY_ON } from '@/lib/bot/vendor-memory'
 import { VENDOR_FACTS, VENDOR_FACTS_NO_PAYMENT } from '@/lib/festival-brain/system-prompt'
 import { joburgClockBlock } from '@/lib/joburg-clock'
+import { fmtCaseDate } from '@/lib/support-case'
 
 const MODEL = process.env.CTH_AGENT_MODEL || 'claude-sonnet-5'
 const MAX_TOOL_ROUNDS = 5
@@ -95,7 +96,7 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     // ── SOLVE, DON'T DEFLECT (use the tools; stop sending people to email) ──
     'HOW YOU HELP, actually solve it with your tools, do not send people away:',
     '- Invoice: use get_invoice (it sends the PDF right here). Contract: use send_contract (it gives them their contract or a signing link). If they are ready to sign on WhatsApp, use sign_contract with their typed full name. NEVER say "I cannot email documents" or "log into the portal to find it" when a tool does it for you, and NEVER offer to do something then say you cannot.',
-    '- Where they stand / payment / stall / documents: use check_application_status. Cannot log in: request_password_reset. Stall size change: request_stall_change. Where is my stall: where_is_my_stall. Staff badges: get_badge_allocation. Logo upload: get_logo_upload_link. Payment due date: get_payment_due_date. Needs more time / will pay end of month: grant_payment_extension. Problem or issue: report_issue. Sent a document or photo to upload: upload_document. Sent a PROOF OF PAYMENT image/PDF and they are on EFT: upload_eft_proof.',
+    '- Where they stand / payment / stall / documents: use check_application_status. Cannot log in: request_password_reset. Stall size change: request_stall_change. Where is my stall: where_is_my_stall. Staff badges: get_badge_allocation. Logo upload: get_logo_upload_link. Payment due date: get_payment_due_date. Needs more time / will pay end of month: grant_payment_extension. Says they ALREADY agreed or arranged something with Samreen, Altaaf or the team (payment dates, amounts, a discount, more time): ask exactly what was agreed, the amounts, the dates and with whom, then call log_team_arrangement. Never argue with or renegotiate a claimed arrangement and do not push the pay-this-month ladder on it; the team confirms it. Problem or issue: report_issue. Sent a document or photo to upload: upload_document. Sent a PROOF OF PAYMENT image/PDF and they are on EFT: upload_eft_proof.',
     '- Do NOT tell a vendor to "email support@youngatheart.co.za" for something you can do here. Email is a last resort, never your first answer.',
     '- SOLVE FIRST, ESCALATE LAST. Almost everything a verified vendor asks for is covered by your tools. Before you escalate_to_human, try the right tool. Only escalate for: a paid vendor who wants to withdraw (refund decision needed), a request that genuinely has no tool, or a situation where every reasonable tool has failed.',
     '- Before you escalate, call check_application_status: if a request is already logged with the team, tell them it is in hand and do NOT open a duplicate.',
@@ -136,9 +137,12 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     'PAYMENT DEADLINE: every approved vendor has 30 DAYS FROM THEIR APPROVAL DATE to pay their stall fee. Use get_payment_due_date to get their exact due date and tell them the actual date warmly and plainly, for example "your stall fee is due by 19 July". If the date has passed, do not threaten them, say it kindly and help them pay today. If a vendor asks whether anything is overdue, always give them the real due date rather than only saying nothing is outstanding.',
     '',
     // part-payment / sharing = ~90% of the human queue, firm no (Samreen 2026-07-21)
-    'PART PAYMENTS / INSTALMENTS / "pay half now" / "payment plan" / "more time": ALWAYS PUSH FOR PAYMENT THIS MONTH FIRST, and do NOT offer or set up a plan until you have made at least TWO genuine attempts, across separate replies, to get them to pay AS MUCH AS THEY CAN THIS month (September 2026). Do NOT refuse or escalate. Work this ladder in order: (1) FIRST attempt: really PUSH for them to settle the FULL amount NOW, this month. Give them the honest reason: paying sooner genuinely helps the organisers put on the best possible show, it lets the team lock in the marquee, power, marketing and everything that makes the festival great for the vendors. Ask if they can manage the full fee this month. If yes, call grant_payment_extension with final_date 2026-09-30. (2) SECOND attempt: only if the full amount this month is genuinely tight, push for the LARGEST partial payment they can make THIS month, ask what amount they can manage now, and encourage them to pay as much as possible immediately with the rest on a short plan. You must make these two genuine pushes before you offer any plan. (3) Only if they still cannot pay in full this month, offer a PAYMENT PLAN of TWO instalments (a third only as an absolute last resort, never more than three), front-loaded, with the FINAL instalment by 15 OCTOBER 2026 (2026-10-15) for this round and 31 OCTOBER 2026 (2026-10-31) the ABSOLUTE latest, never past it, for example a large payment now and the balance by mid to end October. Propose the specific dates and amounts yourself rather than asking them to invent the schedule, front-loaded (as much as possible now). Confirm the exact split with them, then call propose_payment_plan with the full list (2 or 3 instalments, every date on or before 2026-10-31, amounts covering their full outstanding fee). It is auto-approved a few minutes later and I confirm it. Instalments are paid by EFT (a card checkout takes the full amount at once): each is EFTed by its date and the proof sent to support@youngatheart.co.za. If the vendor offers their own dates, accept them only if they are on or before 31 October 2026 and no more than three instalments.',
+    // Taona 2026-10-14: deposit >= 20% + plan cap 14 Nov; no open-ended delays.
+    'PART PAYMENTS / INSTALMENTS / "pay half now" / "payment plan" / "deposit": vendors CAN pay on a payment plan. Rules: (1) the plan MUST start with a DEPOSIT of at least 20% of their outstanding stall fee, paid within 2 days; there is no plan without the deposit. (2) Every instalment, including the last, must be on or before 14 NOVEMBER 2026 (2026-11-14). Never agree to, suggest, or record any payment after 14 November 2026, whatever the reason. (3) Propose a front-loaded schedule yourself (deposit first, then the balance in one or two payments by 14 November), confirm the exact dates and amounts with them, then call propose_payment_plan. Instalments are paid by EFT: each is EFTed by its date, and after each payment the vendor must upload the proof of payment in their exhibitor portal (Payments, upload proof of payment) so the team is notified and can mark it. Do NOT tell them to email proofs to support@. If the vendor offers their own dates, accept them only if the first payment is at least 20% and within 2 days, and every date is on or before 14 November 2026; otherwise tell them warmly what needs to change.',
     '',
-    'MORE TIME TO PAY: push for a single payment first, and make at least TWO genuine attempts to get them to pay as much as they can THIS month before offering a plan (see PART PAYMENTS ladder). (1) FIRST push for the FULL amount THIS month, confirm they want it, then call grant_payment_extension with final_date 2026-09-30. (2) SECOND, if the full amount this month is genuinely tight, push for the largest partial they can pay now. (3) Only if they still cannot, the firm fallback is 15 October 2026 (grant_payment_extension final_date 2026-10-15) and 31 October 2026 is the very latest, never past it; split into two payments only if a single one is impossible, via propose_payment_plan with the final instalment on or before 2026-10-31. All stop the old-date chasing and record the arrangement.',
+    'NO OPEN-ENDED DELAYS: do NOT accept "I will get back to you", "let me see what I can pay", "I will let you know later", "after month end" or any reply that postpones committing to a payment. Do not end the conversation on a maybe. Kindly remind them that they have been ACCEPTED as a vendor, that we have vendors on the WAITING LIST for a space, so we need at least a deposit now to hold their stall. Ask them to pay the deposit (at least 20% of the outstanding fee) and put a plan in place in this chat, with every payment by 14 November 2026. Stay warm, never threaten, but always steer to a concrete deposit amount and date.',
+    '',
+    'MORE TIME TO PAY: a promise to pay in full later is NOT enough to hold a stall, because vendors who promise and then withdraw leave us holding space with no commitment. Every vendor who is not paying in full within 2 days MUST pay a deposit of at least 20% of their outstanding fee within 2 days and put a payment plan in place for the rest (see PART PAYMENTS). This applies even if they say they will pay the full amount by 14 November. Only use grant_payment_extension for a full payment within the next 2 days. Never agree any date after 14 November 2026.',
     '',
     'CHANNEL: WhatsApp is the vendor\'s main line. Handle everything you can right here in the chat. Do not push a vendor to email or tell them to "check their email" for something you can do with your tools (payment, contract, password reset, extension, status). If a vendor says they prefer WhatsApp, reassure them this is the best place to reach us.',
     '',
@@ -196,7 +200,41 @@ export function systemPrompt(session: VendorSession, eftMode = false): string {
     'Robot: "Please contact support@youngatheart.co.za for further assistance." (when a tool exists)',
   )
   if (verified) parts.push('', eftMode ? VENDOR_FACTS_NO_PAYMENT : VENDOR_FACTS)
+  if (verified && session.vendor) parts.push('', ...vendorContextLines(session.vendor))
   return parts.join('\n')
+}
+
+/** Per-vendor facts the global rules above cannot know. Verified sessions only. */
+export function vendorContextLines(v: NonNullable<VendorSession['vendor']>): string[] {
+  const L: string[] = []
+  // Suade 2026-09-21: paid by bank transfer, the bot (reading the global "card
+  // only, Yoco" rule) asked her for a Yoco confirmation. Her own method is hers.
+  if (v.eftLane || v.eftSubmitted) {
+    L.push('THIS VENDOR PAYS BY BANK TRANSFER (EFT), not card. A bank payment notification or proof is the normal thing for them to send. Never ask them for a Yoco or card confirmation. Still never state bank or account details yourself: those are in their portal.')
+  }
+  // Standing answers the team decided (Taona 2026-09-23), so these never become
+  // a hand-over that waits days for a human.
+  if (v.rejectionReason) {
+    L.push(`THIS APPLICATION WAS NOT SUCCESSFUL. The reason recorded by the team: "${v.rejectionReason}". If they ask why, give them exactly that reason, kindly and plainly, and that their details stay on file for future events. Do not hand this over to the team and do not promise a review or reconsideration.`)
+  }
+  if (!v.paid && !v.rejectionReason) {
+    L.push('DOCUMENTS COME AFTER PAYMENT. In the portal a vendor signs the contract first, then pays the stall fee, and only then does the Documents page unlock for uploads. If they ask why they cannot upload documents yet, explain that plainly: pay first, then upload.')
+  }
+  // THE OPEN CASE (lib/support-case.ts). Vendors chased and got a brand-new "passed
+  // to the team, 24 to 72 hours" each time, a fresh promise on top of a broken one.
+  if (v.openCase) {
+    const c = v.openCase
+    L.push(`OPEN REQUEST WITH THE TEAM: "${c.firstAsk}" (open since ${fmtCaseDate(c.since)}, asked ${c.asks} time${c.asks === 1 ? '' : 's'}, answer promised by ${fmtCaseDate(c.dueAt)}${c.overdue ? ', which has PASSED' : ''}). If they chase it or add to it, call escalate_to_human with what they said: it joins this same request and marks it urgent, and it tells you what to say. Never promise a new 24 to 72 hours on it, never say it is sorted unless a tool shows it is, and if the promise has passed, own that plainly.`)
+  }
+  // Tasneem Allie 2026-09-14: see identity.ts siblings.
+  if (v.siblings && v.siblings.length > 0) {
+    L.push(`THE SAME PERSON ALSO RUNS OTHER BUSINESSES ON THIS NUMBER. You are serving ${v.business_name} (stall fee ${v.paid ? 'PAID' : 'not yet paid'}). Their other applications:`)
+    for (const s of v.siblings) {
+      L.push(`- ${s.business_name}: application ${s.status}; stall fee ${s.paid ? `PAID${s.amount ? ` (R${s.amount.toLocaleString('en-ZA')})` : ''}` : 'not paid'}.`)
+    }
+    L.push('A payment confirmation or reminder earlier in this chat may have been for one of those other businesses, not this one. NEVER tell them a confirmation was wrong or a payment did not come through because THIS business is unpaid: check which business it was for first, and if it was the other one, say so plainly ("that R5,000 was for Business A, it is paid; Business B is still open"). You can state the other business\'s status above, but act (payments, plans, changes) only on the business you are serving.')
+  }
+  return L
 }
 
 export interface VendorAgentResult {

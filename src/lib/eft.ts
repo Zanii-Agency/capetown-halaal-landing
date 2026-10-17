@@ -48,6 +48,36 @@ const NOEFT_RE = /⟦NOEFT⟧/
 const NEWVENDOR_MARKER = '⟦NEWVENDOR⟧'
 const NEWVENDOR_RE = /⟦NEWVENDOR⟧/
 
+const TEAMPAID_RE = /⟦TEAMPAID:(\d+)\|([^|\]⟧]+)\|([^|\]⟧]+)⟧/g
+
+export interface TeamPaidRecord {
+  amount: number
+  method: string
+  at: string
+}
+
+export function teamPaidRecord(adminNotes: string | null | undefined): TeamPaidRecord | null {
+  const notes = adminNotes || ''
+  let latest: TeamPaidRecord | null = null
+  for (const match of notes.matchAll(TEAMPAID_RE)) {
+    latest = {
+      amount: Number(match[1]) || 0,
+      method: match[2] || '',
+      at: match[3] || '',
+    }
+  }
+  return latest
+}
+
+export function withTeamPaid(adminNotes: string | null | undefined, rec: TeamPaidRecord): string {
+  const clean = (adminNotes || '').replace(TEAMPAID_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+  const amount = Math.max(0, Math.floor(Number(rec.amount) || 0))
+  const method = String(rec.method || '').replace(/[|⟦⟧\n\r]/g, '').trim()
+  const at = String(rec.at || '').replace(/[|⟦⟧\n\r]/g, '').trim()
+  const marker = `⟦TEAMPAID:${amount}|${method}|${at}⟧`
+  return clean ? `${clean}\n${marker}` : marker
+}
+
 /** The confined mailbox that RECEIVES EFT backstops (a real, monitored inbox).
  *  Distinct from the set of identities allowed to OPERATE the EFT surface below;
  *  notify.ts and master-only-senders.ts want this single address. Env-overridable. */
@@ -70,8 +100,22 @@ const EFT_ADMIN_EMAILS: ReadonlySet<string> = new Set<string>(
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)],
 )
 
-/** True when the caller's email may use the EFT surface (master or EFT mailbox). */
+/** Recon 2026-10-17 (Taona): "there is no more master EFT, release all of them".
+ *  The festival owner now sees every vendor unwalled, so every wall check
+ *  (isEftAdmin) passes for her. The demo login stays walled (pre-recon view).
+ *  The master console itself stays master-only: see isMasterOperator. */
+const WALL_RELEASED_EMAILS: ReadonlySet<string> = new Set<string>(['capetownhalaal@gmail.com'])
+
+/** True when the caller's email sees past the master-lane wall. */
 export function isEftAdmin(email?: string | null): boolean {
+  if (!email) return false
+  const e = email.toLowerCase().trim()
+  return EFT_ADMIN_EMAILS.has(e) || WALL_RELEASED_EMAILS.has(e)
+}
+
+/** The master operator (dev@ / taona@): the Master Lane console, New Vendors
+ *  and the rail/lane controls. NOT the owner, even after the wall release. */
+export function isMasterOperator(email?: string | null): boolean {
   return !!email && EFT_ADMIN_EMAILS.has(email.toLowerCase().trim())
 }
 
@@ -127,6 +171,7 @@ export function rosterPaymentStatus(
   const raw = parsePortalState(adminNotes).payment?.status || (paidAt ? 'paid' : 'none')
   if (isEftAdmin(viewerEmail)) return raw
   if (reconciledPaid(adminNotes, paidAt)) return 'paid'
+  if (teamPaidRecord(adminNotes)) return 'paid'
   return raw === 'paid' || raw === 'collected' ? 'none' : raw
 }
 
@@ -167,7 +212,7 @@ export function viewerSafePayment(
 // and edits the human prose and the ⟦STALL:..⟧ allocation, but must never see
 // the EFT arrangement (CTH Law 2). ⟦STALL:..⟧ is deliberately NOT in this set.
 // Global flag so .match() returns every occurrence for the merge below.
-const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦NEWVENDOR⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
+const COVERT_NOTE_RE = /⟦EFT⟧|⟦NOEFT⟧|⟦OWNERVIS⟧|⟦NEWVENDOR⟧|⟦TEAMPAID:\d+\|[^|\]⟧]+\|[^|\]⟧]+⟧|⟦PORTAL:[A-Za-z0-9+/=]+⟧/g
 
 /** admin_notes with every covert money/lane marker removed, for a non-EFT-admin
  *  viewer (owner/operator). Human prose and ⟦STALL:..⟧ survive; null/undefined
@@ -323,11 +368,9 @@ export interface EftBankDetails {
 // values supplied by the operator 2026-07-23; branch 250655 is FNB's universal
 // EFT branch code. Overridable via env without a code change.
 //
-// ACCOUNT CHANGED 2026-07-27 on Taona's instruction: 63170873351 -> 63141269191.
-// ACCOUNT CHANGED 2026-08-26 on Taona's instruction: 63141269191 -> 63168769629,
-//   name 'Halaal Hub' -> 'Halaal Hub (Pty) Ltd', + Gold Business Account type, as
-//   part of the full-EFT cutover. Vendors mid-transfer may still hit the old
-//   account 63141269191 for a while; watch both.
+// ACCOUNT CHANGED 2026-08-26 on Taona's instruction to 63168769629,
+//   name 'Halaal Hub (Pty) Ltd', Gold Business Account type, as part of the
+//   full-EFT cutover. The previous account is retired (see RETIRED_ACCOUNT_FNV).
 // This constant is the ONLY place the number appears in the repo and no
 // EFT_BANK_ACCOUNT_NUMBER override is set in production, so this line alone
 // governs what every vendor sees: portal EftPanel, the admin EFT tab, invoices,
@@ -344,8 +387,7 @@ const DEFAULT_BANK: EftBankDetails = {
  *  the account can change without a deploy. Always returns a value.
  *
  *  This is the SAMREEN-EFT (owner-reconciled) account (...629): what a vendor on
- *  the visible EFT rail pays into. The covert master lane has its OWN account,
- *  getMasterBankDetails() below. eftBankFor(covert) picks between them. */
+ *  the EFT rail pays into, and since 2026-10-15 the ONLY account any vendor sees. */
 export function getEftBankDetails(): EftBankDetails {
   return {
     accountName: process.env.EFT_BANK_ACCOUNT_NAME || DEFAULT_BANK.accountName,
@@ -356,35 +398,45 @@ export function getEftBankDetails(): EftBankDetails {
   }
 }
 
-// The COVERT MASTER-LANE receiving account (Taona's own, ...191). A vendor on the
-// covert lane pays HERE, never into Samreen's account, and this arrangement is
-// walled from her. Distinct from DEFAULT_BANK (Samreen's ...629) so the two rails
-// can never share a number. Per Taona 2026-09-02: identical to the Samreen account
-// in every field EXCEPT the account number (same name, bank, branch, type). Kept in
-// sync by deriving from DEFAULT_BANK; every field stays env-overridable so it can
-// change without a deploy.
-const MASTER_BANK: EftBankDetails = {
-  ...DEFAULT_BANK,
-  accountNumber: '63141269191',
-}
+// RETIRED ACCOUNT (Taona 2026-10-15): the old master-lane account is removed from
+// the platform and must never be shown to anyone again. Only a one-way FNV-1a 64
+// fingerprint of its digits is kept, so stored messages that quote it can be
+// masked on read without the number living in the code.
+const RETIRED_ACCOUNT_FNV = '7d4ff5cd63fcbfc2'
 
-/** The covert master-lane EFT account (...191) shown to vendors on the master lane.
- *  Env overrides the in-code defaults. Always returns a value. */
-export function getMasterBankDetails(): EftBankDetails {
-  return {
-    accountName: process.env.EFT_MASTER_BANK_ACCOUNT_NAME || MASTER_BANK.accountName,
-    bank: process.env.EFT_MASTER_BANK_NAME || MASTER_BANK.bank,
-    accountNumber: process.env.EFT_MASTER_BANK_ACCOUNT_NUMBER || MASTER_BANK.accountNumber,
-    branchCode: process.env.EFT_MASTER_BANK_BRANCH_CODE || MASTER_BANK.branchCode,
-    accountType: process.env.EFT_MASTER_BANK_ACCOUNT_TYPE || MASTER_BANK.accountType,
+const FNV_OFFSET = BigInt('0xcbf29ce484222325')
+const FNV_PRIME = BigInt('0x100000001b3')
+const MASK64 = BigInt('0xffffffffffffffff')
+
+function fnv1a64(s: string): string {
+  let h = FNV_OFFSET
+  for (let i = 0; i < s.length; i++) {
+    h ^= BigInt(s.charCodeAt(i))
+    h = (h * FNV_PRIME) & MASK64
   }
+  return h.toString(16)
 }
 
-/** Pick the receiving account for a vendor: the covert master lane (...191) when
- *  covert, else Samreen's reconciled account (...629). One chooser so no call site
- *  can route money to the wrong account by hand. */
-export function eftBankFor(covert: boolean): EftBankDetails {
-  return covert ? getMasterBankDetails() : getEftBankDetails()
+const DIGIT_RUN_RE = /\d(?:[\s-]?\d){8,13}/g
+
+/** Replace any digit run (spaces/dashes allowed) matching the retired account with
+ *  "[account hidden]". Read-side only; never written back to the database. */
+export function maskRetiredAccounts<T extends string | null | undefined>(text: T): T {
+  if (!text) return text
+  return text.replace(DIGIT_RUN_RE, (run) =>
+    fnv1a64(run.replace(/[\s-]/g, '')) === RETIRED_ACCOUNT_FNV ? '[account hidden]' : run,
+  ) as T
+}
+
+function containsRetiredAccount(text: string): boolean {
+  return maskRetiredAccounts(text) !== text
+}
+
+/** The receiving account for every vendor. Since 2026-10-15 there is only one
+ *  (...629): the old master account is retired, so `covert` no longer changes it.
+ *  Kept as the one chooser so no call site can route money by hand. */
+export function eftBankFor(_covert?: boolean): EftBankDetails {
+  return getEftBankDetails()
 }
 
 /** THE GLOBAL PAYMENT RAIL. One of three positions, chosen ONLY by the EFT admin
@@ -621,6 +673,31 @@ export function vendorInOwnerScope(
   // EFT trace hides a vendor: an interim collection, an uploaded proof, an
   // EFT/manual settlement, or a presented-Eft awaiting reconcile. This is the
   // MASTER lane (...191) that hides; her own reconciled EFT already returned above.
+  //
+  // A BARE ⟦EFT⟧ marker does NOT hide an otherwise-clean UNPAID vendor. Taona
+  // 2026-09-24: a vendor on the ⟦EFT⟧ lane who has paid NOTHING into master has no
+  // master arrangement to withhold, so the festival owner's sends to them must not
+  // get stuck ("make sure nothing gets stuck"). The marker still pins WHICH bank
+  // details the vendor SEES (onCovertMasterLane is unchanged); this only stops
+  // forcing them out of her VIEW.
+  //
+  // Taona 2026-09-24 (final ruling): "hold only vendors who actually paid into
+  // master." So ⟦NEWVENDOR⟧ does NOT hide an unpaid vendor either — the same
+  // no-master-money logic applies. Live data confirms the safety: 24 approved
+  // vendors carry ⟦EFT⟧+⟦NEWVENDOR⟧ with NO master money and NONE has a
+  // master-money twin row, so unblocking them leaks no arrangement. The 4 with real
+  // master money stay hidden via the catch-all, and the frozen set's 53 paid
+  // members are hidden regardless (the 1 unpaid frozen member, Shifa, is a Yoco
+  // payer, already visible by settledHerWay above).
+  if (hasEftMarker(adminNotes) && !hasRealEftPayment && !presentedCommsPending(adminNotes)) {
+    return true
+  }
+
+  // Catch-all (UNCHANGED from the 2026-09-11 rule): a vendor still here is an
+  // approved vendor with no her-channel settlement and no marker exemption — i.e.
+  // the frozen cutover set, ⟦NEWVENDOR⟧, or anyone with a real master-lane EFT
+  // trace. Only a REAL master-lane EFT trace (or membership in those hidden
+  // cohorts via the marker) hides. Her own reconciled EFT already returned above.
   const touchedMasterEft =
     hasRealEftPayment
     || hasEftMarker(adminNotes)
@@ -889,6 +966,8 @@ export function eftProofVisibleToOwner(
   // account on 2026-08-25 (bank letter), before the re-activation bumped started_at
   // to 31 Aug; dating the proof truthfully must not hide it (Taona 2026-09-05).
   if (isOwnerVisible(adminNotes)) return true
+  // Confirmed Samreen payer (Taona 2026-09-23): hers for good, so her proofs are hers too.
+  if (paidSamreenVia(adminNotes)) return true
   // A proof stamped 'master' at filing time was paid into the covert ...191
   // account (the vendor was on the covert lane when they paid — e.g. an ordinary
   // vendor uploading via the portal while the master rail is on). It NEVER
@@ -901,6 +980,9 @@ export function eftProofVisibleToOwner(
     .filter((f) => f.kind === 'eft_submission')
     .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
   if (stallProofs[0]?.account === 'master') return false
+  // Stamped 'samreen' at filing = paid into HER ...629, so it is hers whatever markers
+  // the vendor still carries (a ⟦NEWVENDOR⟧/⟦EFT⟧ vendor paying her on samreen_eft).
+  if (stallProofs[0]?.account === 'samreen') return true
   // Uploaded AFTER the cutover. This floor is what stops an old covert proof
   // surfacing automatically; only the hand-set marker above bypasses it.
   if (new Date(submitted).getTime() < new Date(fullEft.startedAt).getTime()) return false
@@ -912,6 +994,38 @@ export function eftProofVisibleToOwner(
   if (hasEftMarker(adminNotes)) return false
   if (hasNewVendorMarker(adminNotes)) return false
   return true
+}
+
+/** Master (...191) money in play on EITHER side, stall or accessories: a presented
+ *  EFT, a master collect (markEftCollected / markAccessoriesCollected), or ANY proof
+ *  stamped 'master', including a partial or not-yet-confirmed one. */
+export function hasMasterMoney(adminNotes: string | null | undefined): boolean {
+  const p = parsePortalState(adminNotes).payment
+  return !!(p?.presented_eft || p?.eft_collected_at || p?.status === 'collected'
+    || p?.acc?.collected_at || (p?.proofs || []).some((f) => f.account === 'master'))
+}
+
+/** How this vendor has ALREADY paid Samreen, from CONFIRMED money only.
+ *
+ *  Taona 2026-09-23: "Anyone who paid to samreen via eft or yoco should never see
+ *  master bank details, they remain immune to global changes, and whoever paid via
+ *  yoco sees yoco for extras and whoever paid via eft sees that only."
+ *
+ *  Confirmed = money recorded through one of HER channels (Yoco card, cash, or an
+ *  EFT she confirmed as 'samreen_eft') with a positive amount. Unconfirmed proof
+ *  tags do NOT count (Coconuts' proof was tagged master but paid …629).
+ *  MASTER money never counts, even if it was later settled through Yoco (doctrine
+ *  review 2026-09-23): presented_eft, a master COLLECT (eft_collected_at /
+ *  status 'collected' are written only by markEftCollected, the master tool), a master
+ *  accessory collect, or ANY proof stamped 'master'. Channel is decided by EFT EVIDENCE, not the
+ *  method label (Vanilla Cream: method 'yoco' but paid by EFT). */
+export function paidSamreenVia(adminNotes: string | null | undefined): 'yoco' | 'eft' | null {
+  const p = parsePortalState(adminNotes).payment
+  if (!(Number(p?.amount) > 0) || hasMasterMoney(adminNotes)) return null
+  const method = String(p?.method || '')
+  if (method === 'samreen_eft') return 'eft'
+  if (method !== 'yoco' && method !== 'cash') return null
+  return p?.eft_submitted_at ? 'eft' : 'yoco'
 }
 
 /** Is THIS vendor on the COVERT master lane, i.e. their EFT money goes to the
@@ -938,6 +1052,9 @@ export function onCovertMasterLane(
   rail: PaymentRail,
   fullEft: { protectedIds: Set<string> } | null,
 ): boolean {
+  // Paid Samreen already (Yoco / cash / her confirmed EFT): hers for good, immune to
+  // the global rail, the frozen set, ⟦EFT⟧ and ⟦NEWVENDOR⟧. Never shown …191 again.
+  if (paidSamreenVia(adminNotes)) return false
   // ⟦OWNERVIS⟧ is the deliberate per-vendor "this vendor is Samreen's" hand-back. It
   // already overrides the covert lane on the proofs fence (eftProofVisibleToOwner), the
   // paid roster and accessory-chase; honour it HERE too so the vendor's PAYMENT PAGE
@@ -951,8 +1068,18 @@ export function onCovertMasterLane(
   // master ...191 on EVERY rail. Until then it was tracking-only and the list assumed
   // each member also held ⟦EFT⟧ — Haadiya Bakes didn't (she carried ⟦NOEFT⟧ instead)
   // and paid Samreen's ...629 on the samreen_eft rail. Never again.
-  if (hasNewVendorMarker(adminNotes)) return true
   if (rail === 'master') return true
+  // Any master money already in (Taona 2026-10-06, back on samreen_eft): a vendor who
+  // paid ...191, even partially or still unconfirmed, keeps master details for the
+  // balance on every rail. Otherwise the rail flip shows them ...629, and their next
+  // proof is stamped 'samreen' and surfaces to her (7 such vendors on the flip day).
+  if (hasMasterMoney(adminNotes)) return true
+  if (MASTER_ONLY_METHODS.has(String(parsePortalState(adminNotes).payment?.method || ''))) return true
+  // samreen_eft = the WHOLE platform pays her (Taona 2026-10-06): only master money
+  // (above) keeps a vendor on ...191. ⟦NEWVENDOR⟧, ⟦EFT⟧ and the frozen set no longer
+  // pin an unpaid vendor to master on this rail (17 did on the flip day).
+  if (rail === 'samreen_eft') return false
+  if (hasNewVendorMarker(adminNotes)) return true
   if (hasEftMarker(adminNotes)) return true
   return !!fullEft && fullEft.protectedIds.has(vendorId)
 }
@@ -988,7 +1115,8 @@ export function paymentOnOwnerSide(
     .filter((f) => f.kind === 'eft_submission')
     .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
   if (stallProofs[0]?.account === 'master') return false
-  return !onCovertMasterLane(vendorId, adminNotes, 'samreen_eft', fullEft)
+  // 'yoco' = the pinned cohort WITHOUT any rail sweep or samreen_eft short-circuit.
+  return !onCovertMasterLane(vendorId, adminNotes, 'yoco', fullEft)
 }
 
 /** How many payments have been RECEIVED in a tier since the start line: a Yoco
@@ -1035,6 +1163,10 @@ export async function resolveInEftLane(
   identity?: LaneIdentity,
 ): Promise<boolean> {
   if (identity && isInternalAccount(identity.email, identity.phone)) return false // internal/operator
+  // Paid Samreen already: stay on the channel they paid with, whatever the rail.
+  const via = paidSamreenVia(app.admin_notes)
+  if (via === 'yoco') return false
+  if (via === 'eft' && !app.paid_at) return true
   if (app.paid_at) return false                                                   // already paid
   const p = parsePortalState(app.admin_notes).payment
   if (p?.status === 'paid') return false
@@ -1143,11 +1275,10 @@ const COORDINATES_RE = new RegExp([
 // number is matched EXACTLY instead, which cannot false-positive at all.
 function containsRealBankValues(text: string): boolean {
   const haystack = text.replace(/\s/g, '')
-  // BOTH receiving accounts, not just Samreen's ...629. The covert master-lane
-  // account (...191) is the whole point of the wall: a message quoting 63141269191
-  // back to Samreen must be stripped exactly like one quoting her own number, or
-  // the covert account leaks to her the moment a master-lane vendor confirms payment.
-  for (const d of [getEftBankDetails(), getMasterBankDetails()]) {
+  // The live account AND the retired one (matched by fingerprint, never by its
+  // digits): a message quoting the retired account must be stripped too.
+  if (containsRetiredAccount(text)) return true
+  for (const d of [getEftBankDetails()]) {
     for (const v of [d.accountNumber, d.branchCode]) {
       const s = String(v || '').replace(/\s/g, '')
       if (s.length >= 5 && haystack.includes(s)) return true

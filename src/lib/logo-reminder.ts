@@ -155,6 +155,8 @@ export async function runLogoReminderSweep(opts: {
   for (const r of (data || []) as Row[]) {
     const state = parsePortalState(r.admin_notes || '')
     if (!vendorNeedsLogo(state)) continue
+    // Per-vendor stop (operator asked: En Vogue Cpt, 2026-10-06).
+    if ((r.admin_notes || '').includes('⟦NOLOGOREMIND⟧')) continue
     const sentAt = state.logo_prompt_sent_at ? Date.parse(state.logo_prompt_sent_at) : 0
     const dueByTime = !sentAt || (now - sentAt) >= minDays * 86400000
     paidNoLogo.push({

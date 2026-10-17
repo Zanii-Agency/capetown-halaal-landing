@@ -25,3 +25,11 @@ test('FileTooLargeError carries the message and byte count', () => {
   assert.equal(e.bytes, 7 * 1024 * 1024)
   assert.match(e.message, /7\.0MB/)
 })
+
+test('doc uploads advertise the 10MB limit, small files pass through', async () => {
+  const { DOC_UPLOAD_LIMIT_BYTES, tooLargeMessage: msg, prepareUploadFile } = await import('./prepare-upload')
+  assert.equal(DOC_UPLOAD_LIMIT_BYTES, 10 * 1024 * 1024)
+  assert.match(msg(12 * 1024 * 1024, DOC_UPLOAD_LIMIT_BYTES), /most we can upload here is 10MB/)
+  const pdf = new File([new Uint8Array(8 * 1024 * 1024)], 'permit.pdf', { type: 'application/pdf' })
+  assert.equal(await prepareUploadFile(pdf, DOC_UPLOAD_LIMIT_BYTES), pdf) // 8.3MB PDF now accepted
+})

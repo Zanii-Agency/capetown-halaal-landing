@@ -125,6 +125,10 @@ export interface PortalState {
      *  finance. Cleared/superseded when the payment is settled via Yoco and
      *  transitions to real `paid`/`paid_at`. Writer: /api/admin/eft/reconcile. */
     eft_collected_at?: string
+    /** Money paid into a wrong (non-live) account, verified one by one from the
+     *  vendor's proof images (2026-10-17 recon). Master /admin/eft lists ONLY these
+     *  vendors, as paid. Never shown with an account number. */
+    wrong_account?: { payments: Array<{ amount: number; date: string | null; ref: string | null }>; total: number; verified_at: string; source?: string }
     /** An operator-agreed postponement, set alongside status='deferred'. `until`
      *  is a plain YYYY-MM-DD date the vendor was told they have to settle by.
      *  Read by isChaseSuppressed() so the payment cron and the manual chase
@@ -140,7 +144,7 @@ export interface PortalState {
       installments?: Array<{ date: string; amount: number }>
       proposed_at?: string
       approved_at?: string
-      plan_status?: 'pending' | 'approved'
+      plan_status?: 'pending' | 'approved' | 'claimed'
     }
     /** MASTER-LANE SETTLEMENT SCHEDULE (Taona 2026-09-10). A covert master-lane
      *  vendor whose EFT was already collected into ...191, shown to the festival
@@ -204,6 +208,9 @@ export interface PortalState {
   staff?: StaffMember[]
   profile?: VendorProfile
   support?: SupportMessage[]
+  /** A human answered this vendor on WhatsApp/email (not in the portal thread):
+   *  closes their open case. See lib/support-case.ts. */
+  supportResolvedAt?: string
   passAllowance?: number        // gate passes this vendor is entitled to (set by organisers)
   stage?: 'approved' | 'invoiced' | 'paid' | 'docs' | 'show_ready'
   wa?: {

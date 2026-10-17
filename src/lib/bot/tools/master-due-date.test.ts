@@ -24,8 +24,12 @@ function row(over: Partial<VRow>): VRow {
 test('an approved unpaid vendor now carries a computed due date', () => {
   // reviewed_at + 30 = the exact date her dashboard shows. Without this the
   // master brain says she has none.
-  const s = vendorSummary(row({ reviewed_at: '2026-07-26T14:08:26Z' }))
-  assert.match(s, /stall fee due 25 August 2026/)
+  // Relative to today: a fixed 2026-07-26 review went overdue on 25 Aug and broke this.
+  const reviewed = new Date(Date.now() - 5 * 86400000)
+  const due = new Date(reviewed.getTime() + 30 * 86400000)
+  const dueLabel = due.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Africa/Johannesburg' })
+  const s = vendorSummary(row({ reviewed_at: reviewed.toISOString() }))
+  assert.match(s, new RegExp(`stall fee due ${dueLabel}`))
   assert.match(s, /days left/)
 })
 

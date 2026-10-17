@@ -29,6 +29,9 @@ import { Sparkles } from 'lucide-react'
 // never drift from what the audience builder in lib/broadcast-audience accepts.
 import type { VendorStage, PaidFilter } from '@/lib/broadcast-audience'
 
+// zanii-codef: AI switched off 2026-10-17 (basic site, no AI). true restores every AI button.
+const AI_ON = false
+
 type Channel = 'mail' | 'wa' | 'both'
 type Mode = 'template' | 'free_text'
 type TemplateKey =
@@ -481,13 +484,13 @@ export default function BroadcastPage() {
                 rows={8}
                 placeholder="Write your message here. Use {{first_name}}, {{business_name}}, {{stall_code}} for merge tags."
                 className="w-full pr-32 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800 focus:outline-none focus:ring-2 focus:ring-[#cd2653]/40" />
-              <button type="button"
+              {AI_ON && (<button type="button"
                 onClick={spin}
                 disabled={spinning}
                 className="absolute top-2 right-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#cd2653] text-white text-xs font-medium hover:bg-[#b01f45] disabled:opacity-50 disabled:cursor-not-allowed">
                 <Sparkles className="w-3.5 h-3.5" />
                 {spinning ? 'Spinning...' : 'Spin with AI'}
-              </button>
+              </button>)}
             </div>
           </label>
           {paidWaDelivery && (
@@ -513,13 +516,13 @@ export default function BroadcastPage() {
               rows={4}
               placeholder="Anything extra to add. Injected as {{custom_message}} in the template."
               className="w-full pr-32 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800 focus:outline-none focus:ring-2 focus:ring-[#cd2653]/40" />
-            <button type="button"
+            {AI_ON && (<button type="button"
               onClick={spin}
               disabled={spinning}
               className="absolute top-2 right-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#cd2653] text-white text-xs font-medium hover:bg-[#b01f45] disabled:opacity-50 disabled:cursor-not-allowed">
               <Sparkles className="w-3.5 h-3.5" />
               {spinning ? 'Spinning...' : 'Spin with AI'}
-            </button>
+            </button>)}
           </div>
         </section>
       )}
@@ -544,12 +547,12 @@ export default function BroadcastPage() {
               </label>
             )}
           </div>
-          <button type="button"
+          {AI_ON && (<button type="button"
             onClick={spin}
             disabled={spinning}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed">
             {spinning ? 'Spinning...' : 'Spin'}
-          </button>
+          </button>)}
         </div>
         <div className="px-4 py-4">
           {previewLoading && <p className="text-sm text-neutral-500">Rendering...</p>}

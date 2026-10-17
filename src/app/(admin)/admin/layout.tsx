@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRole } from '@/lib/admin-rbac'
 import type { AdminRole } from '@/lib/admin-rbac'
-import { isEftAdmin } from '@/lib/eft'
+import { isEftAdmin, isMasterOperator } from '@/lib/eft'
 import { pingAdminActivity } from '@/lib/admin-activity-ping'
 import { AdminSidebar } from '@/components/admin/AdminSidebar'
 import { CommandK } from '@/components/admin/CommandK'
@@ -74,7 +74,7 @@ export default async function AdminLayout({
         '--admin-border': '#e5e5e5',
         '--admin-accent': '#cd2653',
       } as React.CSSProperties}>
-      <AdminSidebar role={role} email={email} eftAdmin={isEftAdmin(email)} />
+      <AdminSidebar role={role} email={email} eftAdmin={isMasterOperator(email)} />
       <main className="flex-1 min-w-0 md:overflow-y-auto md:h-screen">
         {children}
       </main>

@@ -90,7 +90,9 @@ const paidVia = (method: string) =>
 test('alerts about an UNPAID vendor: clean ones reach her, EFT-touched never (2026-09-11 rule)', () => {
   const withheld = (notes: string) => isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: notes }), true)
   assert.equal(withheld('just a note'), false, 'plain unpaid is HERS now')
-  assert.equal(withheld('⟦EFT⟧'), true, 'on the EFT lane stays withheld')
+  // Taona 2026-09-24: a BARE ⟦EFT⟧ marker (no real master money) no longer withholds
+  // the alert from her either. The marker pins bank details, not visibility.
+  assert.equal(withheld('⟦EFT⟧'), false, 'bare ⟦EFT⟧, no master money -> reaches her now (2026-09-24)')
   // ⟦NOEFT⟧ REVERSED TWICE, so the history is worth keeping. 2026-07-26 it was
   // made to withhold ("excluded from the EFT lane is not the same as having
   // paid"). 2026-07-28 Taona reversed it: "If excluded on master lane, it
@@ -134,8 +136,12 @@ test('isEftScopedAlert: a resolved row overrides both the body text and eftScope
   )
   // A stale explicit flag cannot over-mute a reconciled vendor...
   assert.equal(isEftScopedAlert({ body: NEUTRAL, eftScoped: true }, paidVendor, true), false)
-  // ...and cannot under-mute one still on the lane. The row wins both ways.
-  assert.equal(isEftScopedAlert({ body: NEUTRAL, eftScoped: false }, row({ admin_notes: '⟦EFT⟧' }), true), true)
+  // ...and cannot under-mute one with real master money. The row wins both ways.
+  // Use a COLLECTED vendor (real master money, still hidden) to pin that a stale
+  // eftScoped:false flag cannot expose them. A bare ⟦EFT⟧ unpaid vendor is now
+  // visible (2026-09-24) so it can no longer carry this assertion.
+  const collected = row({ admin_notes: updatePortalStateImpl('note', { v: 1, payment: { status: 'collected' } }) })
+  assert.equal(isEftScopedAlert({ body: NEUTRAL, eftScoped: false }, collected, true), true)
 })
 
 test('isEftScopedAlert: with no vendor row, heuristics apply and the default is fail-open', () => {
@@ -150,10 +156,13 @@ test('isEftScopedAlert: with no vendor row, heuristics apply and the default is 
 })
 
 test('gate to targets, end to end', () => {
+  // Taona 2026-09-24: a bare ⟦EFT⟧ unpaid vendor (no real master money) is now
+  // VISIBLE to the festival owner, so an alert about them reaches her as well as
+  // the master. The marker pins bank details, not visibility.
   const inLane = isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: '⟦EFT⟧' }), false)
   assert.deepEqual(
     roles(selectNotifyTargets(BOT_ADMINS, { audience: 'all', excludeNorm: null, eftContent: inLane })),
-    ['master'],
+    ['festival_owner', 'master'],
   )
   const settled = isEftScopedAlert({ body: NEUTRAL }, row({ admin_notes: '⟦EFT⟧', paid_at: PAID_AT }), true)
   assert.deepEqual(

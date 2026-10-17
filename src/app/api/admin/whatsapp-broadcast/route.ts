@@ -38,16 +38,17 @@
 // =============================================================================
 
 import { NextRequest, NextResponse } from 'next/server'
+import { notifyHeldBlast } from '@/lib/inbox/held-email'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendZaniiMail, pacer } from '@/lib/mail/zanii-sender'
 import { sendTemplate } from '@/lib/whatsapp/sender'
-import { renderTemplate, TEMPLATE_KEYS, type TemplateKey, type TemplateVars } from '@/lib/mail/templates'
+import { renderTemplate, renderFreeTextEmail, TEMPLATE_KEYS, type TemplateKey, type TemplateVars } from '@/lib/mail/templates'
 import { buildUnsubUrl } from '@/lib/mail/unsubscribe-token'
 import { renderTemplate as interpolate, type InterpolateVars } from '@/lib/interpolate'
 import { parseAllocation } from '@/lib/stalls'
 import {
-  buildAudience,
+  buildAudience, buildHeldAudience,
   filtersFromSearch,
   filtersFromBody,
 } from '@/lib/broadcast-audience'
@@ -175,7 +176,10 @@ export async function GET(req: NextRequest) {
 
   const mailRecipients = new Set<string>()
   const waRecipients = new Set<string>()
-  for (const r of audience) {
+  // Held vendors (walled from this viewer) are COUNTED so the audience reads whole,
+  // but they are never in the delivery list (Taona 2026-09-23).
+  const held = await buildHeldAudience(filters, auth.email)
+  for (const r of [...audience, ...held]) {
     if (r.email) {
       const e = r.email.trim().toLowerCase()
       if (e && !optout.has(e)) mailRecipients.add(e)
@@ -187,7 +191,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    audience_total: audience.length,
+    audience_total: audience.length + held.length,
     mail_count: mailRecipients.size,
     wa_count: waRecipients.size,
     filters,
@@ -277,6 +281,8 @@ export async function POST(req: NextRequest) {
 
   const filters = filtersFromBody(body.filters)
   const audience = await buildAudience(filters, auth.email)
+  // Walled from this viewer: shown as sent, NEVER delivered (see the tally below).
+  const held = await buildHeldAudience(filters, auth.email)
   const optout = await loadOptOutEmails()
 
   // H2: audience cap. Refuse to dispatch a >500 blast in a single call. Real
@@ -428,6 +434,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // HELD tally: walled vendors read as sent to the viewer but nothing is delivered.
+  // No send call exists in this loop by construction; only counters move.
+  const heldNames: string[] = []
+  for (const row of held) {
+    const em = (row.email || '').trim().toLowerCase()
+    const ph = (row.phone || '').replace(/[^0-9]/g, '')
+    if ((channel === 'mail' || channel === 'both') && em && !seenEmails.has(em) && !optout.has(em)) { seenEmails.add(em); results.mail.attempted++; results.mail.sent++ }
+    if ((channel === 'wa' || channel === 'both') && ph.length >= 9 && !seenPhones.has(ph)) { seenPhones.add(ph); results.wa.attempted++; results.wa.sent++ }
+    heldNames.push(row.business_name || row.contact_name || em || ph)
+  }
+  results.audience_total += held.length
+  if (!dryRun) {
+    await notifyHeldBlast({
+      viewer: auth.email, tool: 'broadcast', names: heldNames, channel,
+      subject: freeTextMode ? (body.free_text_subject || null) : (body.template_key || null),
+      preview: freeTextMode ? body.free_text : (body.custom_message || null),
+    })
+  }
+
   await recordAdminAction({
     actor: { email: auth.email, role: auth.role },
     action: 'whatsapp_broadcast',
@@ -449,17 +474,9 @@ async function renderFreeText(
   subject: string,
   vars: TemplateVars & { unsubscribe_url?: string },
 ): Promise<{ subject: string; body_text: string; body_html: string }> {
-  const body = interpolate(text, vars as InterpolateVars)
-  const subj = interpolate(subject, vars as InterpolateVars)
-  const escaped = body.replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c] as string))
-  const html =
-    `<div style="font-family:Inter,Arial,sans-serif;color:#1B1A17;line-height:1.55;font-size:15px">` +
-    escaped.split('\n').map((l) => l.trim().length === 0 ? '<br/>' : `<p style="margin:0 0 12px">${l}</p>`).join('') +
-    (vars.unsubscribe_url
-      ? `<p style="margin-top:24px;font-size:12px;color:#666">Unsubscribe: <a href="${vars.unsubscribe_url}">${vars.unsubscribe_url}</a></p>`
-      : '') +
-    `</div>`
+  // Law 7: no em/en dashes in the vendor-facing subject or body.
+  const body = interpolate(text, vars as InterpolateVars).replace(/\s*[\u2013\u2014]\s*/g, ', ')
+  const subj = interpolate(subject, vars as InterpolateVars).replace(/\s*[\u2013\u2014]\s*/g, ', ')
+  const html = await renderFreeTextEmail(body, subj, vars.unsubscribe_url)
   return { subject: subj, body_text: body, body_html: html }
 }

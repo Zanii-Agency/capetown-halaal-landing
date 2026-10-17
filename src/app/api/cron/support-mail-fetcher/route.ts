@@ -233,6 +233,12 @@ export async function GET(req: Request): Promise<NextResponse<FetcherReport>> {
         errors.push(...await fileEmailedProof({ db: supabase, vendor, fromAddress, subject, body, attachments: parsedAttachments, messageId, mailbox: 'support' }))
       }
 
+      // A logo sent by email goes straight onto the vendor's public profile.
+      try {
+        const { fileEmailedLogo } = await import('@/lib/vendor-logo')
+        await fileEmailedLogo({ vendor, subject, body, attachments: parsedAttachments })
+      } catch (e) { errors.push(`logo intake: ${(e as Error).message}`) }
+
       // Upsert thread keyed on peer_email.
       let threadId: string | null = null
       try {

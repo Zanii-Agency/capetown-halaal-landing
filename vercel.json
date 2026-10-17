@@ -26,28 +26,8 @@
       "schedule": "*/2 * * * *"
     },
     {
-      "path": "/api/cron/payment-reminders",
-      "schedule": "0 7 * * 1"
-    },
-    {
-      "path": "/api/cron/setup-reminders",
-      "schedule": "0 7 * * *"
-    },
-    {
-      "path": "/api/cron/festival-reminders",
-      "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/cron/logo-reminders",
-      "schedule": "0 9 * * *"
-    },
-    {
       "path": "/api/cron/ticket-verifier",
       "schedule": "0 */6 * * *"
-    },
-    {
-      "path": "/api/cron/email-concierge",
-      "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/cron/reconcile-yoco",
@@ -56,18 +36,6 @@
     {
       "path": "/api/cron/outbound-sync",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/daily-ops-digest",
-      "schedule": "0 18 * * *"
-    },
-    {
-      "path": "/api/cron/plan-approvals",
-      "schedule": "*/2 * * * *"
-    },
-    {
-      "path": "/api/cron/accessory-reminders",
-      "schedule": "0 6 * * *"
     }
   ]
 }

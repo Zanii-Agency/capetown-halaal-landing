@@ -8,6 +8,8 @@ import { verifyCronAuth } from '@/lib/security/cron-auth'
 import { requireOperator } from '@/lib/admin-rbac'
 import { isEftAdmin, vendorInOwnerScope } from '@/lib/eft'
 import { recordAdminAction } from '@/lib/zanii-ledger'
+import { loadWalledContacts } from '@/lib/broadcast-audience'
+import { notifyHeldBlast } from '@/lib/inbox/held-email'
 
 export const maxDuration = 300
 
@@ -40,7 +42,7 @@ const firstName = (n?: string | null) => {
   return f ? f.charAt(0).toUpperCase() + f.slice(1) : 'there'
 }
 
-type Recipient = { email: string; name: string; id?: string; notes?: string }
+type Recipient = { email: string; name: string; id?: string; notes?: string; phone?: string | null }
 
 async function getRecipients(
   audience: Audience,
@@ -60,14 +62,14 @@ async function getRecipients(
   // festival owner's bulk sends.
   let q = admin
     .from('vendor_applications')
-    .select('id, email, contact_name, admin_notes, paid_at')
+    .select('id, email, phone, contact_name, admin_notes, paid_at')
     .order('email', { ascending: true })
   if (audience === 'vendors_pending') q = q.in('status', ['pending', 'info_requested'])
   else if (audience === 'vendors_approved') q = q.eq('status', 'approved')
   const { data } = await q
   return (data || [])
     .filter((r) => !opts.restrict || vendorInOwnerScope(r.admin_notes as string | null, r.paid_at as string | null))
-    .map((r) => ({ id: r.id, email: r.email, name: firstName(r.contact_name), notes: r.admin_notes || '' }))
+    .map((r) => ({ id: r.id, email: r.email, phone: r.phone ?? null, name: firstName(r.contact_name), notes: r.admin_notes || '' }))
 }
 
 /** Dedupe by lowercased email, drop invalids. */
@@ -116,14 +118,35 @@ export async function POST(request: NextRequest) {
   // This is the source of truth (immune to local-file/ledger drift). excludeEmails remains as a belt-and-braces extra.
   const markNote = (body.markNote || '').trim()
   const exclude = new Set((body.excludeEmails || []).map((e) => (e || '').trim().toLowerCase()))
-  const allRecipients = clean(await getRecipients(audience, testTo, { restrict }))
+  // Per-PERSON master wall on top of getRecipients' per-row test: a master payer's
+  // twin application row (or a ticket-buyer record) must not carry her campaign to
+  // them. Same helper as the broadcast. Fails closed.
+  let allRecipients = clean(await getRecipients(audience, testTo, { restrict }))
+  if (restrict) {
+    // Wall unavailable -> deliver to nobody (every recipient is held below).
+    const walled = await loadWalledContacts()
+    allRecipients = walled ? allRecipients.filter((r) => !walled.blocks(r.phone ?? null, r.email)) : []
+  }
+  // HELD (Taona 2026-09-23): vendors walled from the owner are counted as sent but
+  // NEVER delivered; the master gets one summary. Computed as the unrestricted cohort
+  // minus the deliverable one, so the delivery list above is untouched.
+  let heldRecipients: Recipient[] = []
+  if (restrict && audience !== 'test') {
+    const deliverable = new Set(allRecipients.map((r) => (r.email || '').trim().toLowerCase()))
+    heldRecipients = clean(await getRecipients(audience, testTo, { restrict: false }))
+      .filter((r) => !deliverable.has((r.email || '').trim().toLowerCase()))
+  }
   const recipients = allRecipients.filter(
     (r) =>
       !exclude.has(r.email) &&
       !(markNote && (r.notes || '').toLowerCase().includes(markNote.toLowerCase()))
   )
-  const total = recipients.length
-  const excluded = allRecipients.length - total
+  const heldActive = heldRecipients.filter(
+    (r) => !exclude.has(r.email) && !(markNote && (r.notes || '').toLowerCase().includes(markNote.toLowerCase())),
+  )
+  const heldCount = heldActive.length
+  const total = recipients.length // pagination runs over the deliverable list only
+  const excluded = allRecipients.length - recipients.length
 
   // Resumable batching: offset slices into the deterministic ordered cohort so multi-call sends are non-overlapping.
   const offset = Math.max(0, Math.floor(body.offset ?? 0))
@@ -142,10 +165,10 @@ export async function POST(request: NextRequest) {
       dryRun: true,
       audience,
       subject,
-      total,
+      total: total + heldCount,
       excluded,
       offset,
-      willSend,
+      willSend: offset === 0 ? willSend + heldCount : willSend,
       nextOffset,
       remainingFromOffset,
       skippedOverCap,
@@ -219,6 +242,12 @@ export async function POST(request: NextRequest) {
     if (PACE_MS) await new Promise((res) => setTimeout(res, PACE_MS))
   }
 
+  // Held vendors are tallied once, on the first page, and never touch Resend.
+  if (offset === 0 && heldCount > 0) {
+    sent += heldCount
+    await notifyHeldBlast({ viewer: auth.viewerEmail ?? null, tool: 'campaign', names: heldActive.map((r) => r.email), channel: 'email', subject })
+  }
+
   await recordAdminAction({
     actor: { email: auth.viewerEmail ?? null, role: null },
     action: 'campaign_send',
@@ -228,7 +257,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     audience,
     subject,
-    total,
+    total: total + heldCount,
     excluded,
     offset,
     sent,

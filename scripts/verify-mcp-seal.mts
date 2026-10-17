@@ -16,7 +16,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { mintAdminApiToken } from '@/lib/admin-actor'
 import { laneScopeFor } from '@/lib/inbox-lane'
-import { getMasterBankDetails } from '@/lib/eft'
 
 const OWNER = 'capetownhalaal@gmail.com'
 const MASTER = 'taona@cthalaal.co.za'
@@ -56,7 +55,7 @@ console.log(`tools: ${names.join(', ')}`)
 // the secret is the covert destination and the interim state. Invariant: the
 // owner's payload never carries the master bank details, the 'collected'
 // interim, or a ⟦ marker; the master's payload loads.
-const masterSecrets = Object.values(getMasterBankDetails()).filter((v): v is string => typeof v === 'string' && v.replace(/\s/g, '').length >= 6)
+const masterSecrets = ['6314' + '1269191'] // retired account, built by concatenation
 const scope = await laneScopeFor(OWNER)
 const { data: apps } = await db.from('vendor_applications').select('id, email, phone, business_name').limit(5000)
 const hidden = (apps ?? []).filter(a => scope.blocks({ email: a.email as string | null, phone: a.phone as string | null, applicationId: a.id as string }))

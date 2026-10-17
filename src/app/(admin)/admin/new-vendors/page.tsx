@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { isEftAdmin } from '@/lib/eft'
+import { isEftAdmin, isMasterOperator } from '@/lib/eft'
 import { formatRand } from '@/lib/payments/pricing'
 import { loadNewVendors, type NewVendorStatus } from '@/lib/payments/new-vendors-list'
 import { AdminPage } from '@/components/admin/AdminPage'
@@ -31,7 +31,7 @@ export default async function NewVendorsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/admin/login')
-  if (!isEftAdmin(user.email)) redirect('/admin')
+  if (!isMasterOperator(user.email)) redirect('/admin')
 
   const { rows, totalOwed, paidCount } = await loadNewVendors()
   const fmtDate = (iso: string | null) =>

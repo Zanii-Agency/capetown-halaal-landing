@@ -1,3 +1,5 @@
+import { withLivePricing } from '@/lib/payments/pricing'
+
 // Readable renderer for a vendor's special_requirements blob. The column is a
 // JSON string (or object) written by the apply form. Showing it raw dumps
 // {"traded_before":"Yes",...} at the operator, which is unreadable. This parses
@@ -66,7 +68,7 @@ function formatValue(k: string, v: unknown): string {
   return s.replace(/—/g, ' to ').replace(/–/g, ' to ')
 }
 
-export function SpecialRequirementsView({ raw }: { raw: string | Record<string, unknown> | null | undefined }) {
+export function SpecialRequirementsView({ raw, tier }: { raw: string | Record<string, unknown> | null | undefined; tier?: string | null }) {
   let parsed: Record<string, unknown> | null = null
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     parsed = raw as Record<string, unknown>
@@ -94,7 +96,7 @@ export function SpecialRequirementsView({ raw }: { raw: string | Record<string, 
     )
   }
 
-  const rows = Object.entries(parsed)
+  const rows = Object.entries(withLivePricing(parsed, tier))
     .filter(([k]) => !HIDDEN_KEYS.has(k))
     .map(([k, v]) => [k, formatValue(k, v)] as const)
     .filter(([, val]) => val.trim().length > 0)

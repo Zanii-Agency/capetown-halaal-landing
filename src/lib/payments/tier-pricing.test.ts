@@ -11,6 +11,16 @@ test('no tier = custom-only: base 0, total is just the custom charges (the flowe
   assert.equal(p.total, 2000)     // only the custom charge
 })
 
+test('no tier AND no custom charge = the stored stall price is still owed (C&F Fresh Fruits)', () => {
+  const p = computeVendorPricing({
+    preferred_booth_tier: null,
+    special_requirements: { stall_type: 'Outdoor Bedouin 2×3m', stall_price: 3750, electrical_appliances: 'None' },
+  })
+  assert.equal(p.stallPrice, 3750)
+  assert.equal(p.total, 3750)
+  assert.equal(p.stallLabel, 'Outdoor Bedouin 2×3m')
+})
+
 test('tiered vendor keeps their stored/agreed price (negotiated rate not overwritten)', () => {
   const p = computeVendorPricing({
     preferred_booth_tier: 'marquee-full-3x3',

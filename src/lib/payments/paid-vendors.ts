@@ -122,7 +122,8 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     const inst = onPartial ? nextInstalment(pay?.arrangement, bill.paidTotal) : null
     const newestProof = [...proofs].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
     let proofUrl: string | null = null
-    if ((onPartial || payState === 'Proof pending') && newestProof) {
+    // Recon 2026-10-17: wrong-account proofs are never signed for this (owner) view.
+    if ((onPartial || payState === 'Proof pending') && newestProof && !pay?.wrong_account) {
       const { data: signed } = await db.storage.from('vendor-docs').createSignedUrl(newestProof.path, 60 * 60)
       proofUrl = signed?.signedUrl ?? null
     }
@@ -192,7 +193,7 @@ export async function loadPaidVendors(): Promise<{ rows: PaidVendorRow[]; confir
     const proofPending = proofs.length > confirms
     const newestProof = [...proofs].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
     let proofUrl: string | null = null
-    if (newestProof) { const { data: signed } = await db.storage.from('vendor-docs').createSignedUrl(newestProof.path, 60 * 60); proofUrl = signed?.signedUrl ?? null }
+    if (newestProof && !pay?.wrong_account) { const { data: signed } = await db.storage.from('vendor-docs').createSignedUrl(newestProof.path, 60 * 60); proofUrl = signed?.signedUrl ?? null }
     const instalments = buildLedger(plan.installments as Array<{ date: string; amount: number }>, bill.paidTotal, proofPending, today, (pay?.paid_at as string) || paidAt)
     const inst = nextInstalment(plan, bill.paidTotal)
     const paidOn = (pay?.paid_at as string) || (pay?.eft_collected_at as string) || paidAt || ''
