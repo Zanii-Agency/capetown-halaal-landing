@@ -15,7 +15,10 @@ const last9 = (p?: string | null) => String(p || '').replace(/\D/g, '').slice(-9
 async function loadFence(): Promise<Fence> {
   if (cache && Date.now() - cache.at < 60_000) return cache.fence
   const db = createAdminClient()
-  const { data } = await db.from('vendor_applications').select('id,email,phone,admin_notes').ilike('admin_notes', '%wrong_account%').limit(1000)
+  // The PORTAL marker is encoded, so a text filter on admin_notes cannot find it:
+  // read every row and parse (684 rows, cached 60s).
+  const { data, error } = await db.from('vendor_applications').select('id,email,phone,admin_notes').limit(5000)
+  if (error) throw error
   const fence: Fence = { ids: new Set(), phones: new Set(), emails: new Set(), paths: new Set() }
   for (const v of data ?? []) {
     const p = parsePortalState(v.admin_notes || '').payment
@@ -25,6 +28,7 @@ async function loadFence(): Promise<Fence> {
     if (v.email) fence.emails.add(String(v.email).toLowerCase().trim())
     for (const f of p.proofs || []) if (f.path) fence.paths.add(f.path)
   }
+  if (fence.ids.size === 0) throw new Error('recon fence empty') // fail closed, never silently open
   cache = { at: Date.now(), fence }
   return fence
 }
