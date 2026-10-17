@@ -9,6 +9,9 @@ import StallMap, { type MapStall } from '@/components/admin/StallMap'
 import FloorCommand, { type FloorBooth, type FloorApp } from '@/components/floor/FloorCommand'
 import { TYPE_META, TIER_META, type StallType } from '@/lib/stalls'
 
+// zanii-codef: AI switched off 2026-10-17 (basic site, no AI). true restores every AI button.
+const AI_ON = false
+
 interface AppRow {
   id: string
   business_name: string
@@ -424,9 +427,9 @@ export default function VendorOpsPage() {
             <select className="mt-1 mb-3 w-full rounded-lg border border-[#E5E5E5] px-3 py-2 text-sm bg-[#FFFFFF]"><option>All approved vendors ({approvedCount})</option><option>Placed vendors ({placedCount})</option></select>
             <div className="relative">
               <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={5} className="w-full rounded-lg border border-[#E5E5E5] px-3 py-2 text-sm outline-none focus:border-[#cd2653] bg-[#FFFFFF]" />
-              <button onClick={polish} disabled={polishing} className="absolute bottom-2.5 right-2.5 flex items-center gap-1.5 text-xs font-semibold bg-gradient-to-r from-[#cd2653] to-[#bf3026] text-white rounded-lg px-2.5 py-1.5 hover:opacity-90 disabled:opacity-60">
+              {AI_ON && (<button onClick={polish} disabled={polishing} className="absolute bottom-2.5 right-2.5 flex items-center gap-1.5 text-xs font-semibold bg-gradient-to-r from-[#cd2653] to-[#bf3026] text-white rounded-lg px-2.5 py-1.5 hover:opacity-90 disabled:opacity-60">
                 {polishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}{polishing ? 'Polishing…' : 'Polish with AI'}
-              </button>
+              </button>)}
             </div>
             <p className="text-[11px] text-[#1B1A17]/40 mt-1.5">AI (Claude) corrects spelling, grammar and standardises tone before you send.</p>
             <button onClick={() => toast.success(`Queued to ${approvedCount} approved vendors`)} className="mt-3 w-full bg-[#cd2653] hover:bg-[#bf3026] text-white font-semibold rounded-lg py-2.5 text-sm shadow-[0_8px_28px_rgba(184,146,74,.25)]">Queue broadcast</button>

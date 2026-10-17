@@ -21,6 +21,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Send, Loader2, Paperclip, Sparkles, X, MessageSquareQuote, FolderOpen, RefreshCw, Wand2 } from 'lucide-react'
 
+// zanii-codef: AI switched off 2026-10-17 (basic site, no AI). true restores every AI button.
+const AI_ON = false
+
 export interface SendResult {
   ok: boolean
   /** Meta's 24h free-form window has closed: only a template may go out. */
@@ -329,15 +332,15 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100">
               <Paperclip className="h-4 w-4" />
             </button>
-            <button onClick={aiDraft} disabled={aiBusy} title="Draft a reply with AI"
+            {AI_ON && (<button onClick={aiDraft} disabled={aiBusy} title="Draft a reply with AI"
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-50">
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            </button>
-            <button onClick={text.trim() || aiInstruction.trim() ? spin : aiDraft} disabled={aiBusy || spinBusy}
+            </button>)}
+            {AI_ON && (<button onClick={text.trim() || aiInstruction.trim() ? spin : aiDraft} disabled={aiBusy || spinBusy}
               title={text.trim() ? 'Regenerate with the same direction' : 'Regenerate AI draft'}
               className="h-7 w-7 grid place-items-center rounded-md text-neutral-400 hover:text-[#cd2653] hover:bg-neutral-100 disabled:opacity-50">
               {aiBusy || spinBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </button>
+            </button>)}
             {/* Spin rewrites YOUR text for this channel. Undo restores your own
                 words, so the rewrite is never a one-way door. */}
             {preSpin !== null && !spinBusy && (
@@ -349,7 +352,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
                 Undo
               </button>
             )}
-            <button
+            {AI_ON && (<button
               onClick={spin}
               disabled={spinBusy || (!text.trim() && !aiInstruction.trim())}
               title={isEmail ? 'Spin: rewrite your text as an email' : 'Spin: rewrite your text for WhatsApp'}
@@ -357,7 +360,7 @@ export function Composer({ channel, phone, email, sendingAs, subject, applicatio
             >
               {spinBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Spin
-            </button>
+            </button>)}
           </div>
 
           {libOpen && (
