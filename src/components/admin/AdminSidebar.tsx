@@ -4,12 +4,13 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck, Sparkles } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck, Sparkles, Scale } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import type { AdminRole } from '@/lib/admin-rbac'
+import { canSeeRecon } from '@/lib/recon'
 
 type NavItem = { name: string; href: string; icon: typeof LayoutDashboard }
 type NavGroup = { label: string | null; items: NavItem[] }
@@ -109,6 +110,7 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
     let items = g.label === 'COMMUNICATIONS' && !eftAdmin
       ? g.items.filter((it) => it.href !== '/admin/inbox/gmail')
       : g.items
+    if (g.label === 'MONEY' && canSeeRecon(email)) items = [...items, { name: 'Reconciliation', href: '/admin/recon', icon: Scale }]
     if (g.label === 'MONEY' && eftAdmin) items = [...items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }, { name: 'New Vendors', href: '/admin/new-vendors', icon: Sparkles }]
     return { ...g, items }
   })

@@ -53,7 +53,9 @@ export function paymentStatusOf(r: AudienceRow): string {
  * old broadcast copies matched only status === 'paid', dropping waived/collected.
  */
 export function isPaidRow(r: AudienceRow): boolean {
-  return !!r.paid_at || hasPaid(parsePortalState(r.admin_notes))
+  // Recon 2026-10-17: a proof-verified wrong-account payment counts as paid.
+  const st = parsePortalState(r.admin_notes)
+  return !!r.paid_at || hasPaid(st) || !!st.payment?.wrong_account
 }
 
 export function isContractSignedRow(r: AudienceRow): boolean {

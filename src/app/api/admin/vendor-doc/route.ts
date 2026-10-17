@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { proofHiddenFor } from '@/lib/recon-proofs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,8 @@ export async function GET(req: NextRequest) {
   if (path.includes('..') || path.startsWith('/')) {
     return NextResponse.json({ error: 'invalid path' }, { status: 400 })
   }
+
+  if (await proofHiddenFor(user.email, { path })) return NextResponse.json({ error: 'This proof is hidden' }, { status: 403 })
 
   const { data, error } = await admin.storage.from('vendor-docs').createSignedUrl(path, 300)
   if (error || !data?.signedUrl) return NextResponse.json({ error: 'Could not generate link' }, { status: 500 })

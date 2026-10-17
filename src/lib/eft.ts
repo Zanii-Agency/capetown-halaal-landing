@@ -100,8 +100,22 @@ const EFT_ADMIN_EMAILS: ReadonlySet<string> = new Set<string>(
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)],
 )
 
-/** True when the caller's email may use the EFT surface (master or EFT mailbox). */
+/** Recon 2026-10-17 (Taona): "there is no more master EFT, release all of them".
+ *  The festival owner now sees every vendor unwalled, so every wall check
+ *  (isEftAdmin) passes for her. The demo login stays walled (pre-recon view).
+ *  The master console itself stays master-only: see isMasterOperator. */
+const WALL_RELEASED_EMAILS: ReadonlySet<string> = new Set<string>(['capetownhalaal@gmail.com'])
+
+/** True when the caller's email sees past the master-lane wall. */
 export function isEftAdmin(email?: string | null): boolean {
+  if (!email) return false
+  const e = email.toLowerCase().trim()
+  return EFT_ADMIN_EMAILS.has(e) || WALL_RELEASED_EMAILS.has(e)
+}
+
+/** The master operator (dev@ / taona@): the Master Lane console, New Vendors
+ *  and the rail/lane controls. NOT the owner, even after the wall release. */
+export function isMasterOperator(email?: string | null): boolean {
   return !!email && EFT_ADMIN_EMAILS.has(email.toLowerCase().trim())
 }
 

@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { maskRetiredAccounts, vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, paymentOnOwnerSide, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane, paidSamreenVia } from './eft'
+import { maskRetiredAccounts, vendorInOwnerScope, reconciledPaid, rosterPaid, rosterPaymentStatus, viewerSafePayment, hasEftMarker, withEftMarker, withoutEftMarker, eftReference, vendorInEftLane, vendorCommsInEftLane, hasNoEftMarker, withNoEftMarker, withoutNoEftMarker, mentionsEft, isInternalAccount, isOperatorPreviewAddress, isEftAdmin, isMasterOperator, visiblePaymentStatus, EFT_ADMIN_EMAIL, withOwnerVisibleMarker, earliestEftTimestamp, getEftMode, getPaymentRail, onCovertMasterLane, paymentOnOwnerSide, eftProofVisibleToOwner, eftBankFor, getEftBankDetails, revealsPaymentArrangement, hasNewVendorMarker, withNewVendorMarker, resolveInEftLane, paidSamreenVia } from './eft'
 import { updatePortalStateImpl, parsePortalState } from './portal-state'
 
 test('withEftMarker adds the token and is idempotent', () => {
@@ -130,7 +130,10 @@ test('isEftAdmin: the master and the EFT mailbox are allowed; the festival owner
   assert.equal(isEftAdmin('dev@cthalaal.co.za'), true)      // confined EFT mailbox
   assert.equal(isEftAdmin('taona@cthalaal.co.za'), true)    // the master
   assert.equal(isEftAdmin('TAONA@Cthalaal.co.za'), true)    // case + trim insensitive
-  assert.equal(isEftAdmin('capetownhalaal@gmail.com'), false) // festival owner (Samreen) stays walled
+  assert.equal(isEftAdmin('demo@cthalaal.co.za'), false) // demo login keeps the pre-recon walled view
+  assert.equal(isEftAdmin('capetownhalaal@gmail.com'), true) // recon 2026-10-17: wall released for the owner
+  assert.equal(isMasterOperator('capetownhalaal@gmail.com'), false) // but the master console stays master-only
+  assert.equal(isMasterOperator('dev@cthalaal.co.za'), true)
   assert.equal(isEftAdmin('altaafkumandan@gmail.com'), false) // her internal account stays walled
   assert.equal(isEftAdmin(null), false)
   assert.equal(isEftAdmin(''), false)
@@ -306,7 +309,7 @@ test('exclusion never puts a vendor back INTO the EFT lane', () => {
 
 test('visiblePaymentStatus: only the EFT admin sees a collected payment', () => {
   assert.equal(visiblePaymentStatus('collected', EFT_ADMIN_EMAIL), 'collected', 'master sees the truth')
-  assert.equal(visiblePaymentStatus('collected', 'capetownhalaal@gmail.com'), 'none', 'owner must not')
+  assert.equal(visiblePaymentStatus('collected', 'demo@cthalaal.co.za'), 'none', 'owner must not')
   assert.equal(visiblePaymentStatus('collected', null), 'none', 'unknown viewer must not')
 })
 
@@ -314,13 +317,13 @@ test('visiblePaymentStatus leaves every other state untouched for everyone', () 
   // Masking must be surgical: hiding 'paid' from her would break her own view of
   // the vendors she settled.
   for (const s of ['paid', 'waived', 'pending', 'none', 'deferred']) {
-    assert.equal(visiblePaymentStatus(s, 'capetownhalaal@gmail.com'), s, s)
+    assert.equal(visiblePaymentStatus(s, 'demo@cthalaal.co.za'), s, s)
     assert.equal(visiblePaymentStatus(s, EFT_ADMIN_EMAIL), s, s)
   }
 })
 
 test('viewerSafePayment: in-flight EFT money is stripped, her settled payment shows, admin sees raw', () => {
-  const SAM = 'capetownhalaal@gmail.com'
+  const SAM = 'demo@cthalaal.co.za'
   const notesFor = (payment: Record<string, unknown>) => updatePortalStateImpl('note', { v: 1, payment } as never)
   const pay = (notes: string) => parsePortalState(notes).payment
 
@@ -364,7 +367,7 @@ test('viewerSafePayment: in-flight EFT money is stripped, her settled payment sh
 })
 
 test('rosterPaymentStatus: owner sees paid ONLY for her-channel settlement; master-lane EFT masks to unpaid', () => {
-  const SAM = 'capetownhalaal@gmail.com'
+  const SAM = 'demo@cthalaal.co.za'
   const notes = (payment: Record<string, unknown>) =>
     updatePortalStateImpl('note', { v: 1, payment } as never)
   const paidAt = '2026-07-05T00:00:00Z'
@@ -647,7 +650,7 @@ test("a vendor Samreen confirmed on her EFT-proofs page ('samreen_eft') is in he
   const notes = updatePortalStateImpl('note', { v: 1, payment: { status: 'paid', method: 'samreen_eft', amount: 6500, eft_submitted_at: '2026-09-01T10:00:00.000Z', paid_at: '2026-09-05T08:00:00.000Z' } } as never)
   assert.equal(reconciledPaid(notes, '2026-09-05T08:00:00.000Z'), true)
   assert.equal(vendorInOwnerScope(notes, '2026-09-05T08:00:00.000Z'), true)
-  assert.equal(rosterPaymentStatus(notes, '2026-09-05T08:00:00.000Z', 'capetownhalaal@gmail.com'), 'paid')
+  assert.equal(rosterPaymentStatus(notes, '2026-09-05T08:00:00.000Z', 'demo@cthalaal.co.za'), 'paid')
 })
 
 test("the same state with method 'eft' (a master-lane settlement) stays OUT of her scope", () => {

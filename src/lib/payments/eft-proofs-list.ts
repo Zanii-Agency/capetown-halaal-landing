@@ -45,7 +45,7 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
     const proofFiles = (p.proofs ?? []).filter((f) => f.kind === 'eft_submission' || f.kind === 'eft_accessories')
     const newest = [...proofFiles].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
     let proofUrl: string | null = null
-    if (newest) {
+    if (newest && !p.wrong_account) { // recon: wrong-account proofs stay hidden from the owner
       const { data } = await db.storage.from('vendor-docs').createSignedUrl(newest.path, 60 * 60)
       proofUrl = data?.signedUrl ?? null
     }

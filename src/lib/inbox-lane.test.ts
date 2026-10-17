@@ -111,7 +111,7 @@ test('unknown identifiers are never blocked (fail-open on non-vendors)', () => {
 
 test('hidesEftContent: only the EFT admin sees EFT messages', () => {
   assert.equal(hidesEftContent('dev@cthalaal.co.za'), false)
-  assert.equal(hidesEftContent('capetownhalaal@gmail.com'), true)
+  assert.equal(hidesEftContent('demo@cthalaal.co.za'), true)
   assert.equal(hidesEftContent(null), true, 'unknown viewer must not see EFT content')
 })
 
@@ -236,7 +236,7 @@ test('the scope blocks master-only senders, so every reader inherits it', () => 
     assert.equal(s.blocks({ email: e }), true, `${e} must be blocked via blocks()`)
   }
   // Her own mail and ordinary correspondence are untouched.
-  assert.equal(s.blocksEmail('capetownhalaal@gmail.com'), false)
+  assert.equal(s.blocksEmail('demo@cthalaal.co.za'), false)
   assert.equal(s.blocksEmail('corporatesocialinvestment@capitecbank.co.za'), false)
 })
 

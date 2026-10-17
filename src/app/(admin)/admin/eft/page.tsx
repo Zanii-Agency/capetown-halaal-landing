@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, hasNoEftMarker, getPaymentRail, getEftBankDetails, eftReference, onEftLane, vendorCommsInOwnerScope, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
+import { isEftAdmin, isMasterOperator, hasEftMarker, hasNoEftMarker, getPaymentRail, getEftBankDetails, eftReference, onEftLane, vendorCommsInOwnerScope, getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
 import { parseAllocation } from '@/lib/stalls'
 import { isTestVendor } from '@/lib/test-vendors'
 import { parsePortalState } from '@/lib/portal-state'
@@ -100,7 +100,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const email = user?.email ?? null
-  if (!isEftAdmin(email)) redirect('/admin')
+  if (!isMasterOperator(email)) redirect('/admin')
 
   const { tab } = await searchParams
   const activeTab = tab === 'messages' ? 'messages' : tab === 'outreach' ? 'outreach' : 'payments'

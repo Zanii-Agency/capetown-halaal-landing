@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin, hasEftMarker, withEftMarker, withoutEftMarker, withNoEftMarker, withoutNoEftMarker } from '@/lib/eft'
+import { isMasterOperator, isEftAdmin, hasEftMarker, withEftMarker, withoutEftMarker, withNoEftMarker, withoutNoEftMarker } from '@/lib/eft'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 
 export const runtime = 'nodejs'
@@ -18,7 +18,7 @@ type Action = (typeof ACTIONS)[number]
 export async function POST(req: NextRequest) {
   const gate = await requireOperator()
   if (!gate.ok) return gate.response
-  if (!isEftAdmin(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  if (!isMasterOperator(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const body = (await req.json().catch(() => ({}))) as { applicationId?: string; action?: string }
   const id = String(body.applicationId || '')
