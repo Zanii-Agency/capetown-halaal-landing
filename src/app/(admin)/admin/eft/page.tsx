@@ -266,7 +266,8 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
     // proof from a vendor NOT in the frozen 66, OR from a vendor deliberately handed
     // to the owner with ⟦OWNERVIS⟧ (which may include one of the 66, e.g. En Vogue).
     // Every other covert-cohort vendor stays here, untouched.
-    if (eftProofVisibleToOwner(a.id as string, notes, fullEft)) continue
+    const wrongPaidHere = !!parsePortalState(notes).payment?.wrong_account
+    if (!wrongPaidHere && eftProofVisibleToOwner(a.id as string, notes, fullEft)) continue
     const contact: Contact = {
       id: a.id as string,
       business_name: a.business_name as string | null,
@@ -278,7 +279,7 @@ export default async function EftAdminPage({ searchParams }: { searchParams: Pro
       reference: eftReference({ id: a.id as string, admin_notes: notes, business_name: a.business_name as string | null }),
     }
     // Excluded from EFT (handled manually): never in the lane list or the add picker.
-    if (hasNoEftMarker(notes)) { excluded.push(contact); continue }
+    if (!wrongPaidHere && hasNoEftMarker(notes)) { excluded.push(contact); continue }
     const marked = hasEftMarker(notes)
     const state = parsePortalState(notes)
     const submitted = !!state.payment?.eft_submitted_at
