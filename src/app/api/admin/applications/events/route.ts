@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { laneScopeFor } from '@/lib/inbox-lane'
+import { laneScopeFor, hidesEftContent } from '@/lib/inbox-lane'
 import { hiddenFromOwner } from '@/lib/audit-scope'
 
 export const runtime = 'nodejs'
@@ -65,7 +65,8 @@ export async function GET(request: NextRequest) {
       note: string | null
       created_at: string
     }>).filter((e) =>
-      !hiddenFromOwner(
+      // Unwalled viewers (master, and the owner since the 2026-10-17 recon) see every event.
+      !hidesEftContent(user.email) || !hiddenFromOwner(
         { event_type: e.event_type, note: e.note, before_value: e.before_value, after_value: e.after_value },
         true,
       ),

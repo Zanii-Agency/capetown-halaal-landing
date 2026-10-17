@@ -167,7 +167,7 @@ export default async function Vendor360Page(props: { params: Promise<{ id: strin
   // already saw keep their log as it was (Taona 2026-10-14).
   const hideLaneRows = hide && scope.blocks({ email: emailRaw, phone: phoneRaw, applicationId: id }) && !LANE_ACTIVITY_ALREADY_SEEN.has(id)
   const events = ((eventsRes.data || []) as AuditEvent[]).filter((e) =>
-    !hiddenFromOwner({ event_type: e.event_type, note: e.note }, true) &&
+    (!hide || !hiddenFromOwner({ event_type: e.event_type, note: e.note }, true)) &&
     !(hideLaneRows && revealsLaneActivity(e.event_type)),
   )
 
