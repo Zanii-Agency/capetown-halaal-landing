@@ -61,7 +61,6 @@ const navGroups: NavGroup[] = [
       { name: 'Finance', href: '/admin/finance', icon: Wallet },
       { name: 'Paid Vendors', href: '/admin/paid', icon: BadgeCheck },
       { name: 'EFT Proofs', href: '/admin/eft-proofs', icon: Landmark },
-      { name: 'Bank Check', href: '/admin/bank-check', icon: ClipboardCheck },
       { name: 'Tickets', href: '/admin/tickets', icon: Ticket },
     ],
   },
