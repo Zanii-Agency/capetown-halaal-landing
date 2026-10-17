@@ -31,7 +31,7 @@ export default async function ReconPage() {
     .select('id,business_name,contact_name,email,phone,admin_notes,paid_at,preferred_booth_tier,special_requirements,status,is_duplicate')
     .eq('status', 'approved').limit(2000)
 
-  const wrong: Array<{ id: string; name: string; contact: string; phone: string; bill: number; paid: number; owing: number; payments: Array<{ amount: number; date: string | null; ref: string | null }> }> = []
+  const wrong: Array<{ id: string; name: string; contact: string; phone: string; bill: number; paid: number; owing: number; accTotal: number; accOwing: number; payments: Array<{ amount: number; date: string | null; ref: string | null }> }> = []
 
   for (const v of data ?? []) {
     if (v.is_duplicate || isTestVendor(v)) continue
@@ -40,7 +40,7 @@ export default async function ReconPage() {
     try { bill = vendorBill({ id: v.id, preferred_booth_tier: v.preferred_booth_tier, special_requirements: v.special_requirements, admin_notes: v.admin_notes, paid_at: v.paid_at }) } catch { continue }
     const wa = p?.wrong_account
     const name = (v.business_name || '').trim()
-    if (wa) wrong.push({ id: v.id, name, contact: v.contact_name || '', phone: v.phone || '', bill: bill.liveTotal, paid: wa.total, owing: Math.max(0, bill.liveTotal - wa.total), payments: wa.payments })
+    if (wa) wrong.push({ id: v.id, name, contact: v.contact_name || '', phone: v.phone || '', bill: bill.liveTotal, paid: wa.total, owing: Math.max(0, bill.liveTotal - wa.total), accTotal: bill.accessories.total, accOwing: Math.max(0, bill.accessories.total - Math.max(0, wa.total - bill.stall.price)), payments: wa.payments })
   }
   wrong.sort((a, b) => a.name.localeCompare(b.name))
   const wTotal = wrong.reduce((s, r) => s + r.paid, 0)
@@ -59,18 +59,19 @@ export default async function ReconPage() {
           </div>
           <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
             <table className="w-full text-sm">
-              <thead className="bg-neutral-50"><tr><th className={th}>Vendor</th><th className={th}>Payments (amount, date, bank reference)</th><th className={`${th} text-right`}>Bill</th><th className={`${th} text-right`}>Paid</th><th className={`${th} text-right`}>Still owing</th></tr></thead>
+              <thead className="bg-neutral-50"><tr><th className={th}>Vendor</th><th className={th}>Payments (amount, date, bank reference)</th><th className={th}>Accessories</th><th className={`${th} text-right`}>Bill</th><th className={`${th} text-right`}>Paid</th><th className={`${th} text-right`}>Still owing</th></tr></thead>
               <tbody>
                 {wrong.map((r) => (
                   <tr key={r.id} className="border-t border-neutral-100">
                     <td className={td}><Link href={`/admin/vendors/${r.id}`} className="font-medium hover:underline">{r.name}</Link><div className="text-xs text-neutral-500">{r.contact} · {r.phone}</div></td>
                     <td className={td}>{r.payments.map((x, i) => <div key={i}>{formatRand(x.amount)} on {fmt(x.date)}{x.ref ? <span className="text-neutral-500"> · {x.ref}</span> : null}</div>)}</td>
+                    <td className={td}>{r.accTotal <= 0 ? <span className="text-neutral-400">None</span> : r.accOwing === 0 ? <span className="text-emerald-700">Paid ({formatRand(r.accTotal)})</span> : <span className="text-[#cd2653] font-medium">Owing {formatRand(r.accOwing)} of {formatRand(r.accTotal)}</span>}</td>
                     <td className={`${td} text-right tabular-nums`}>{formatRand(r.bill)}</td>
                     <td className={`${td} text-right tabular-nums font-medium`}>{formatRand(r.paid)}</td>
                     <td className={`${td} text-right tabular-nums ${r.owing ? 'text-[#cd2653] font-semibold' : 'text-emerald-700'}`}>{r.owing ? formatRand(r.owing) : 'Paid in full'}</td>
                   </tr>
                 ))}
-                <tr className="border-t-2 border-neutral-200 font-semibold"><td className={td}>Total</td><td className={td} /><td className={td} /><td className={`${td} text-right tabular-nums`}>{formatRand(wTotal)}</td><td className={`${td} text-right tabular-nums`}>{formatRand(wOwing)}</td></tr>
+                <tr className="border-t-2 border-neutral-200 font-semibold"><td className={td}>Total</td><td className={td} /><td className={td} /><td className={td} /><td className={`${td} text-right tabular-nums`}>{formatRand(wTotal)}</td><td className={`${td} text-right tabular-nums`}>{formatRand(wOwing)}</td></tr>
               </tbody>
             </table>
           </div>
