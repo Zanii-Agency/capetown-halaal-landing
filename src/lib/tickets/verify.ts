@@ -261,13 +261,13 @@ function walkTicketTree(node: unknown, productHint: number | null, out: ParsedTi
         product_id: productId,
         ticket_type: productId ? PRODUCT_TYPE_MAP[productId] || null : null,
         holder_first_name:
-          pickField(rec, ['WooCommerceEventsAttendeeName', 'WooCommerceEventsAttendeeFirstName', 'first_name']),
+          pickField(rec, ['WooCommerceEventsAttendeeName', 'WooCommerceEventsAttendeeFirstName', 'first_name', 'WooCommerceEventsPurchaserFirstName']),
         holder_last_name:
-          pickField(rec, ['WooCommerceEventsAttendeeLastName', 'last_name']),
+          pickField(rec, ['WooCommerceEventsAttendeeLastName', 'last_name', 'WooCommerceEventsPurchaserLastName']),
         holder_email:
-          pickField(rec, ['WooCommerceEventsAttendeeEmail', 'email']),
+          pickField(rec, ['WooCommerceEventsAttendeeEmail', 'email', 'WooCommerceEventsPurchaserEmail']),
         holder_phone:
-          pickField(rec, ['WooCommerceEventsAttendeeTelephone', 'WooCommerceEventsAttendeePhone', 'phone', 'telephone']),
+          pickField(rec, ['WooCommerceEventsAttendeeTelephone', 'WooCommerceEventsAttendeePhone', 'phone', 'telephone', 'WooCommerceEventsPurchaserPhone']),
         attendance_date: toIso(
           pickField(rec, [
             'WooCommerceEventsBookingsDate',

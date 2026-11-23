@@ -48,4 +48,24 @@ describe('parseTicketsFromOrder on the live nested FooEvents shape', () => {
     assert.equal(out.length, 3)
     assert.ok(out.every((t) => t.product_id === 9454))
   })
+
+  it('falls back to the purchaser name and email when attendee capture is off', () => {
+    const ticket = {
+      WooCommerceEventsProductID: '9450',
+      WooCommerceEventsAttendeeName: '',
+      WooCommerceEventsPurchaserFirstName: 'Amina',
+      WooCommerceEventsPurchaserLastName: 'Test',
+      WooCommerceEventsPurchaserEmail: 'amina@example.com',
+    }
+    const order = {
+      id: 1,
+      status: 'completed',
+      line_items: [{ product_id: 9450, quantity: 1 }],
+      meta_data: [{ key: 'WooCommerceEventsOrderTickets', value: { 1: { 1: ticket } } }],
+    } as unknown as WCOrderWithMeta
+    const [t] = parseTicketsFromOrder(order)
+    assert.equal(t.holder_first_name, 'Amina')
+    assert.equal(t.holder_last_name, 'Test')
+    assert.equal(t.holder_email, 'amina@example.com')
+  })
 })
