@@ -2,10 +2,25 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { isPublicVendor } from './public-vendor'
 import { updatePortalStateImpl, type PortalState } from './portal-state'
+import { withOwnerVisibleMarker } from './eft'
 
 describe('isPublicVendor', () => {
-  it('shows a normal approved unpaid vendor (existing behaviour)', () => {
-    assert.equal(isPublicVendor({ admin_notes: null, paid_at: null }), true)
+  it('hides an approved vendor who has not paid', () => {
+    assert.equal(isPublicVendor({ admin_notes: null, paid_at: null }), false)
+  })
+
+  it('hides a vendor whose payment is only deferred or pending', () => {
+    assert.equal(isPublicVendor({ admin_notes: withPayment({ status: 'deferred' }), paid_at: null }), false)
+    assert.equal(isPublicVendor({ admin_notes: withPayment({ status: 'pending' }), paid_at: null }), false)
+  })
+
+  it('shows a settled EFT vendor handed to the owner (⟦OWNERVIS⟧)', () => {
+    const notes = withOwnerVisibleMarker(withPayment({ status: 'paid', method: 'eft', paid_at: '2026-07-30T00:00:00.000Z' }))
+    assert.equal(isPublicVendor({ admin_notes: notes, paid_at: '2026-07-30T00:00:00.000Z' }), true)
+  })
+
+  it('does not show an ⟦OWNERVIS⟧ vendor who has not paid', () => {
+    assert.equal(isPublicVendor({ admin_notes: withOwnerVisibleMarker(''), paid_at: null }), false)
   })
 
   it('shows a Yoco-paid vendor', () => {

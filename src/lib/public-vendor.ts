@@ -1,5 +1,5 @@
 import { parsePortalState } from '@/lib/portal-state'
-import { hasEftMarker } from '@/lib/eft'
+import { hasEftMarker, isOwnerVisible, rosterPaid } from '@/lib/eft'
 
 /**
  * Publication gate for the public festival site.
@@ -24,6 +24,16 @@ export function isPublicVendor(row: {
   admin_notes?: string | null
   paid_at?: string | null
 }): boolean {
+  // 2026-11-23: the public exhibitor list is approved AND paid. The payment
+  // deadline has passed, so an approved vendor with no money in is not a
+  // confirmed exhibitor and must not be advertised. "Paid" is the roster's own
+  // predicate (paid_at or payment.status 'paid'), which includes part-payers.
+  if (!rosterPaid(row.admin_notes, row.paid_at)) return false
+
+  // A settled vendor deliberately handed to the owner (⟦OWNERVIS⟧) is shown
+  // whatever the method; the method-based hides below were never meant for them.
+  if (isOwnerVisible(row.admin_notes)) return true
+
   const state = parsePortalState(row.admin_notes || '')
   const p = state.payment
   const method = String(p?.method || '')
