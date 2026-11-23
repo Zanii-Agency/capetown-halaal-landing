@@ -1,7 +1,7 @@
 # Cape Town Halaal 2026 — Handover Document
 
 **Date:** 2026-06-16  
-**Repo:** github.com/sinanagency/capetown-halaal-landing (branch: `final-deploy`)  
+**Repo:** github.com/Zanii-Agency/capetown-halaal-landing (branch: `final-deploy`)  
 **Live:** cthalaal.co.za  
 **Vercel project:** capetown-halaal-landing (sinans-projects-6aa720e0)  
 **Supabase project:** dtdqopjdxwfvtyrnygdt  
@@ -12,7 +12,7 @@
 ## Who to give this to
 
 The person(s) taking over admin portal ops and vendor portal maintenance. They need:
-- GitHub access to sinanagency/capetown-halaal-landing
+- GitHub access to Zanii-Agency/capetown-halaal-landing
 - Vercel access (deploy permissions)
 - Supabase dashboard access (read + SQL editor)
 - WordPress admin access for tickets.youngatheart.co.za

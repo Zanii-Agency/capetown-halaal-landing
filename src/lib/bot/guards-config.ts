@@ -39,7 +39,7 @@ export const CTH_BOT_GUARDS_CONFIG = defineBotConfig({
     'Stephen',
     '4Q framework',
     'Canada Made',
-    'Sinan Agency',
+    'Zanii',
     'sinanagency',
   ],
 

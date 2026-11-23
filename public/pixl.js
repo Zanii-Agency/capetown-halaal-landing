@@ -1,6 +1,6 @@
 /**
  * PIXL - Visual Drag & Drop Editor
- * By Lord / Sinan Agency
+ * By Lord / Zanii
  *
  * Auto-activates on localhost when DevTools opens
  * Cmd+Shift+E to toggle
