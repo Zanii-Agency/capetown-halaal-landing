@@ -24,7 +24,7 @@ const SNACK_TRUCK_CAP = zoneByKey('snack_truck')?.capacity ?? 0
 // the team's assistant never knows less about the festival than the public one.
 export const FESTIVAL_FACTS = `- Dates: 11, 12, 13 December 2026 (Friday, Saturday, Sunday)
 - Venue: Youngsfield Military Base, corner of Wetton Road and Chucker Road, Cape Town. Pin: https://maps.app.goo.gl/8d4RWy18667aHdxM7. Entrance is off Wetton Road, not Plantation or Ottery Road.
-- Tickets: R30 per day, R60 weekend pass (all three days). Children under 3 free.
+- Tickets: R40 per day, R100 weekend pass (all three days). Children under 3 free.
 - Buying tickets: on sale online now at https://tickets.youngatheart.co.za (also linked from cthalaal.co.za). Buying online is the way to get tickets and skip the queue; gate sales on the day are subject to availability.
 - Vendor applications: cthalaal.co.za/apply
 - Approved exhibitor portal (log in): cthalaal.co.za/exhibitor/login

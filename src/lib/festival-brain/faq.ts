@@ -87,9 +87,9 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
       /\b(r\s?30|r\s?60)\b/i,
       /\bticket.{0,15}\b(price|cost|how much)\b/i,
     ],
-    fact: 'Tickets are R30 per day, R60 for the full weekend (all three days). Children under 3 enter free when accompanied by a ticketed adult.',
+    fact: 'Tickets are R40 per day, R100 for the full weekend (all three days). Children under 3 enter free when accompanied by a ticketed adult.',
     answer:
-      'Tickets are R30 per day, R60 for the full weekend pass (all three days, saves R30). Children under 3 enter free when accompanied by a ticketed adult. Buy at cthalaal.co.za.',
+      'Tickets are R40 per day, R100 for the full weekend pass (all three days, saves R20). Children under 3 enter free when accompanied by a ticketed adult. Buy at cthalaal.co.za.',
   },
   parking: {
     key: 'parking',
@@ -109,7 +109,7 @@ export const FAQ: Record<FaqKey, FaqEntry> = {
     key: 'kids_free_age',
     patterns: [/\b(kids?|child(ren)?)\s+(under|free|age)\b/i, /\bage limit\b/i, /\bunder 3\b/i, /\b(kids?|child(ren)?)\b.{0,20}\b(need|require).{0,15}\bticket/i, /\bdo (kids?|child(ren)?) (need|pay)\b/i],
     fact: 'Children under 3 enter free when accompanied by a ticketed adult. Ages 3 and up pay the standard ticket price.',
-    answer: 'Children under 3 enter free when accompanied by a ticketed adult. From age 3 the standard ticket price applies (R30 day, R60 weekend).',
+    answer: 'Children under 3 enter free when accompanied by a ticketed adult. From age 3 the standard ticket price applies (R40 day, R100 weekend).',
   },
   vendor_apply: {
     key: 'vendor_apply',

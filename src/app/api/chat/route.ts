@@ -48,7 +48,7 @@ KEY METRICS YOU KNOW (source of truth: lib/venue-zones.ts):
 - ${TOTAL_DEFINED_CAPACITY} defined vendor spots across 5 zones: ${ZONE_BREAKDOWN}.
 - The Marquee (${MARQUEE_CAPACITY} stalls) is the ONLY zone that gets a floor-plan stall allocation. The other ${OUTSIDE_TOTAL} spots are outside zones (${OUTSIDE_TOTAL - TRUCK_TOTAL} bedouin + ${TRUCK_TOTAL} trucks): payment-tracked and acknowledged only, no map slot, allocated on setup day.
 - Festival dates: 11, 12, 13 December 2026
-- Ticket prices: R30 per day, R60 weekend pass
+- Ticket prices: R40 per day, R100 weekend pass
 - Marquee stall fees are in the exhibitor portal and on the application form. Do not quote stall or truck prices from memory. If asked for a specific fee, point the team to the Applications page or the apply form rather than stating a number.
 
 ADMIN GUIDANCE:

@@ -9,8 +9,8 @@ const BASE = process.argv[2] || 'https://cthalaal.co.za'
 // Each case: a question, substrings that MUST appear (grounded fact), and
 // substrings that must NOT appear (hallucination guards).
 const CASES = [
-  { q: 'How much is a weekend pass?', must: ['R60'], mustNot: [] },
-  { q: 'How much is a day ticket?', must: ['R30'], mustNot: [] },
+  { q: 'How much is a weekend pass?', must: ['R100'], mustNot: [] },
+  { q: 'How much is a day ticket?', must: ['R40'], mustNot: [] },
   { q: 'Where is the festival held?', must: ['Youngsfield'], mustNot: [] },
   { q: 'What dates is the festival?', must: ['11', '13', 'December'], mustNot: [] },
   { q: 'Is the food halaal?', must: ['halaal'], mustNot: [] },
