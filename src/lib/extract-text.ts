@@ -1,4 +1,4 @@
-// CTH adapter over @sinanagency/intake extractTextFromBuffer.
+// CTH adapter over @zanii/intake extractTextFromBuffer.
 //
 // Thin shim: forwards a binary document to the intake primitive and
 // returns clean text (or null when the type has no text layer). No

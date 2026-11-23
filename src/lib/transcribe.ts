@@ -1,4 +1,4 @@
-// CTH adapter over @sinanagency/intake transcribeAudio.
+// CTH adapter over @zanii/intake transcribeAudio.
 //
 // Thin shim: hands the OpenAI key from CTH's environment to the intake
 // primitive and returns the transcript. Intake is fully tenant-agnostic;

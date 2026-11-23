@@ -102,7 +102,7 @@ export async function uploadMedia(
 // Gated: blocked if the contact opted out or the 24h window is closed.
 //
 // Architecture 2 pre-send gate (2026-06-12): every outbound passes through
-// the shared @sinanagency/bot-guards sanitizeReply with CTH's BotGuardsConfig.
+// the shared @zanii/bot-guards sanitizeReply with CTH's BotGuardsConfig.
 // Catches: brand leaks (Sasa/Nisria/Jensen/Stephen mentions), em-dashes,
 // Netlify mentions, urgency-manipulation phrasing. On catch, body is replaced
 // with reaskPhrase and the original is logged for engineering review.
