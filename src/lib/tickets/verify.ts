@@ -117,6 +117,22 @@ interface WpResolverResponse {
  * Hit the WP mu-plugin endpoint to get FooEvents attendee data per order.
  * Returns null on any failure so callers fall back to the local meta-parse path.
  */
+/**
+ * The WP resolver can return the right NUMBER of tickets with every field
+ * empty (seen 2026-11-23: product_id 1, blank ticket_id, for all 2026 orders,
+ * because it misreads FooEvents' nested {index: {index: ticket}} meta). Those
+ * rows are worse than useless: they overwrite real holder data with blanks.
+ * Trust the resolver only when every row is identifiable.
+ */
+export function resolverTicketsUsable(tickets: ParsedTicket[] | null): tickets is ParsedTicket[] {
+  if (!tickets || tickets.length === 0) return false
+  const known = new Set<number>(TICKET_PRODUCT_IDS)
+  return tickets.every((t) =>
+    !t.fooevents_ticket_id.startsWith('synthetic:') ||
+    (t.product_id !== null && known.has(t.product_id)),
+  )
+}
+
 export async function fetchTicketsFromWpResolver(orderId: number): Promise<ParsedTicket[] | null> {
   const bearer = process.env.CTH_WP_RESOLVER_BEARER?.trim()
   if (!bearer) return null

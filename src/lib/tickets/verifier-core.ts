@@ -15,6 +15,7 @@ import {
   parseTicketsFromOrder,
   validateTicket,
   fetchTicketsFromWpResolver,
+  resolverTicketsUsable,
   TICKET_PRODUCT_IDS,
   type ParsedTicket,
   type WCOrderWithMeta,
@@ -28,7 +29,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  */
 async function resolveOrderTickets(order: WCOrderWithMeta): Promise<ParsedTicket[]> {
   const wp = await fetchTicketsFromWpResolver(order.id)
-  if (wp && wp.length > 0) return wp
+  if (resolverTicketsUsable(wp)) return wp
   return parseTicketsFromOrder(order)
 }
 
