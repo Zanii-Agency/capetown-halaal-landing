@@ -10,7 +10,7 @@
 
 ## Live deploy
 - Commit on apex (`cthalaal.co.za`): **`908965f`** (`fix(cron-auth): Edge-safe constant-time compare without node:crypto`).
-- Repo: https://github.com/sinanagency/capetown-halaal-landing
+- Repo: https://github.com/Zanii-Agency/capetown-halaal-landing
 - Vercel project: `capetown-halaal-landing` (sinans-projects-6aa720e0).
 - Supabase project ref: `dtdqopjdxwfvtyrnygdt` (separate account, not `claude-supabase`).
 - 🟡 Uncommitted on disk (HEAD does NOT contain): Admin Verifier UI, People register, `/api/admin/tickets/status|verify`, `/api/admin/verifier`, `/api/admin/vendors/[id]/staff`, `/api/cron/ticket-verifier`, `/api/exhibitor/profile/publish-stall`, `/api/exhibitor/staff/resend`, `/exhibitor/portal/staff/print`, plus modifications to 9 src files including `confirm.ts` + `applications/[id]/route.ts` + `StaffManager.tsx`. Management Agent must commit + `vercel --prod` to land.

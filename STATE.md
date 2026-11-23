@@ -9,7 +9,7 @@
 - Everything ready for handover.
 
 ## Live state
-- Repo: https://github.com/sinanagency/capetown-halaal-landing
+- Repo: https://github.com/Zanii-Agency/capetown-halaal-landing
 - Live URL: https://cthalaal.co.za
 - Last deploy commit: `a138625558cb69dac71ced3971f5ad86d359715f` (feat(admin+exhibitor): bulk-review queue + profile hub + cmd+K + apply form fix + portal tasks)
 - Vercel project: capetown-halaal-landing

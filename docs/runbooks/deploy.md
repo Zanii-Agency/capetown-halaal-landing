@@ -34,7 +34,7 @@ Push to the `final-deploy` branch. Vercel watches this branch and auto-deploys.
 git push origin final-deploy
 ```
 
-Monitor the deploy in Vercel (https://vercel.com/sinanagency/capetown-halaal-landing).
+Monitor the deploy in Vercel (https://vercel.com/Zanii-Agency/capetown-halaal-landing).
 
 ## Post-Deploy Verify (5 min)
 

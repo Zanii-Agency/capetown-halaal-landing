@@ -4,7 +4,7 @@
 
 ## What Was Done
 
-1. **Landing page pushed** to `sinanagency/capetown-halaal-portal` main branch
+1. **Landing page pushed** to `Zanii-Agency/capetown-halaal-portal` main branch
 2. **Portal backed up** to `portal-backup` branch
 3. Netlify should auto-deploy from GitHub
 

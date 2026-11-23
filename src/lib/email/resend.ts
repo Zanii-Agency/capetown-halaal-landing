@@ -25,7 +25,7 @@ import { logEmailOutbound } from '../outbound-log'
 
 export const FROM_EMAIL = 'Young at Heart Festival <support@youngatheart.co.za>'
 export const ADMIN_EMAIL = 'support@youngatheart.co.za'
-// NOTE: outbound mail is no longer BCC'd to info@sinan.agency (2026-06-19). The
+// NOTE: outbound mail is no longer BCC'd to info@zanii.agency (2026-06-19). The
 // portal Support Inbox (Sent tab) is the single source of truth for what went
 // out — every send is mirrored there as a threaded message via support-mirror.
 
