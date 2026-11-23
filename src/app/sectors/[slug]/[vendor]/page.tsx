@@ -213,7 +213,7 @@ export default async function VendorProfilePage({
       <div className="border-t border-neutral-200 mt-8">
         <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-neutral-500">
           <Link href={`/sectors/${v.sector_slug}`} className="hover:text-neutral-900">
-            ← {v.sector.label ? `Back to ` : `More  vendors`}
+            ← {v.sector.label ? `Back to ${v.sector.label}` : `More ${v.sector.name} vendors`}
           </Link>
           <Link href="https://tickets.youngatheart.co.za" className="text-[#cd2653] hover:underline font-medium">
             Get festival tickets →
