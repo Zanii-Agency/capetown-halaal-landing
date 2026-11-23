@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { motion, AnimatePresence, useInView } from 'framer-motion'
 import {
   Utensils, ShoppingBag, Heart, Sparkles,
-  Building, Plane, Home, Briefcase,
+  Building, Plane, Home, Briefcase, Store,
   X, Loader2, Globe, Instagram, MapPin,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -81,6 +81,15 @@ const sectors = [
     description: 'B2B services, suppliers & trade opportunities',
     color: 'from-indigo-500 to-violet-500',
     bgGlow: 'rgba(99, 102, 241, 0.2)',
+    count: '30+'
+  },
+  {
+    icon: Store,
+    title: 'More Exhibitors',
+    slug: 'other',
+    description: 'Crafts, gifts, education, community organisations & more',
+    color: 'from-slate-500 to-neutral-500',
+    bgGlow: 'rgba(148, 163, 184, 0.2)',
     count: '30+'
   }
 ]
@@ -612,7 +621,7 @@ export function SectorsSection() {
 
         {/* Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {sectors.map((sector, i) => (
+          {sectors.filter((s) => !counts || (counts[s.slug] ?? 0) > 0).map((sector, i) => (
             <SectorCard
               key={sector.title}
               sector={sector}

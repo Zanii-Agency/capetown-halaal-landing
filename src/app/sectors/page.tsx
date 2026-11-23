@@ -10,6 +10,7 @@ const SECTORS: { slug: string; title: string; description: string }[] = [
   { slug: "home-living", title: "Home & Living", description: "Furniture, decor and home essentials" },
   { slug: "finance-services", title: "Finance & Services", description: "Islamic banking, takaful and financial services" },
   { slug: "business-trade", title: "Business & Trade", description: "B2B services, suppliers and trade opportunities" },
+  { slug: "other", title: "More Exhibitors", description: "Crafts, gifts, education, community organisations and more" },
 ];
 
 export const metadata: Metadata = {

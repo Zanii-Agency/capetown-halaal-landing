@@ -18,6 +18,7 @@ const SECTOR_TO_SLUG: Record<string, string> = {
   'Home & Living': 'home-living',
   'Finance & Services': 'finance-services',
   'Business & Trade': 'business-trade',
+  'Other': 'other',
 }
 
 function publicUrl(path: string): string {

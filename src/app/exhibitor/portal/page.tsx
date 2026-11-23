@@ -127,6 +127,7 @@ export default async function Overview() {
     'Home & Living': 'home-living',
     'Finance & Services': 'finance-services',
     'Business & Trade': 'business-trade',
+  'Other': 'other',
   }
   const sectorSlug = productCategories.find(c => SECTOR_TO_SLUG[c]) || null
   const publicProfileUrl = profileLive && sectorSlug

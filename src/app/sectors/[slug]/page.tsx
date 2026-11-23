@@ -15,6 +15,7 @@ const SECTOR_MAP: Record<string, { title: string; description: string; icon: str
   'home-living': { title: 'Home & Living', description: 'Furniture, decor & home essentials', icon: '🏠' },
   'finance-services': { title: 'Finance & Services', description: 'Islamic banking, takaful & financial services', icon: '💼' },
   'business-trade': { title: 'Business & Trade', description: 'B2B services, suppliers & trade opportunities', icon: '🏢' },
+  other: { title: 'More Exhibitors', description: 'Crafts, gifts, education, community organisations & more', icon: '🛍️' },
 }
 
 interface Vendor {

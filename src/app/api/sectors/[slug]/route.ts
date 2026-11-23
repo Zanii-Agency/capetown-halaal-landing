@@ -21,6 +21,7 @@ const SLUG_TO_SECTOR: Record<string, string> = {
   'home-living': 'Home & Living',
   'finance-services': 'Finance & Services',
   'business-trade': 'Business & Trade',
+  other: 'Other',
 }
 
 export async function GET(

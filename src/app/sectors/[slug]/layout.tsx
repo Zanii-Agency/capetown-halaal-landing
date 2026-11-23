@@ -35,6 +35,10 @@ const SECTOR_META: Record<string, { title: string; description: string }> = {
     title: "Business & Trade",
     description: "B2B services, suppliers and trade opportunities at Young at Heart Festival 2026 in Cape Town.",
   },
+  other: {
+    title: "More Exhibitors",
+    description: "Crafts, gifts, education, community organisations and more at Young at Heart Festival 2026 in Cape Town.",
+  },
 };
 
 export async function generateMetadata({

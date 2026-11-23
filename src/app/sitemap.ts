@@ -11,6 +11,7 @@ const SECTOR_SLUGS = [
   "home-living",
   "finance-services",
   "business-trade",
+  "other",
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

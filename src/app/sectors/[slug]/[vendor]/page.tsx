@@ -22,6 +22,7 @@ const SLUG_TO_SECTOR: Record<string, { name: string; icon: string }> = {
   'home-living': { name: 'Home & Living', icon: '🏠' },
   'finance-services': { name: 'Finance & Services', icon: '💼' },
   'business-trade': { name: 'Business & Trade', icon: '🏢' },
+  other: { name: 'Other', icon: '🛍️' },
 }
 
 async function fetchVendor(sectorSlug: string, vendorSlugParam: string) {
