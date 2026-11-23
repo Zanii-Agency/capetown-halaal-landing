@@ -1,6 +1,6 @@
 // CTH bot's BotGuardsConfig — v0.2 (defineBotConfig: frozen, precompiled,
 // drop/strip pattern modes). This file is the SOURCE OF TRUTH for what the
-// shared @sinanagency/bot-guards lib filters, classifies, and routes for
+// shared @zanii/bot-guards lib filters, classifies, and routes for
 // THIS bot. The lib has zero knowledge of CTH; this config is what makes the
 // lib behave like a CTH bot.
 //

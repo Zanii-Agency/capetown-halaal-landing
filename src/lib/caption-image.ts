@@ -1,4 +1,4 @@
-// CTH adapter over @sinanagency/intake captionImage.
+// CTH adapter over @zanii/intake captionImage.
 //
 // Thin shim: hands the Anthropic key from CTH's environment to the intake
 // vision primitive and returns a short caption. Default model is Haiku 4.5,
