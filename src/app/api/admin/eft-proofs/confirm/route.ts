@@ -52,9 +52,10 @@ export async function POST(req: NextRequest) {
   // (2026-09-11). Deliberately NOT laneScopeFor (see file header).
   const fullEft = await getFullEftMode()
   const notes = app.admin_notes as string | null
+  const handed = masterProofHandedToOwner(id, notes, fullEft)
   if (
     (app as { is_duplicate?: boolean }).is_duplicate ||
-    !(eftProofVisibleToOwner(id, notes, fullEft) || masterProofHandedToOwner(id, notes, fullEft))
+    !(eftProofVisibleToOwner(id, notes, fullEft) || handed)
   ) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
@@ -101,10 +102,12 @@ export async function POST(req: NextRequest) {
     await db.from('vendor_application_events').insert({
       application_id: id,
       event_type: 'payment_manual',
-      after_value: { total_paid: result.amount, method: 'samreen_eft', reference: providerRef, source: 'eft-proofs' },
+      after_value: { total_paid: result.amount, method: 'samreen_eft', reference: providerRef, source: 'eft-proofs', ...(handed ? { funds_recovered: false } : {}) },
       actor_email: gate.adminUser.email,
       actor_role: 'admin',
-      note: 'EFT proof confirmed from the EFT Proofs page',
+      note: handed
+        ? 'Marked paid to allow the vendor to move to the next step on the platform. Funds are yet to be recovered.'
+        : 'EFT proof confirmed from the EFT Proofs page',
     })
   } catch (e) {
     console.warn('[eft-proofs/confirm] event log insert failed:', (e as Error).message)
@@ -118,7 +121,7 @@ export async function POST(req: NextRequest) {
     actor: { email: gate.adminUser.email, role: gate.role },
     action: 'mark_paid',
     vendorId: id,
-    payload: { method: 'samreen_eft', amount: result.amount ?? null, reference: providerRef, source: 'eft-proofs' },
+    payload: { method: 'samreen_eft', amount: result.amount ?? null, reference: providerRef, source: 'eft-proofs', ...(handed ? { funds_recovered: false } : {}) },
   })
 
   const after = parsePortalState(

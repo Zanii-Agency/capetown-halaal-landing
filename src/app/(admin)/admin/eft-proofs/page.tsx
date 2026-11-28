@@ -73,10 +73,13 @@ export default async function EftProofsPage({ searchParams }: { searchParams: Pr
                     <td className="px-5 py-3">
                       <div className="font-medium text-neutral-900">{r.name}</div>
                       {r.contact && <div className="text-xs text-neutral-400">{r.contact}</div>}
+                      {r.fundsPending && (
+                        <div className="mt-1 text-xs text-amber-700">Mark as paid to let them move to the next step on the platform. Funds are yet to be recovered.</div>
+                      )}
                     </td>
                     <td className="px-5 py-3 font-mono text-xs text-neutral-600">
-                      {r.reference
-                        ? r.reference
+                      {r.reference || r.fundsPending
+                        ? (r.reference || r.expectedReference)
                         : <span className="text-neutral-400" title="The proof shows no reference. This is the one the vendor was asked to use.">{r.expectedReference} <span className="font-sans">(not on proof)</span></span>}
                     </td>
                     <td className="px-5 py-3 text-right font-semibold text-neutral-900">{formatRand(r.amount)}</td>

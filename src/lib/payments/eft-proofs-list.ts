@@ -23,7 +23,7 @@ import { nextInstalment } from '@/lib/payments/payment-plan'
 /** amount = the full bill; paidSoFar = money confirmed so far; nextAmount = what the
  *  next confirm records (an instalment on an approved plan, else the balance);
  *  paid = settled in full. */
-export type EftProofRow = { id: string; name: string; contact: string | null; reference: string | null; expectedReference: string; amount: number; paidSoFar: number; nextAmount: number; proofUrl: string | null; note: string | null; uploadedAt: string; paid: boolean }
+export type EftProofRow = { id: string; name: string; contact: string | null; reference: string | null; expectedReference: string; amount: number; paidSoFar: number; nextAmount: number; proofUrl: string | null; note: string | null; uploadedAt: string; paid: boolean; fundsPending: boolean }
 
 export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEft: Awaited<ReturnType<typeof getFullEftMode>>; rows: EftProofRow[]; totalAmount: number; paidAmount: number }> {
   const db = createAdminClient()
@@ -64,6 +64,8 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
       // When the vendor SENT it (proof upload time), never when an operator filed it.
       uploadedAt: newest?.uploaded_at || (p.eft_submitted_at as string) || '',
       paid: bill.settled && bill.owing <= 0,
+      // Handed over from the retired master lane: marking paid moves them on, funds not yet recovered.
+      fundsPending: handed,
     })
   }
   rows.sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1))
