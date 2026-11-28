@@ -92,3 +92,13 @@ test('accessory EFT reference is the vendor reference with -ACC', () => {
   const id = '13e664c3-3b28-4f3f-b8c7-db7069e0249b'
   assert.equal(accEftReference({ id, admin_notes: null }), 'CTHE0249B-ACC')
 })
+
+test('partial stall payment (plan) still owes the stall shortfall plus accessories', () => {
+  const b = vendorBill({
+    ...APP,
+    paid_at: '2026-09-09T00:00:00Z',
+    admin_notes: notesWith({ status: 'paid', method: 'samreen_eft', amount: 2500 }),
+  })
+  assert.equal(b.partial, true)
+  assert.equal(b.owing, 4000 + 1000, 'R6 500 stall - R2 500 paid, plus R1 000 electrical')
+})

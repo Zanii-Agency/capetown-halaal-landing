@@ -21,6 +21,7 @@ export type DocType =
   | 'fire_safety'
   | 'indemnity'
   | 'vendor_contract'
+  | 'contract'
   | 'other'
 
 // Tier slug fragments that mean "food truck". The portal stores the full slug
@@ -52,6 +53,8 @@ const CATEGORY_RULES: Array<{ match: (cat: string) => boolean; docs: DocType[] }
 export function getRequiredDocs(opts: {
   productCategories?: string[] | null
   boothTier?: string | null
+  /** vendor_applications.admin_notes: admin-added ⟦REQDOC:..⟧ extras merge in. */
+  admin_notes?: string | null
 }): DocType[] {
   const cats = (opts.productCategories || [])
     .filter(Boolean)
@@ -75,7 +78,34 @@ export function getRequiredDocs(opts: {
     set.add('gas_cert')
   }
 
+  for (const d of extraRequiredDocs(opts.admin_notes)) set.add(d)
+
   return Array.from(set)
+}
+
+// Per-vendor extras an admin added after a chat (e.g. gas cert for a stall
+// that turned out to cook with gas). Stored as ⟦REQDOC:<type>⟧ markers on
+// admin_notes (DDL is blocked, Law 8). Only types the portal upload route
+// accepts, so the vendor can always actually upload what we ask for.
+export const EXTRA_DOC_TYPES = [
+  'halaal_cert', 'health_permit', 'gas_cert', 'fire_safety', 'public_liability',
+  'electrical_coc', 'contract', 'indemnity', 'other',
+] as const satisfies readonly DocType[]
+const REQDOC_RE = /⟦REQDOC:([a-z_]+)⟧/g
+
+export function extraRequiredDocs(adminNotes: string | null | undefined): DocType[] {
+  const out = new Set<DocType>()
+  for (const m of (adminNotes || '').matchAll(REQDOC_RE)) {
+    if ((EXTRA_DOC_TYPES as readonly string[]).includes(m[1])) out.add(m[1] as DocType)
+  }
+  return Array.from(out)
+}
+
+/** Add or remove one ⟦REQDOC:..⟧ marker, leaving every other marker and prose intact. */
+export function withExtraRequiredDoc(adminNotes: string | null | undefined, type: string, on: boolean): string {
+  const marker = `⟦REQDOC:${type}⟧`
+  const base = (adminNotes || '').split(marker).join('').replace(/[ \t]{2,}/g, ' ').trim()
+  return on ? `${base}${base ? '\n' : ''}${marker}` : base
 }
 
 /**
@@ -91,5 +121,6 @@ export const DOC_LABEL: Record<DocType, string> = {
   fire_safety: 'Fire-safety certificate',
   indemnity: 'Indemnity',
   vendor_contract: 'Vendor contract',
+  contract: 'Vendor contract',
   other: 'Other supporting documents',
 }

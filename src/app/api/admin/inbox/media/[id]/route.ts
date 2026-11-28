@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { proofHiddenFor } from '@/lib/recon-proofs'
 import { parseAttachmentMarker, EMAIL_ATTACHMENTS_BUCKET } from '@/lib/email/attachments'
 import { hidesEftContent, laneScopeFor } from '@/lib/inbox-lane'
 import { revealsPaymentArrangement } from '@/lib/eft'
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     if (
       scope.blocksEmail(row?.from_address) ||
       scope.blocksEmail(row?.to_address) ||
+      (await proofHiddenFor(user.email, { emails: [row?.from_address, row?.to_address] })) ||
       (hidesEftContent(user.email) && revealsPaymentArrangement(`${row?.subject || ''}\n${row?.body_text || ''}`))
     ) {
       return NextResponse.json({ error: 'forbidden' }, { status: 403 })
@@ -92,6 +94,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   const waScope = await laneScopeFor(user.email)
   if (
     waScope.blocksPhone(row?.wa_phone as string | null) ||
+    (await proofHiddenFor(user.email, { phone: row?.wa_phone as string | null, path: media?.storage_path })) ||
     (hidesEftContent(user.email) &&
       (revealsPaymentArrangement(row?.body as string | null) ||
         revealsPaymentArrangement(media?.caption) ||

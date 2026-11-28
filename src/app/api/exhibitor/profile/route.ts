@@ -24,10 +24,11 @@ const SECTOR_TO_SLUG: Record<string, string> = {
   'Home & Living': 'home-living',
   'Finance & Services': 'finance-services',
   'Business & Trade': 'business-trade',
+  'Other': 'other',
 }
 
 function publicUrl(path: string): string {
-  return `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`
+  return `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim()}/storage/v1/object/public/${BUCKET}/${path}`
 }
 
 function publicProfileUrl(productCategories: unknown, businessName: string): string | null {

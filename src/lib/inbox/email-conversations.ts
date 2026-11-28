@@ -1,0 +1,111 @@
+// Split ONE email thread (support_inbox_threads is one row per address, UNIQUE
+// peer_email, and DDL is blocked, Law 8) into separate CONVERSATIONS by subject,
+// so "Payment plan" and "Vendor Whatsapp Group" read as two emails, not one
+// (Taona 2026-09-23: "keep them separate"). Replies keep their subject ("Re: X"),
+// so the normalised subject is the conversation key.
+// zanii-codef: subject key, not the In-Reply-To chain. A reply whose subject was
+// edited by the vendor lands in a new conversation; follow message_id/in_reply_to
+// if that ever matters.
+import type { CommItem } from './types'
+
+const PREFIX_RE = /^\s*((re|fwd?|aw|sv)\s*(\[\d+\])?\s*:\s*)+/i
+
+/** "Re: RE: Fwd: Payment plan " -> "payment plan". Empty subject -> "". */
+export function conversationKey(subject: string | null | undefined): string {
+  return String(subject || '').replace(PREFIX_RE, '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+/** The subject as a human reads it: prefixes stripped, original case. */
+export function conversationTitle(subject: string | null | undefined): string {
+  return String(subject || '').replace(PREFIX_RE, '').replace(/\s+/g, ' ').trim() || '(no subject)'
+}
+
+export interface EmailConversation { key: string; title: string; messages: CommItem[]; lastAt: string; autoOnly: boolean }
+
+/** Split into conversations by subject, ALL ordered oldest-first by their latest
+ *  message, so the whole thread reads in the order it happened (Taona 2026-09-24:
+ *  "the sequence of messages should be as they happened, including automated").
+ *
+ *  A conversation made up ONLY of automated notices (reminders, confirmations) is
+ *  no longer hoisted into a pool at the top — it keeps its own section in time
+ *  order, flagged `autoOnly` so the view can render it collapsed. Automated
+ *  messages inside a REAL conversation stay inline in that conversation's order. */
+export function groupEmailConversations(messages: CommItem[]): { conversations: EmailConversation[] } {
+  const byKey = new Map<string, EmailConversation>()
+  for (const m of messages) {
+    const key = conversationKey(m.subject)
+    let c = byKey.get(key)
+    if (!c) { c = { key, title: conversationTitle(m.subject), messages: [], lastAt: m.at, autoOnly: true }; byKey.set(key, c) }
+    c.messages.push(m)
+    if (m.at > c.lastAt) c.lastAt = m.at
+  }
+  const conversations = [...byKey.values()]
+  for (const c of conversations) c.autoOnly = c.messages.every((m) => m.auto)
+  conversations.sort((a, b) => (a.lastAt < b.lastAt ? -1 : 1))
+  return { conversations }
+}
+
+// ── TOPICS (Taona 2026-10-01, Option 2) ─────────────────────────────────────
+// One row per vendor in the list; inside the thread, messages group into a few
+// TOPIC sections derived from the subject, so "Reminder, your YAH stall fee,
+// Sataari", "Final notice ..." and "Re: Following up on your ... stall payment"
+// read as ONE Stall payment section instead of eight subject sections.
+// zanii-codef: keyword buckets on the normalised subject, first match wins. A
+// subject that fits none keeps its own "Other" section under its raw title.
+const TOPIC_RULES: Array<[string, RegExp]> = [
+  ['Stall payment', /stall fee|\bfees?\b|payment|\bpay\b|final notice|overdue|invoice|\beft\b|settlement|reminder, your/],
+  ['Cancellation', /cancel|withdraw/],
+  ['Contract', /contract|agreement/],
+  ['Documents', /document|certificate|licen[cs]e|compliance/],
+  ['Onboarding', /application|approved|approval|portal|welcome|verification|password|logo|waiting list|exhibitor/],
+]
+
+/** Topic of a subject: a fixed bucket, else Other keyed on the subject itself. */
+export function topicOf(subject: string | null | undefined): { key: string; title: string } {
+  const k = conversationKey(subject)
+  for (const [title, re] of TOPIC_RULES) if (re.test(k)) return { key: title.toLowerCase(), title }
+  return { key: `other:${k}`, title: conversationTitle(subject) }
+}
+
+export interface EmailTopic {
+  key: string
+  title: string
+  messages: CommItem[]
+  lastAt: string
+  /** Last message is inbound: the vendor is waiting on us. */
+  open: boolean
+  /** Subject of the newest message, what a reply into this topic threads on. */
+  replySubject: string
+}
+
+/** Group into topics, NEWEST topic first; messages inside stay oldest-first. */
+export function groupEmailTopics(messages: CommItem[]): EmailTopic[] {
+  const byKey = new Map<string, EmailTopic>()
+  for (const m of [...messages].sort((a, b) => (a.at < b.at ? -1 : 1))) {
+    const t = topicOf(m.subject)
+    let g = byKey.get(t.key)
+    if (!g) { g = { ...t, messages: [], lastAt: m.at, open: false, replySubject: '' }; byKey.set(t.key, g) }
+    g.messages.push(m)
+    g.lastAt = m.at
+    g.open = m.direction === 'in'
+    g.replySubject = conversationTitle(m.subject)
+  }
+  return [...byKey.values()].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))
+}
+
+// ── TIMELINE (Taona 2026-10-01) ─────────────────────────────────────────────
+export type EmailView = 'timeline' | 'topics'
+/** Default thread view. Flip without code via NEXT_PUBLIC_INBOX_DEFAULT_VIEW=topics. */
+export const DEFAULT_EMAIL_VIEW: EmailView =
+  process.env.NEXT_PUBLIC_INBOX_DEFAULT_VIEW === 'topics' ? 'topics' : 'timeline'
+
+/** Subject a timeline reply threads on: the vendor's newest INBOUND human email,
+ *  else the newest email of any kind. The reply route threads In-Reply-To to the
+ *  last message carrying that subject. */
+export function latestReplySubject(messages: CommItem[]): string | null {
+  const sorted = [...messages].sort((a, b) => (a.at < b.at ? -1 : 1))
+  const pick = [...sorted].reverse().find((m) => m.direction === 'in' && !m.auto)
+    || [...sorted].reverse().find((m) => m.direction === 'in')
+    || sorted[sorted.length - 1]
+  return pick ? conversationTitle(pick.subject) : null
+}

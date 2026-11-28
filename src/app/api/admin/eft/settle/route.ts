@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isEftAdmin } from '@/lib/eft'
+import { isMasterOperator } from '@/lib/eft'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 import { parsePortalState, updatePortalState } from '@/lib/portal-state'
 import { activeProvider, paymentsEnabled, paymentReference } from '@/lib/payments'
@@ -21,7 +21,7 @@ const SITE = 'https://cthalaal.co.za'
 export async function POST(req: NextRequest) {
   const gate = await requireOperator()
   if (!gate.ok) return gate.response
-  if (!isEftAdmin(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  if (!isMasterOperator(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   if (!paymentsEnabled()) return NextResponse.json({ error: 'payments not enabled' }, { status: 400 })
 
   const body = (await req.json().catch(() => ({}))) as { applicationId?: string }

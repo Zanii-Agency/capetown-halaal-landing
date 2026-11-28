@@ -4,12 +4,13 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck, Sparkles } from 'lucide-react'
+import { LayoutDashboard, FileText, Files, Ticket, LogOut, ExternalLink, Globe, BarChart3, ShieldCheck, Shield, Eye, Menu, X, Megaphone, Users, Map, Search, Settings as SettingsIcon, IdCard, ChevronLeft, ChevronRight, Activity, PanelLeftClose, LifeBuoy, BookOpen, Wallet, MessageCircle, Mail, Inbox, Tent, ArrowLeftRight, Landmark, BadgeCheck, ClipboardCheck, Sparkles, Scale } from 'lucide-react'
 import { Z_CLASS } from '@/lib/z'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import type { AdminRole } from '@/lib/admin-rbac'
+import { canSeeRecon } from '@/lib/recon'
 
 type NavItem = { name: string; href: string; icon: typeof LayoutDashboard }
 type NavGroup = { label: string | null; items: NavItem[] }
@@ -47,7 +48,6 @@ const navGroups: NavGroup[] = [
       // still exists and is still reachable by URL until Phase 3 gives these
       // tabs take-over / resolve / search, because deleting it today would
       // remove the only way to silence the bot on a thread.
-      { name: 'WhatsApp', href: '/admin/inbox/whatsapp', icon: MessageCircle },
       { name: 'Support Email', href: '/admin/inbox/support', icon: Mail },
       { name: 'Gmail', href: '/admin/inbox/gmail', icon: Inbox },
       { name: 'Broadcast', href: '/admin/broadcast', icon: Megaphone },
@@ -61,6 +61,13 @@ const navGroups: NavGroup[] = [
       { name: 'Paid Vendors', href: '/admin/paid', icon: BadgeCheck },
       { name: 'EFT Proofs', href: '/admin/eft-proofs', icon: Landmark },
       { name: 'Tickets', href: '/admin/tickets', icon: Ticket },
+    ],
+  },
+  {
+    // Archived 2026-10-17: the WhatsApp number was deleted at Meta; chats kept read-only.
+    label: 'ARCHIVE',
+    items: [
+      { name: 'WhatsApp', href: '/admin/inbox/whatsapp', icon: MessageCircle },
     ],
   },
   {
@@ -105,9 +112,11 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
   // owner works WhatsApp + Support Email, so strip the Gmail item for anyone who
   // is not the EFT admin (dev@ / taona@). Master Lane stays an eftAdmin add.
   const groups: NavGroup[] = navGroups.map((g) => {
-    let items = g.label === 'COMMUNICATIONS' && !eftAdmin
+    // Recon 2026-10-17: the owner gets Gmail back; the demo login does not.
+    let items = g.label === 'COMMUNICATIONS' && !eftAdmin && !canSeeRecon(email)
       ? g.items.filter((it) => it.href !== '/admin/inbox/gmail')
       : g.items
+    if (g.label === 'MONEY' && canSeeRecon(email)) items = [...items, { name: 'Reconciliation', href: '/admin/recon', icon: Scale }]
     if (g.label === 'MONEY' && eftAdmin) items = [...items, { name: 'Master Lane', href: '/admin/eft', icon: LifeBuoy }, { name: 'New Vendors', href: '/admin/new-vendors', icon: Sparkles }]
     return { ...g, items }
   })
@@ -290,7 +299,7 @@ export function AdminSidebar({ role, email, eftAdmin }: AdminSidebarProps) {
               // Every communications tab now has its own path, so the
               // ?view=needs disambiguation the merged inbox needed is gone.
               const isActive = isItemActive(item.href)
-              const channel = item.href.startsWith('/admin/inbox/') ? item.href.split('/').pop()! : null
+              const channel = item.href.startsWith('/admin/inbox/') && group.label !== 'ARCHIVE' ? item.href.split('/').pop()! : null
               const badgeNum = channel ? (channelCounts[channel] ?? 0)
                 : item.href === '/admin/applications' ? pendingApps
                 : null

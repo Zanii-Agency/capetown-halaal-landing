@@ -15,6 +15,9 @@ import {
   Bell, Maximize2, Minimize2, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
+// zanii-codef: AI switched off 2026-10-17 (basic site, no AI). true restores every AI button.
+const AI_ON = false
+
 type Tab = 'all' | 'mine' | 'open' | 'snoozed' | 'resolved' | 'unread' | 'needs'
 type Channel = 'all' | 'whatsapp' | 'email'
 const INBOX_TAGS = ['payment', 'load-in', 'badges', 'contract', 'refund', 'general'] as const
@@ -713,9 +716,9 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly, embedde
                         {active.status !== 'snoozed'
                           ? <button onClick={() => doStatus('snooze')} className="w-full px-3 py-2 text-left hover:bg-neutral-50 flex items-center gap-2"><Clock className="w-4 h-4 text-amber-600" />Snooze</button>
                           : <button onClick={() => doStatus('reopen')} className="w-full px-3 py-2 text-left hover:bg-neutral-50 flex items-center gap-2"><RotateCcw className="w-4 h-4 text-sky-600" />Reopen</button>}
-                        <button onClick={() => { runAI('summarize'); setMenuOpen(false) }} disabled={!!aiBusy} className="w-full px-3 py-2 text-left hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-50">
+                        {AI_ON && (<button onClick={() => { runAI('summarize'); setMenuOpen(false) }} disabled={!!aiBusy} className="w-full px-3 py-2 text-left hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-50">
                           {aiBusy === 'summarize' ? <Loader2 className="w-4 h-4 animate-spin text-[#cd2653]" /> : <FileText className="w-4 h-4 text-[#cd2653]" />}Summarize thread
-                        </button>
+                        </button>)}
                         <button onClick={() => { doStatus('unread'); setMenuOpen(false) }} className="w-full px-3 py-2 text-left hover:bg-neutral-50 flex items-center gap-2"><MailOpen className="w-4 h-4 text-neutral-500" />Mark unread</button>
                         {canned.length > 0 && (
                           <div className="relative">
@@ -844,10 +847,10 @@ export function CustomerInboxClient({ currentUserId, operators, eftOnly, embedde
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply() } }}
                     placeholder={`Reply via ${replyChannel}…`}
                     className="flex-1 resize-none py-1.5 text-sm outline-none bg-transparent leading-relaxed" />
-                  <button onClick={() => runAI('smart_reply')} disabled={!!aiBusy} title="Smart reply"
+                  {AI_ON && (<button onClick={() => runAI('smart_reply')} disabled={!!aiBusy} title="Smart reply"
                     className="w-8 h-8 rounded-lg hover:bg-neutral-100 flex items-center justify-center self-center disabled:opacity-50">
                     {aiBusy === 'smart_reply' ? <Loader2 className="w-4 h-4 animate-spin text-[#cd2653]" /> : <Sparkles className="w-4 h-4 text-[#cd2653]" />}
-                  </button>
+                  </button>)}
                   <button onClick={submitReply} disabled={sending || (!reply.trim() && !attachment)}
                     className="w-9 h-9 rounded-lg bg-[#cd2653] text-white hover:bg-[#b31f47] disabled:opacity-50 flex items-center justify-center self-center">
                     {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

@@ -9,7 +9,7 @@ import { vendorBill, accEftReference } from '@/lib/payments/vendor-bill'
 import { computePaymentDue, daysUntil, fmtDate, requireContractSigned } from '@/lib/exhibitor-paygate'
 import PaymentPanel from '@/components/exhibitor/PaymentPanel'
 import EftPanel from '@/components/exhibitor/EftPanel'
-import { eftBankFor, eftReference, getPaymentRail, getFullEftMode, onCovertMasterLane, resolveInEftLane, hasEftMarker } from '@/lib/eft'
+import { eftBankFor, eftReference, getPaymentRail, getFullEftMode, onCovertMasterLane, resolveInEftLane, hasEftMarker, paidSamreenVia } from '@/lib/eft'
 import { nextInstalment, planSummary } from '@/lib/payments/payment-plan'
 import { AlertCircle, CheckCircle2, Clock, Download } from 'lucide-react'
 import {
@@ -47,13 +47,9 @@ export default async function PaymentsPage() {
   const rail = await getPaymentRail()
   const eftModeOn = rail !== 'yoco'
   const fullEft = await getFullEftMode()
-  // Which account this vendor pays into: the covert master lane (...191) when they
-  // are on it, else Samreen's reconciled account (...629). onCovertMasterLane keys
-  // on the rail + the frozen protected set, so a master-mode sweep, a hand-picked
-  // ⟦EFT⟧ vendor, and a frozen-66 member all correctly land on ...191.
-  const eftBank = eftBankFor(
-    app ? onCovertMasterLane(app.id as string, app.admin_notes as string, rail, fullEft) : false,
-  )
+  // Which account this vendor pays into: since 2026-10-15 every vendor, covert or
+  // not, pays into the one live account (...629). The old master account is retired.
+  const eftBank = eftBankFor()
   // Paid vendors are excluded from the lane (they keep their normal paid view even
   // under global mode); only unpaid lane vendors see the EFT panel.
   // Per-tier rotation (2 Yoco:1 EFT on small tiers, 2 EFT:1 Yoco on the rest),
@@ -68,9 +64,13 @@ export default async function PaymentsPage() {
   const eftSubmitted = !!state.payment?.eft_submitted_at
   const eftPending = eftSubmitted && status !== 'paid'
   const eftRef = app ? eftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : 'CTH'
+
   // Individual ⟦EFT⟧ marker: keeps the accessory EFT panel available to a
   // hand-picked vendor even after global EFT mode is switched off.
   const vendorHasMarker = app ? hasEftMarker(app.admin_notes as string) : false
+  // Taona 2026-09-23: a CONFIRMED Samreen payer stays on the channel they paid with
+  // (Yoco -> card, EFT -> EFT …629), whatever the rail or mode. One predicate.
+  const samreenVia = app ? paidSamreenVia(app.admin_notes as string) : null
 
   // EFT payment receipts / refund proofs an organiser uploaded for this vendor.
   // Each proof's file lives in the private vendor-docs bucket; we mint a short
@@ -145,6 +145,11 @@ export default async function PaymentsPage() {
     ? `Instalment ${inst.index + 1} of ${inst.count}, due ${fmtDate(inst.date)}. Your plan: ${planSummary(plan.installments)}.`
     : null
   const planDue = settled && (outstanding || 0) > 0 && !!inst && !accPending
+  // FORCED EFT (2026-10-15): anyone with a balance owing sees the ...629 EFT panel,
+  // on any rail except card-only 'yoco'. Overrides the stay-on-your-channel rule and
+  // the settled branch, which left part-paid vendors with a card button or nothing.
+  // A vendor whose stall EFT proof is in and pending keeps the normal submitted view.
+  const forceEft = !!app && rail !== 'yoco' && (outstanding || 0) > 0 && !(eftPending && !settled)
 
   // Countdown banner. Until the vendor pays, the rest of the portal is locked
   // (requirePaid on every other route redirects them here). The banner makes
@@ -356,7 +361,21 @@ export default async function PaymentsPage() {
           </Card>
         )}
 
-        {settled ? (
+        {forceEft ? (
+          // FORCED EFT (Taona 2026-10-15): every vendor who still owes anything pays
+          // by EFT into the one live account (...629), whatever channel they paid
+          // with before. Accessory-only balances keep their -ACC reference.
+          <EftPanel
+            purpose={settled && accDue && !planDue ? 'accessories' : undefined}
+            submitted={accPending}
+            bank={eftBank}
+            reference={settled && accDue && !planDue && app ? accEftReference(app as { id?: string | null; admin_notes?: string | null; business_name?: string | null }) : eftRef}
+            amount={settled && accDue && !planDue ? accOwing : (instAmount ?? outstanding ?? amount)}
+            dueDate={inst ? fmtDate(inst.date) : due}
+            planNote={planDue || !settled ? planNote : undefined}
+            businessName={(app?.business_name as string) || 'your business'}
+          />
+        ) : settled ? (
           // Settled vendors: only the accessory balance can be payable here.
           // The EFT accessory panel additionally requires the lane switch to be
           // on (global EFT mode or an individual marker): when the lane is
@@ -364,7 +383,9 @@ export default async function PaymentsPage() {
           // switch closes the whole EFT rail (doctrine review 2026-08-04).
           // accPending always renders the EFT panel's submitted state: a proof
           // can only exist because the vendor used the EFT rail.
-          (accPending || (accDue && bill?.payClass === 'eft' && (eftModeOn || vendorHasMarker))) ? (
+          // Confirmed Samreen EFT payers see EFT only, whatever the rail/mode; for
+          // everyone else the rail switch still closes the EFT accessory panel.
+          (accPending || (accDue && (samreenVia === 'eft' || (samreenVia !== 'yoco' && bill?.payClass === 'eft' && (eftModeOn || vendorHasMarker))))) ? (
             // EFT payers settle accessories the same way they paid: EFT with a
             // -ACC reference so the deposit is identifiable on the statement.
             <EftPanel
@@ -389,6 +410,18 @@ export default async function PaymentsPage() {
               attemptedAt={attemptedAt || null}
               failedAttempts={failedAttempts}
               topUpNote="Accessory electricity, billed separately from your stall fee"
+            />
+          ) : planDue && samreenVia === 'yoco' ? (
+            // Card payer on a plan: next instalment by card too (stay on your channel).
+            <PaymentPanel
+              enabled={paymentsEnabled()}
+              status={status}
+              amount={amount}
+              outstanding={outstanding}
+              reference={reference}
+              dueDate={inst ? fmtDate(inst.date) : due}
+              attemptedAt={attemptedAt || null}
+              failedAttempts={failedAttempts}
             />
           ) : planDue ? (
             // Next instalment of an approved plan, after an earlier one settled.

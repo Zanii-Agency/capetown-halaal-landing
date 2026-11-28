@@ -25,6 +25,7 @@ import {
   MessageCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { withLivePricing } from '@/lib/payments/pricing'
 
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString('en-ZA', {
@@ -97,18 +98,28 @@ export default function ApplicationDetailPage() {
 
   const updateStatus = async (status: ApplicationStatus) => {
     if (!application) return
+    // A rejection always carries the reason she chooses; it is sent to the vendor.
+    let reason: string | undefined
+    if (status === 'rejected') {
+      const typed = window.prompt('Reason for the rejection (this is sent to the vendor):', 'Vendor category was full')
+      if (!typed || !typed.trim()) return
+      reason = typed.trim()
+    }
     setSaving(true)
 
     try {
       const res = await fetch(`/api/applications/${application.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, admin_notes: adminNotes }),
+        body: JSON.stringify({ status, admin_notes: adminNotes, ...(reason ? { reason } : {}) }),
       })
 
       if (res.ok) {
         const data = await res.json()
         setApplication(data.application)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        window.alert(err.message || 'Could not update the application.')
       }
     } catch (error) {
       console.error('Failed to update status:', error)
@@ -298,7 +309,7 @@ export default function ApplicationDetailPage() {
               total_estimate: 'Total Estimate',
             }
             try {
-              const data = JSON.parse(application.special_requirements)
+              const data = withLivePricing(JSON.parse(application.special_requirements), application.preferred_booth_tier)
               return (
                 <div>
                   <p className="text-sm text-neutral-500 mb-3">Requirements & Details</p>

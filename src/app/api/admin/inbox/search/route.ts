@@ -79,7 +79,7 @@ export async function GET(req: Request) {
       .select('id, body, wa_phone, created_at')
       .ilike('body', like)
       .order('created_at', { ascending: false })
-      .limit(20)) as unknown as {
+      .limit(200)) as unknown as {
       data: Array<{ id: string; body: string; wa_phone: string; created_at: string }> | null
     }
     for (const row of data ?? []) {
@@ -87,17 +87,12 @@ export async function GET(req: Request) {
       if (hide && (revealsPaymentArrangement(row.body) || scope.hidesMessage({ phone: row.wa_phone }, row.created_at))) continue
       const tk = `wa:${row.wa_phone}`
       if (seen.has(tk)) continue
-      const { data: thread } = (await supabase
-        .from('wa_threads')
-        .select('id')
-        .eq('channel', 'wa')
-        .eq('thread_key', row.wa_phone)
-        .limit(1)) as unknown as { data: Array<{ id: string }> | null }
-      if (!thread || thread.length === 0) continue
+      // wa_threads is keyed by wa_phone (no id/channel/thread_key columns): the old
+      // lookup on those columns always came back empty and dropped EVERY WhatsApp hit.
       seen.add(tk)
       const resolved = await resolveContact({ waPhone: row.wa_phone, supabase })
       hits.push({
-        thread_id: thread[0].id,
+        thread_id: row.wa_phone,
         channel: 'wa',
         thread_key: row.wa_phone,
         displayName: resolved.displayName,
@@ -126,7 +121,7 @@ export async function GET(req: Request) {
       .select('thread_id, body_text, from_address, to_address, subject, created_at')
       .ilike('body_text', like)
       .order('created_at', { ascending: false })
-      .limit(20)) as unknown as {
+      .limit(200)) as unknown as {
       data: Array<{
         thread_id: string
         body_text: string
@@ -205,5 +200,5 @@ export async function GET(req: Request) {
     /* swallow */
   }
 
-  return NextResponse.json({ hits: hits.slice(0, 30) })
+  return NextResponse.json({ hits: hits.slice(0, 100) })
 }

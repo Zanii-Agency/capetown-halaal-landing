@@ -28,7 +28,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { computeVendorPricing, formatRand } from '@/lib/payments/pricing'
+import { computeVendorPricing, formatRand, withLivePricing } from '@/lib/payments/pricing'
 import type {
   WorkbenchApplication,
   SuggestResponse,
@@ -415,7 +415,7 @@ export function PreviewPane({
         {row.special_requirements && (
           <section className="space-y-1.5">
             <div className="text-[10px] uppercase tracking-wider text-neutral-400">Special requirements</div>
-            <SpecialRequirementsView raw={row.special_requirements} />
+            <SpecialRequirementsView raw={row.special_requirements} tier={row.preferred_booth_tier} />
           </section>
         )}
 
@@ -704,14 +704,14 @@ function formatValue(k: string, v: unknown): string {
   return s.replace(/—/g, ' to ').replace(/–/g, ' to ')
 }
 
-function SpecialRequirementsView({ raw }: { raw: string }) {
+function SpecialRequirementsView({ raw, tier }: { raw: string; tier?: string | null }) {
   let parsed: Record<string, unknown> | null = null
   try {
     const trimmed = raw.trim()
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
       const candidate = JSON.parse(trimmed)
       if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-        parsed = candidate as Record<string, unknown>
+        parsed = withLivePricing(candidate as Record<string, unknown>, tier)
       }
     }
   } catch {

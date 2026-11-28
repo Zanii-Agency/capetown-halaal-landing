@@ -28,7 +28,6 @@ import type { ChannelThread } from '@/lib/inbox/channel-threads'
 import { Loader2 } from 'lucide-react'
 import { ThreadList, type ThreadFilter } from '@/components/admin/inbox/ThreadList'
 import { ThreadToolbar } from '@/components/admin/inbox/ThreadToolbar'
-import { Composer } from '@/components/admin/inbox/Composer'
 import { VendorPanel } from '@/components/admin/inbox/VendorPanel'
 
 export function WhatsAppWorkspace() {
@@ -237,7 +236,6 @@ export function WhatsAppWorkspace() {
     loadMessages(t)
   }
 
-  const pinnedCount = threads.filter((t) => t.needs_response).length
 
   return (
     <AdminPage
@@ -248,8 +246,7 @@ export function WhatsAppWorkspace() {
       subtitle={
         error ? 'Could not load these conversations.'
         : loading ? 'Loading conversations…'
-        : pinnedCount > 0 ? `${pinnedCount} waiting on a person, pinned to the top.`
-        : 'Nobody is waiting on a person.'
+        : 'ARCHIVED: this WhatsApp number is no longer active. All chats are kept here, read only. Search finds words inside any message.'
       }
     >
       <div className="flex h-full min-h-0 gap-4">
@@ -386,13 +383,9 @@ export function WhatsAppWorkspace() {
 
               <footer className="p-3 border-t border-neutral-200">
                 {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
-                <Composer
-                  channel="whatsapp"
-                  phone={active.phone}
-                  applicationId={active.application_id}
-                  onSent={() => { if (active) loadMessages(active); loadThreads(true) }}
-                  onError={(m) => setError(m)}
-                />
+                {/* zanii-codef: archived 2026-10-17, the WhatsApp number was deleted at
+                    Meta, so nothing can be sent. Restore the Composer to reopen. */}
+                <p className="text-sm text-neutral-500">Archived, read only. This WhatsApp number is no longer active, so replies cannot be sent. Contact the vendor by email or phone.</p>
               </footer>
             </>
           )}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireOperator } from '@/lib/admin-rbac'
-import { isEftAdmin } from '@/lib/eft'
+import { isMasterOperator } from '@/lib/eft'
 import { markEftCollected } from '@/lib/payments/confirm'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 
@@ -19,7 +19,7 @@ export const runtime = 'nodejs'
 export async function POST(req: NextRequest) {
   const gate = await requireOperator()
   if (!gate.ok) return gate.response
-  if (!isEftAdmin(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  if (!isMasterOperator(gate.adminUser.email)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const body = (await req.json().catch(() => ({}))) as { applicationId?: string; amount?: number; accessories?: boolean }
   const id = String(body.applicationId || '')

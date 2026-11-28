@@ -42,6 +42,9 @@ export type SeenImage = {
   isPaymentProof: boolean
   /** True when it shows an error, a failed page, or something visibly broken. */
   isProblem: boolean
+  /** True when it is a business LOGO / brand mark (so a vendor sending it means
+   *  "this is my logo"): not a product photo, document, receipt or screenshot. */
+  isLogo?: boolean
   /** Bank/institution name visible on a payment proof, else null. */
   bankName?: string | null
   /** Payment amount visible on a payment proof (as shown, e.g. "R3,700.00"), else null. */
@@ -87,7 +90,9 @@ export async function seeImageBytes(
           'A marketing poster, event flyer, menu, price list, logo, product photo, certificate, licence or ID ' +
           'is NOT a proof of payment, even if it mentions the festival or prices. ' +
           'When it IS a proof, capture the bank/institution name and the amount exactly as shown. ' +
-          'Reply with JSON only: {"description": string, "isPaymentProof": boolean, "isProblem": boolean, "bankName": string|null, "amount": string|null}',
+          'A LOGO is a business brand mark or name design (a graphic identity, usually on a plain background), ' +
+          'not a product photo, a person, a document, a receipt, a poster or a screenshot of an app. ' +
+          'Reply with JSON only: {"description": string, "isPaymentProof": boolean, "isProblem": boolean, "isLogo": boolean, "bankName": string|null, "amount": string|null}',
         messages: [
           {
             role: 'user',
@@ -125,6 +130,7 @@ export async function seeImageBytes(
       description: description.slice(0, 600),
       isPaymentProof: parsed.isPaymentProof === true,
       isProblem: parsed.isProblem === true,
+      isLogo: parsed.isLogo === true,
       bankName: clean(parsed.bankName),
       amount: clean(parsed.amount),
     }

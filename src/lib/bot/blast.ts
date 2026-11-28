@@ -25,6 +25,8 @@ export interface BlastSpec {
   // custom-template only:
   subject?: string
   bodyMarkdown?: string
+  /** Festival owner sent it: walled recipients are never reached. */
+  ownerView?: boolean
 }
 
 export interface BlastResult {
@@ -82,7 +84,7 @@ function renderFor(template: BlastTemplate, r: Recipient, spec: BlastSpec) {
 }
 
 export async function runBlast(spec: BlastSpec): Promise<BlastResult> {
-  const recipients = await resolveSegment(spec.segment)
+  const recipients = await resolveSegment(spec.segment, { ownerView: spec.ownerView })
   const subject = pickSubject(spec.template, spec.subject)
   const result: BlastResult = { attempted: recipients.length, sent: 0, failed: 0, errors: [] }
 

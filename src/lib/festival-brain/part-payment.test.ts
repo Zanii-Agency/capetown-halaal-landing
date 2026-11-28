@@ -59,7 +59,8 @@ test('the entry can never short-circuit as a canned answer', () => {
 test('the stated deadline is 15 October 2026 and carries no stall prices', () => {
   const { fact, answer } = FAQ.vendor_part_payment
   for (const text of [fact, answer]) {
-    assert.match(text, /15 October 2026/)
+    assert.match(text, /14 November 2026/)
+    assert.match(text, /20%/)
     assert.doesNotMatch(text, /R\s?\d/, 'part-payment copy must not state stall prices')
     assert.doesNotMatch(text, /[—–]/, 'no-em-dashes law (CTH-DOCTRINE 7)')
   }

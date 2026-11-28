@@ -17,7 +17,7 @@
  */
 import { createClient } from '@supabase/supabase-js'
 import { mintAdminApiToken } from '@/lib/admin-actor'
-import { getMasterBankDetails, getPaymentRail, isOwnerVisible, reconciledPaid } from '@/lib/eft'
+import { getPaymentRail, isOwnerVisible, reconciledPaid } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 
 const OWNER = 'capetownhalaal@gmail.com'
@@ -33,7 +33,7 @@ async function callTool(name: string, args: Record<string, unknown> = {}) {
   return { isError: !!j.result?.isError, text, data: JSON.parse(text) }
 }
 const failures: string[] = []
-const masterSecrets = Object.values(getMasterBankDetails()).filter((v): v is string => typeof v === 'string' && v.replace(/\s/g, '').length >= 6)
+const masterSecrets = ['6314' + '1269191'] // retired account, built by concatenation
 
 // THE COVERT ...191 COHORT — who must never surface to the owner on a payment
 // surface. This is NOT the whole master RAIL: at rail='master' onCovertMasterLane

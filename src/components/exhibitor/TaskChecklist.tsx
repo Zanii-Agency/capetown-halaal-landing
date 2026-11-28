@@ -48,6 +48,7 @@ export async function loadTasks(): Promise<{ tasks: TaskRow[]; firstName: string
   const requiredDocs = getRequiredDocs({
     productCategories,
     boothTier: (app.preferred_booth_tier as string) || null,
+    admin_notes: (app.admin_notes as string) || null,
   })
   const docTypes = new Set((state.docs || []).map((d) => d.type))
   const docsUploaded = requiredDocs.filter((t) => docTypes.has(t)).length

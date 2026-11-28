@@ -36,6 +36,8 @@ interface Row {
   accCollected: boolean    // operator confirmed the accessory EFT landed (interim)
   accSettled: boolean      // accessory amount folded into payment.amount via Yoco
   proofs: Array<{ url: string; uploaded_at: string; note?: string; accessory?: boolean }>
+  wrongPaid?: number
+  wrongPayments?: Array<{ amount: number; date: string | null; ref: string | null }>
   added_at?: string | null
   added_by?: string | null
 }
@@ -81,9 +83,8 @@ function BankCard({ title, bank, active, note }: { title: string; bank: Bank; ac
   )
 }
 
-export default function EftAdminClient({ rail, masterBank, samreenBank, rows, candidates, excluded }: {
+export default function EftAdminClient({ rail, samreenBank, rows, candidates, excluded }: {
   rail: PaymentRail
-  masterBank: Bank   // the covert master-lane account (...191)
   samreenBank: Bank  // the owner-reconciled Samreen-EFT account (...629)
   rows: Row[]
   candidates: Candidate[]
@@ -117,13 +118,15 @@ export default function EftAdminClient({ rail, masterBank, samreenBank, rows, ca
     (acc, r) => {
       const v = owed(r)
       acc.total += v
-      if (r.reconciled) acc.reconciled += v
+      acc.paid += r.wrongPaid ?? 0
+      if (r.wrongPaid != null) { if (v === 0) acc.full++; else acc.part++ }
+      else if (r.reconciled) acc.reconciled += v
       else if (r.collected) acc.collected += v
       else if (r.submitted) acc.submitted += v
       else acc.awaiting += v
       return acc
     },
-    { total: 0, collected: 0, submitted: 0, awaiting: 0, reconciled: 0 },
+    { total: 0, collected: 0, submitted: 0, awaiting: 0, reconciled: 0, paid: 0, full: 0, part: 0 },
   )
 
   async function post(url: string, body: unknown, key: string) {
@@ -211,12 +214,6 @@ export default function EftAdminClient({ rail, masterBank, samreenBank, rows, ca
         <div className="rounded-2xl border border-[#E5DCC4] bg-white p-5">
           <p className="text-xs uppercase tracking-wider text-[#1B1A17]/55 font-semibold mb-3">Receiving accounts</p>
           <div className="space-y-3">
-            <BankCard
-              title="Master lane (yours, hidden)"
-              bank={masterBank}
-              active={rail === 'master'}
-              note={rail === 'master' ? 'Every unpaid vendor pays here now.' : 'Covert cohort (⟦EFT⟧ + frozen set) always pays here.'}
-            />
             <BankCard
               title="Samreen EFT (she reconciles)"
               bank={samreenBank}
@@ -344,10 +341,10 @@ export default function EftAdminClient({ rail, masterBank, samreenBank, rows, ca
               different things: collected is money we HAVE but have not settled
               through Yoco, awaiting is money still outside. */}
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs tabular-nums">
-            <span className="text-[#1B1A17]/55">Collected <span className="font-semibold text-amber-700">{rand(totals.collected)}</span></span>
-            <span className="text-[#1B1A17]/55">Proof in <span className="font-semibold text-[#1B1A17]">{rand(totals.submitted)}</span></span>
-            <span className="text-[#1B1A17]/55">Awaiting <span className="font-semibold text-[#1B1A17]/70">{rand(totals.awaiting)}</span></span>
-            <span className="text-[#1B1A17]/70 border-l border-[#E5DCC4] pl-5">Total owed <span className="font-bold text-[#1B1A17]">{rand(totals.total)}</span></span>
+            <span className="text-[#1B1A17]/55">Paid <span className="font-semibold text-emerald-700">{rand(totals.paid)}</span></span>
+            <span className="text-[#1B1A17]/55">Paid in full <span className="font-semibold text-[#1B1A17]">{totals.full}</span></span>
+            <span className="text-[#1B1A17]/55">Part paid <span className="font-semibold text-[#1B1A17]">{totals.part}</span></span>
+            <span className="text-[#1B1A17]/70 border-l border-[#E5DCC4] pl-5">Still owed <span className="font-bold text-[#1B1A17]">{rand(totals.total)}</span></span>
           </div>
         </div>
         {rows.length === 0 ? (
@@ -382,7 +379,12 @@ export default function EftAdminClient({ rail, masterBank, samreenBank, rows, ca
                     </td>
                     <td className={`px-3 py-3 whitespace-nowrap text-right tabular-nums ${isDemoRow(r) ? 'text-[#1B1A17]/35 line-through' : 'font-medium'}`}>{rand(r.outstanding ?? r.amount)}</td>
                     <td className="px-3 py-3">
-                      {r.presented ? (
+                      {r.wrongPaid != null ? (
+                        <span className={`inline-flex flex-col gap-0.5 ${owed(r) === 0 ? 'text-emerald-700' : 'text-[#1B1A17]'}`}>
+                          <span className="inline-flex items-center gap-1 font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> {owed(r) === 0 ? 'Paid in full' : 'Part paid'} {rand(r.wrongPaid)}</span>
+                          <span className="text-xs text-[#1B1A17]/55">{(r.wrongPayments || []).map((p) => `${rand(p.amount)}${p.date ? ' on ' + fmtDate(p.date) : ''}`).join(' · ')}</span>
+                        </span>
+                      ) : r.presented ? (
                         <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
                           <CheckCircle2 className="w-3.5 h-3.5" /> Shown to Samreen (paid · Yoco){r.ownerReconciled ? ' · reconciled ✓' : ' · reconcile pending'}
                         </span>

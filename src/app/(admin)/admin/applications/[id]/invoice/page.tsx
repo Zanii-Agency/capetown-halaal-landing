@@ -37,7 +37,8 @@ export default async function AdminInvoicePage({ params }: { params: Promise<{ i
   })
   const status = state.payment?.status || 'none'
   const isPaid = status === 'paid'
-  const total = state.payment?.amount ?? pricing.total
+  // Total due is the live bill (stall + add-ons), never the amount paid (Abdusamee 2026-10-14).
+  const total = pricing.total
   const reference = state.payment?.reference || paymentReference(app.id as string)
   const providerRef = state.payment?.provider_ref || ''
   const paidAt = state.payment?.paid_at

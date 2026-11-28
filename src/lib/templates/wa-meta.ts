@@ -432,6 +432,19 @@ export const WA_META_TEMPLATES: WaTemplateSpec[] = [
       { key: 'message', label: 'Your message', placeholder: 'Your agreed instalment was due on 15 October.', required: true},
     ],
   },
+  {
+    key: 'vendor_more_info_needed',
+    label: 'More information needed (2-way)',
+    description: 'Ask a vendor for more information on anything (payment, proof, documents, appliances). Invites a reply.',
+    category: 'utility',
+    lang: 'en',
+    previewBody:
+      'Hi {{1}}, the Young at Heart Festival 2026 team needs a little more information from you about your stall:\n\n{{2}}\n\nPlease reply to us here on WhatsApp so we can sort it out quickly. The YAH Team.',
+    params: [
+      { key: 'first_name', label: 'First name', placeholder: 'Aisha', required: true },
+      { key: 'message', label: 'What we need', placeholder: 'Please send your proof of payment for the R2,200 you paid.', required: true },
+    ],
+  },
 ]
 
 export function findWaTemplate(key: string): WaTemplateSpec | undefined {
@@ -508,6 +521,7 @@ export const PAYMENT_CHECK_MESSAGE_TEMPLATE_KEYS = [
   'payment_check',
   'payment_proof_request',
   'payment_arrangement_check',
+  'vendor_more_info_needed',
 ] as const
 
 // Every two-var [first_name, message] template: paid + master-lane + payment-check.

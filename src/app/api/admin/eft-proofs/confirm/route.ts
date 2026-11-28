@@ -1,5 +1,5 @@
 /**
- * POST /api/admin/eft-proofs/confirm  { applicationId }
+ * POST /api/admin/eft-proofs/confirm  { applicationId, amount? }
  *
  * The festival owner's "Mark as paid" for a vendor on HER EFT-proofs surface
  * (/admin/eft-proofs). She has checked the uploaded proof and the money is in
@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { confirmPayment } from '@/lib/payments/confirm'
-import { getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
+import { getFullEftMode, eftProofVisibleToOwner, masterProofHandedToOwner } from '@/lib/eft'
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 import { vendorBill } from '@/lib/payments/vendor-bill'
@@ -52,9 +52,10 @@ export async function POST(req: NextRequest) {
   // (2026-09-11). Deliberately NOT laneScopeFor (see file header).
   const fullEft = await getFullEftMode()
   const notes = app.admin_notes as string | null
+  const handed = masterProofHandedToOwner(id, notes, fullEft)
   if (
     (app as { is_duplicate?: boolean }).is_duplicate ||
-    !eftProofVisibleToOwner(id, notes, fullEft)
+    !(eftProofVisibleToOwner(id, notes, fullEft) || handed)
   ) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
@@ -81,7 +82,14 @@ export async function POST(req: NextRequest) {
   const inst = nextInstalment(pay?.arrangement, bill.paidTotal)
   const priorConfirms = [...(pay?.refs || []), pay?.provider_ref || ''].filter((r) => String(r).startsWith(`eftproof-${id}`)).length
   const providerRef = priorConfirms === 0 ? `eftproof-${id}` : `eftproof-${id}-${priorConfirms + 1}`
-  const amount = inst ? Math.min(inst.amount, bill.owing) : undefined
+  // Operator-entered amount actually received (short payments stay PARTIAL:
+  // vendorBill.partial while paid < stall price). Capped at the balance owing.
+  // Absent (old clients) -> the instalment / full balance, as before.
+  const entered = Math.round(Number(body.amount))
+  if (body.amount !== undefined && !(entered > 0)) return NextResponse.json({ error: 'invalid amount' }, { status: 400 })
+  const amount = body.amount !== undefined
+    ? Math.min(entered, bill.owing)
+    : inst ? Math.min(inst.amount, bill.owing) : undefined
   const result = await confirmPayment({
     applicationId: id,
     method: 'samreen_eft',
@@ -94,10 +102,12 @@ export async function POST(req: NextRequest) {
     await db.from('vendor_application_events').insert({
       application_id: id,
       event_type: 'payment_manual',
-      after_value: { total_paid: result.amount, method: 'samreen_eft', reference: providerRef, source: 'eft-proofs' },
+      after_value: { total_paid: result.amount, method: 'samreen_eft', reference: providerRef, source: 'eft-proofs', ...(handed ? { funds_recovered: false } : {}) },
       actor_email: gate.adminUser.email,
       actor_role: 'admin',
-      note: 'EFT proof confirmed from the EFT Proofs page',
+      note: handed
+        ? 'Marked paid to allow the vendor to move to the next step on the platform. Funds are yet to be recovered.'
+        : 'EFT proof confirmed from the EFT Proofs page',
     })
   } catch (e) {
     console.warn('[eft-proofs/confirm] event log insert failed:', (e as Error).message)
@@ -111,7 +121,7 @@ export async function POST(req: NextRequest) {
     actor: { email: gate.adminUser.email, role: gate.role },
     action: 'mark_paid',
     vendorId: id,
-    payload: { method: 'samreen_eft', amount: result.amount ?? null, reference: providerRef, source: 'eft-proofs' },
+    payload: { method: 'samreen_eft', amount: result.amount ?? null, reference: providerRef, source: 'eft-proofs', ...(handed ? { funds_recovered: false } : {}) },
   })
 
   const after = parsePortalState(

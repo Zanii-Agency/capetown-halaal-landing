@@ -47,7 +47,7 @@ export async function executeStallChangeAction(input: StallChangeActionInput): P
 
   const { data: app } = await db
     .from('vendor_applications')
-    .select('id, business_name, admin_notes, special_requirements, phone')
+    .select('id, business_name, admin_notes, special_requirements, phone, status')
     .eq('id', id)
     .maybeSingle()
   if (!app) return { ok: false, error: 'Application not found' }
@@ -144,6 +144,11 @@ export async function executeStallChangeAction(input: StallChangeActionInput): P
   } catch (e) {
     console.warn('[stall-change-action] event log failed:', (e as Error).message)
   }
+
+  // An applicant not yet accepted gets NO stall-change message: "your stall change is
+  // approved" reads as an acceptance (LekkerSHOP, 2026-10-06). The approval email
+  // carries the right stall anyway, since the tier was updated above.
+  if ((app as Record<string, unknown>).status !== 'approved') return { ok: true, status: finalStatus }
 
   await notifyVendor({
     event: finalStatus === 'approved' ? 'stall_change_approved' : 'stall_change_rejected',

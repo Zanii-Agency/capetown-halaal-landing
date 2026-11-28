@@ -22,16 +22,16 @@ const TARGET_BYTES = Math.floor(3.6 * 1024 * 1024)
 const MAX_EDGE = 2000
 
 /** Human, actionable message for a file we cannot get under the cap. */
-export function tooLargeMessage(bytes: number): string {
+export function tooLargeMessage(bytes: number, limit = UPLOAD_LIMIT_BYTES): string {
   return (
-    `This file is ${(bytes / 1024 / 1024).toFixed(1)}MB and the most we can upload here is 4MB. ` +
+    `This file is ${(bytes / 1024 / 1024).toFixed(1)}MB and the most we can upload here is ${Math.round(limit / 1024 / 1024)}MB. ` +
     `Please email it to support@youngatheart.co.za, or upload a smaller or clearer photo.`
   )
 }
 
 export class FileTooLargeError extends Error {
-  constructor(public readonly bytes: number) {
-    super(tooLargeMessage(bytes))
+  constructor(public readonly bytes: number, limit = UPLOAD_LIMIT_BYTES) {
+    super(tooLargeMessage(bytes, limit))
     this.name = 'FileTooLargeError'
   }
 }
@@ -40,14 +40,14 @@ export class FileTooLargeError extends Error {
  *  image is downscaled + re-encoded as JPEG until it fits. An oversized PDF (or
  *  any file the browser can't decode as an image) throws FileTooLargeError so the
  *  caller shows a real message. Never returns a file bigger than the input. */
-export async function prepareUploadFile(file: File): Promise<File> {
-  if (file.size <= UPLOAD_LIMIT_BYTES) return file
-  if (file.type === 'application/pdf') throw new FileTooLargeError(file.size)
+export async function prepareUploadFile(file: File, limit = UPLOAD_LIMIT_BYTES): Promise<File> {
+  if (file.size <= limit) return file
+  if (file.type === 'application/pdf') throw new FileTooLargeError(file.size, limit)
 
   // `from-image` applies EXIF orientation so a portrait phone photo is not saved
   // sideways. Unknown types (heic on non-Safari, corrupt) reject -> honest error.
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null)
-  if (!bitmap) throw new FileTooLargeError(file.size)
+  if (!bitmap) throw new FileTooLargeError(file.size, limit)
 
   const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height))
   const w = Math.max(1, Math.round(bitmap.width * scale))
@@ -56,7 +56,7 @@ export async function prepareUploadFile(file: File): Promise<File> {
   canvas.width = w
   canvas.height = h
   const cctx = canvas.getContext('2d')
-  if (!cctx) { bitmap.close?.(); throw new FileTooLargeError(file.size) }
+  if (!cctx) { bitmap.close?.(); throw new FileTooLargeError(file.size, limit) }
   // zanii-codef: transparent PNGs flatten onto white (fine for photos/scans of
   // documents; a rare transparent screenshot loses its alpha, acceptable).
   cctx.fillStyle = '#ffffff'
@@ -69,7 +69,28 @@ export async function prepareUploadFile(file: File): Promise<File> {
   // pass; the ladder is a backstop for enormous sources.
   for (const q of [0.82, 0.7, 0.6, 0.5, 0.4]) {
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', q))
-    if (blob && blob.size <= TARGET_BYTES) return new File([blob], `${base}.jpg`, { type: 'image/jpeg' })
+    if (blob && blob.size <= Math.min(TARGET_BYTES, limit)) return new File([blob], `${base}.jpg`, { type: 'image/jpeg' })
   }
-  throw new FileTooLargeError(file.size)
+  throw new FileTooLargeError(file.size, limit)
+}
+
+/** Direct-to-storage limit for compliance documents (body never hits Vercel). */
+export const DOC_UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024
+
+/** Upload a compliance doc via sign -> PUT to Supabase Storage -> commit.
+ *  `endpoint` is /api/exhibitor/documents or /api/admin/vendors/<id>/documents. */
+export async function uploadDocDirect(endpoint: string, docType: string, file: File): Promise<void> {
+  const toSend = await prepareUploadFile(file, DOC_UPLOAD_LIMIT_BYTES)
+  const call = async (body: Record<string, unknown>) => {
+    const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(j.error || 'Upload failed')
+    return j
+  }
+  const { path, token } = await call({ action: 'sign', doc_type: docType, name: toSend.name })
+  const { createClient } = await import('@/lib/supabase/client')
+  const { error } = await createClient().storage.from('vendor-docs')
+    .uploadToSignedUrl(path, token, toSend, { contentType: toSend.type || 'application/octet-stream' })
+  if (error) throw new Error('Upload failed, please try again.')
+  await call({ action: 'commit', doc_type: docType, path, name: file.name })
 }

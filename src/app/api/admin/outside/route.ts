@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { rosterPaymentStatus } from '@/lib/eft'
+import { rosterPaymentStatus, teamPaidRecord, isEftAdmin } from '@/lib/eft'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { tierLabel } from '@/lib/stalls'
 import {
@@ -86,7 +86,10 @@ async function loadRoster(admin: ReturnType<typeof createAdminClient>, viewerEma
 
     const za = parseZoneAssignment(a.admin_notes as string)
     const rosterStatus = rosterPaymentStatus(a.admin_notes as string, a.paid_at as string | null, viewerEmail)
-    const paymentStatus = rosterStatus === 'paid' && vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: a.admin_notes as string, paid_at: a.paid_at as string | null }).partial ? 'partial' : rosterStatus
+    const bill = vendorBill({ id: a.id as string, preferred_booth_tier: a.preferred_booth_tier as string, special_requirements: a.special_requirements, admin_notes: a.admin_notes as string, paid_at: a.paid_at as string | null })
+    const teamPaid = isEftAdmin(viewerEmail) ? null : teamPaidRecord(a.admin_notes as string)
+    const partial = teamPaid ? teamPaid.amount < bill.liveTotal : bill.partial
+    const paymentStatus = rosterStatus === 'paid' && partial ? 'partial' : rosterStatus
     const paid = paymentStatus === 'paid' || paymentStatus === 'waived'
     const status = (a.status as string) || ''
     const committed = status === 'approved' // fills a spot; pending/info_requested wait

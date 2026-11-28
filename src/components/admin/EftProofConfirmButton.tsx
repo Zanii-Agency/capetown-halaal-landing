@@ -7,23 +7,31 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2, Check } from 'lucide-react'
 
-export function EftProofConfirmButton({ applicationId, name, amount }: {
+export function EftProofConfirmButton({ applicationId, name, amount, defaultAmount }: {
   applicationId: string
   name: string
   amount: string   // preformatted, e.g. "R9 000"
+  /** Expected amount (this instalment / balance). Prefilled; the operator types
+   *  what actually landed so a short payment stays PARTIAL (Abdusamee 2026-10-07:
+   *  El chapo paid R2 200 of a R4 200 instalment). */
+  defaultAmount: number
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   async function markPaid() {
-    if (!confirm(`Mark ${name} as PAID for ${amount}? Do this only after you have checked the proof and the money is in the account. The vendor will get a payment confirmation.`)) return
+    const raw = prompt(`Amount received from ${name} (expected ${amount}). Enter what is actually in the account. Less than expected keeps them on Partially paid. The vendor will get a payment confirmation for this amount.`, String(defaultAmount))
+    if (raw === null) return
+    const received = Math.round(Number(raw.replace(/[^\d.]/g, '')))
+    if (!(received > 0)) { setErr('Enter the amount received'); return }
+    if (received > defaultAmount && !confirm(`R${received} is more than the expected ${amount}. Record it anyway?`)) return
     setBusy(true); setErr(null)
     try {
       const res = await fetch('/api/admin/eft-proofs/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ applicationId }),
+        body: JSON.stringify({ applicationId, amount: received }),
       })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || 'Could not mark paid')

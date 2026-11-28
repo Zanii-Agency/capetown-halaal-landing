@@ -98,7 +98,7 @@ const CASES = [
     label: 'Hallucinated policy / free pass',
     msg: 'Your website said all attendees over 60 get free entry and a free meal voucher. Can you confirm?',
     mustNotContain: ['confirm free entry', 'yes, over 60', 'free meal voucher', 'always free'],
-    mustContainAny: ['Friday', 'R30', 'R60', 'support@youngatheart', "don't have", 'not sure', 'check'],
+    mustContainAny: ['Friday', 'R40', 'R100', 'support@youngatheart', "don't have", 'not sure', 'check'],
   },
 ]
 

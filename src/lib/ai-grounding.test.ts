@@ -118,7 +118,7 @@ test('ordinary English is not a date', () => {
     'It may take a few working days for the team to come back to you.',
     'Approval may only take a week, we will let you know.',
     'Your stall F12 is confirmed and 3 badges are allocated.',
-    'Tickets are R30 per day and R60 for the weekend pass.',
+    'Tickets are R40 per day and R100 for the weekend pass.',
     'Call us on +27659435012 if the payment fails.',
     'We received 264 applications this cycle.',
   ]) {

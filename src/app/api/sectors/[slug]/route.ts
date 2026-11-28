@@ -9,7 +9,7 @@ import { isPublicVendor } from '@/lib/public-vendor'
 const LOGO_BUCKET = 'vendor-assets'
 function publicLogoUrl(path: string | null | undefined): string | null {
   if (!path) return null
-  return `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${LOGO_BUCKET}/${path}`
+  return `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim()}/storage/v1/object/public/${LOGO_BUCKET}/${path}`
 }
 
 const SLUG_TO_SECTOR: Record<string, string> = {
@@ -21,6 +21,7 @@ const SLUG_TO_SECTOR: Record<string, string> = {
   'home-living': 'Home & Living',
   'finance-services': 'Finance & Services',
   'business-trade': 'Business & Trade',
+  other: 'Other',
 }
 
 export async function GET(

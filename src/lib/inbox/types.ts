@@ -31,6 +31,11 @@ export interface CommItem {
    *  reply. The thread collapses a run of these so the real conversation reads
    *  first. Set in the unified messages route. */
   auto?: boolean
+  /** Email only, outbound only: a person WROTE this but it was HELD (never
+   *  delivered — a restricted viewer emailed a walled vendor). Set ONLY for the
+   *  master by the messages route; the restricted viewer never receives the flag,
+   *  so her thread reads it as a normal sent email. */
+  held?: boolean
   body: string
   /** ARRIVAL time (row insert), not the sender's declared timestamp — both
    *  channels use the same clock so a merged sort is meaningful. */

@@ -150,8 +150,7 @@ Write the 3-sentence rollup now.`
       system: SYS,
       messages: [{ role: 'user', content: userPrompt }],
     })
-    const block = resp.content[0]
-    const raw = block && block.type === 'text' ? block.text : ''
+    const raw = resp.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
     const summary = raw.replace(/[–—]/g, ',').trim()
     const payload = { summary, cached_at: new Date().toISOString() }
     cacheSet(cacheKey, { at: Date.now(), payload })

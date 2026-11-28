@@ -8,6 +8,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { withoutMerged } from '@/lib/merge'
 import { findAdmin, type BotAdmin } from '@/lib/bot/admins'
 import { hasEftMarker } from '@/lib/eft'
+import { openCaseFor } from '@/lib/support-case'
 import { computePaymentDue, daysUntil, fmtDate } from '@/lib/exhibitor-paygate'
 
 /**
@@ -47,6 +48,16 @@ export interface ResolvedIdentity {
     tier_label: string | null
     applicationCount?: number    // how many applications this person has (multi-apply)
     otherBusinesses?: string[]   // distinct business names on this phone, set ONLY when >1 (disambiguate)
+    /** The OTHER businesses on this number with their own status + payment, so the
+     *  agent never "corrects" a true confirmation that was for a sibling brand. */
+    siblings?: Array<{ business_name: string; status: string; paid: boolean; amount: number | null }>
+    paid?: boolean               // this application's stall fee settled (paid/waived/collected)
+    /** What the team owes this vendor right now (lib/support-case.ts), if anything. */
+    openCase?: { since: string; dueAt: string; asks: number; overdue: boolean; firstAsk: string }
+    /** For a rejected (not withdrawn) application: the reason Samreen chose, which
+     *  the bot gives when asked why. "Vendor category was full" when none was
+     *  recorded (Taona 2026-09-23). */
+    rejectionReason?: string
     eftLane?: boolean            // TEMPORARY: vendor carries the ⟦EFT⟧ lane marker (lib/eft.ts)
     eftSubmitted?: boolean       // TEMPORARY: vendor uploaded an EFT proof (payment.eft_submitted_at)
   }
@@ -147,13 +158,22 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
   } | undefined
   if (vendor) {
     const { parseAllocation, tierLabel } = await import('@/lib/stalls')
-    const { parsePortalState } = await import('@/lib/portal-state')
+    const { parsePortalState, hasPaid } = await import('@/lib/portal-state')
     const alloc = parseAllocation(vendor.admin_notes)
     const portal = parsePortalState(vendor.admin_notes)
     const due = computePaymentDue({ reviewed_at: vendor.reviewed_at })
     const dueIso = due ? due.toISOString() : null
     const dueDays = due ? daysUntil(due) : null
     const name = vendor.contact_name || vendor.business_name
+    // Rejected vendors ask "why?" and the bot used to escalate every one (6 of 21
+    // open cases on 2026-09-23). Her reason is on the rejection audit row.
+    let rejectionReason: string | undefined
+    if (vendor.status === 'rejected' && !(portal as { withdrawn?: unknown }).withdrawn) {
+      const { data: ev } = await db.from('vendor_application_events').select('note')
+        .eq('application_id', vendor.id).eq('event_type', 'rejected')
+        .order('created_at', { ascending: false }).limit(1)
+      rejectionReason = String(ev?.[0]?.note || '').trim() || 'Vendor category was full'
+    }
     // Wrong-record guard: one phone can carry MULTIPLE applications. If they are
     // genuinely DIFFERENT businesses (not duplicates of one), we must NOT silently
     // answer for the newest only. Surface the distinct business names so the brain
@@ -182,8 +202,28 @@ export async function resolveIdentity(e164: string): Promise<ResolvedIdentity> {
         payment_due_date: dueIso,
         payment_due_days: dueDays,
         tier_label: vendor.preferred_booth_tier ? tierLabel(vendor.preferred_booth_tier) : null,
+        rejectionReason,
         applicationCount: (vendors || []).length,
         otherBusinesses: distinctBusinesses.length > 1 ? distinctBusinesses : undefined,
+        paid: hasPaid(portal),
+        openCase: (() => { const c = openCaseFor(vendor); return c ? { since: c.openedAt, dueAt: c.dueAt, asks: c.asks, overdue: c.overdue, firstAsk: c.firstAsk.slice(0, 200) } : undefined })(),
+        // Tasneem Allie 2026-09-14: her number is WAV-bound to The Salty Shack, The
+        // Wok Bar (same number) paid R9,900 and got "Payment received". Seeing only
+        // Salty Shack unpaid, the bot told her the confirmation "was wrong". One row
+        // per OTHER business name; same-name duplicates are not a second business.
+        // From `deduped`, NOT `vendors`: preferWaBound collapses a WAV-bound number to
+        // its ONE bound row, which is exactly how The Wok Bar vanished from view.
+        siblings: (deduped || []).length > 1
+          ? ((deduped || []) as Array<{ id: string; business_name?: string | null; status: string; admin_notes: string | null }>)
+              .filter((x: { id: string; business_name?: string | null }) =>
+                x.id !== vendor.id && (x.business_name || '').trim() !== (vendor.business_name || '').trim())
+              .filter((x: { business_name?: string | null }, i: number, arr: Array<{ business_name?: string | null }>) =>
+                arr.findIndex((y) => (y.business_name || '').trim() === (x.business_name || '').trim()) === i)
+              .map((x: { business_name?: string | null; status: string; admin_notes: string | null }) => {
+                const ps = parsePortalState(x.admin_notes)
+                return { business_name: (x.business_name || '').trim(), status: x.status, paid: hasPaid(ps), amount: ps.payment?.amount ?? null }
+              })
+          : undefined,
         eftLane: hasEftMarker(vendor.admin_notes),
         eftSubmitted: !!portal.payment?.eft_submitted_at,
       },

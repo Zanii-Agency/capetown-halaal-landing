@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { proofHiddenFor } from '@/lib/recon-proofs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,6 +13,7 @@ export const dynamic = 'force-dynamic'
 // storage path, fetch it server-side, and pipe the bytes. We do NOT redirect:
 // a 302 to the cross-origin Supabase host makes the iframe load a cross-origin
 // page that Chrome blocks ("This page has been blocked"). Admin-only.
+// &download=1 serves it as an attachment (the admin Download button).
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -27,6 +29,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'invalid path' }, { status: 400 })
   }
 
+  if (await proofHiddenFor(user.email, { path })) return NextResponse.json({ error: 'This proof is hidden' }, { status: 403 })
+
   const { data, error } = await admin.storage.from('vendor-docs').createSignedUrl(path, 300)
   if (error || !data?.signedUrl) return NextResponse.json({ error: 'Could not generate link' }, { status: 500 })
 
@@ -41,7 +45,7 @@ export async function GET(req: NextRequest) {
     status: 200,
     headers: {
       'Content-Type': upstreamType,
-      'Content-Disposition': `inline; filename="${filename}"`,
+      'Content-Disposition': `${req.nextUrl.searchParams.get('download') ? 'attachment' : 'inline'}; filename="${filename}"`,
       'X-Frame-Options': 'SAMEORIGIN',
       'Cache-Control': 'private, max-age=60',
     },

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
-import { ChatWidget } from "@/components/chat-widget";
 import { AnalyticsTracker } from "@/components/analytics-tracker";
 import { SiteFooter } from "@/components/site-footer";
 import "./globals.css";
@@ -79,7 +78,6 @@ export default function RootLayout({
         {children}
         <SiteFooter />
         <Toaster />
-        <ChatWidget />
         <AnalyticsTracker />
       </body>
     </html>

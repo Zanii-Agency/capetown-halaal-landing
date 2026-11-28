@@ -13,7 +13,7 @@ import { isPublicVendor } from '@/lib/public-vendor'
 
 export const dynamic = 'force-dynamic'
 
-const SLUG_TO_SECTOR: Record<string, { name: string; icon: string }> = {
+const SLUG_TO_SECTOR: Record<string, { name: string; label?: string; icon: string }> = {
   'food-beverage': { name: 'Food & Beverage', icon: '🍽️' },
   'fashion-modest-wear': { name: 'Fashion & Modest Wear', icon: '👗' },
   'beauty-wellness': { name: 'Beauty & Wellness', icon: '✨' },
@@ -22,6 +22,7 @@ const SLUG_TO_SECTOR: Record<string, { name: string; icon: string }> = {
   'home-living': { name: 'Home & Living', icon: '🏠' },
   'finance-services': { name: 'Finance & Services', icon: '💼' },
   'business-trade': { name: 'Business & Trade', icon: '🏢' },
+  other: { name: 'Other', label: 'More Exhibitors', icon: '🛍️' },
 }
 
 async function fetchVendor(sectorSlug: string, vendorSlugParam: string) {
@@ -113,7 +114,7 @@ export default async function VendorProfilePage({
       <div className="max-w-5xl mx-auto px-6 pt-10 text-sm">
         <Link href="/#sectors" className="text-neutral-500 hover:text-neutral-900">Sectors</Link>
         <span className="text-neutral-300 mx-2">/</span>
-        <Link href={`/sectors/${v.sector_slug}`} className="text-neutral-500 hover:text-neutral-900">{v.sector.name}</Link>
+        <Link href={`/sectors/${v.sector_slug}`} className="text-neutral-500 hover:text-neutral-900">{v.sector.label ?? v.sector.name}</Link>
         <span className="text-neutral-300 mx-2">/</span>
         <span className="text-neutral-900">{v.business_name}</span>
       </div>
@@ -132,7 +133,7 @@ export default async function VendorProfilePage({
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-3">
               <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-600 bg-white border border-neutral-200 rounded-full px-3 py-1">
-                <span>{v.sector.icon}</span> {v.sector.name}
+                <span>{v.sector.icon}</span> {v.sector.label ?? v.sector.name}
               </span>
               {v.stall_code && (
                 <span className="inline-flex items-center text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
@@ -212,7 +213,7 @@ export default async function VendorProfilePage({
       <div className="border-t border-neutral-200 mt-8">
         <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-neutral-500">
           <Link href={`/sectors/${v.sector_slug}`} className="hover:text-neutral-900">
-            ← More {v.sector.name} vendors
+            ← {v.sector.label ? `Back to ${v.sector.label}` : `More ${v.sector.name} vendors`}
           </Link>
           <Link href="https://tickets.youngatheart.co.za" className="text-[#cd2653] hover:underline font-medium">
             Get festival tickets →

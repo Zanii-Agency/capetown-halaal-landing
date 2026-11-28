@@ -54,7 +54,7 @@ const TICKET_TYPES: TicketType[] = [
     date: 'Friday, 11 December 2026',
     dayLabel: 'DAY 1',
     dayNumber: 1,
-    price: 30,
+    price: 40,
     description: 'General entry for Friday',
   },
   {
@@ -63,7 +63,7 @@ const TICKET_TYPES: TicketType[] = [
     date: 'Saturday, 12 December 2026',
     dayLabel: 'DAY 2',
     dayNumber: 2,
-    price: 30,
+    price: 40,
     description: 'General entry for Saturday',
   },
   {
@@ -72,7 +72,7 @@ const TICKET_TYPES: TicketType[] = [
     date: 'Sunday, 13 December 2026',
     dayLabel: 'DAY 3',
     dayNumber: 3,
-    price: 30,
+    price: 40,
     description: 'General entry for Sunday',
   },
   {
@@ -81,8 +81,8 @@ const TICKET_TYPES: TicketType[] = [
     date: '11–13 December 2026',
     dayLabel: 'ALL 3 DAYS',
     dayNumber: 0,
-    price: 60,
-    description: 'Entry for all three days (save R30)',
+    price: 100,
+    description: 'Entry for all three days (save R20)',
   },
 ]
 

@@ -302,9 +302,9 @@ async function findVendors(query: string, ownerScoped = false): Promise<string> 
   return `${head}\n` + rows.map((r) => `- ${vendorSummary(r, ownerScoped)}`).join('\n')
 }
 
-async function pipelineNumbers(): Promise<string> {
+async function pipelineNumbers(ownerScoped = false): Promise<string> {
   const keys: SegmentKey[] = ['pending', 'approved', 'approved_paid', 'approved_unpaid', 'info_requested', 'rejected', 'ticket_buyers']
-  const counts = await Promise.all(keys.map(async (k) => `${SEGMENT_LABELS[k]}: ${await segmentCount(k)}`))
+  const counts = await Promise.all(keys.map(async (k) => `${SEGMENT_LABELS[k]}: ${await segmentCount(k, { ownerView: ownerScoped })}`))
   return counts.join('\n')
 }
 
@@ -570,7 +570,7 @@ export async function executeMasterTool(role: string, name: string, args: unknow
   try {
     switch (name) {
       case 'find_vendors': return { content: await findVendors((args as { query?: string })?.query || '', ownerScoped) }
-      case 'pipeline_numbers': return { content: await pipelineNumbers() }
+      case 'pipeline_numbers': return { content: await pipelineNumbers(ownerScoped) }
       case 'vendor_conversation': return { content: await vendorConversation((args as { vendor_id?: string })?.vendor_id || '', ownerScoped) }
       case 'eft_lane_activity': return { content: await eftLaneActivity() }
       case 'pending_stall_changes': return { content: await pendingStallChangeRequests() }

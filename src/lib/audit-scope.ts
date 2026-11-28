@@ -101,3 +101,32 @@ export function siteEventHiddenFromOwner(row: AuditRow, vendorInScope?: boolean)
   if (vendorInScope === false) return true
   return revealsPaymentArrangement([type, asText(row.note), asText(row.metadata)].join(' '))
 }
+
+/** Activity rows that give away that a vendor was shown, or paid into, an EFT
+ *  account: the "Eft Details Revealed" / "Eft Proof Uploaded" lines on the
+ *  vendor profile log (Taona 2026-10-14). Hidden from non-EFT-admin viewers on
+ *  master-lane vendors; the rest of the log (logo, approval, docs) stays. */
+export function revealsLaneActivity(eventType: string | null | undefined): boolean {
+  const t = (eventType || '').toLowerCase()
+  return t.startsWith('eft_') || t === 'payment_proof_uploaded'
+}
+
+/** The 12 master-lane vendors the team already saw on the profile log and listed
+ *  as "PoP Recon - Incorrect Acc" (Website Development group, 2026-10-13). Their
+ *  log stays as the team already saw it (Taona 2026-10-14); every OTHER master-lane
+ *  vendor's EFT rows are hidden. Explicit ids, never a pattern. */
+export const LANE_ACTIVITY_ALREADY_SEEN: ReadonlySet<string> = new Set([
+  'f3e21663-37ac-463b-9217-6e13793bf099', // Barfi Bliss
+  '7581019a-d788-42ad-8d3e-4e6078ff70e5', // Cakes & Crumbs
+  'ad086831-12fb-475e-bbdc-85b969356544', // Brownie Babe
+  '54e29439-dff0-48c5-8002-9abd1247a7f3', // Bes-Teas Bubble Tea
+  '589caafa-7f8c-4438-8363-94560855e74c', // Whisked By Saabirah
+  '8459c95a-fdde-4869-ad2b-2c867eeb82a6', // Filigrana Authentic Peruvian Treats
+  '8d48aaa6-8cc3-41e7-b52e-9d98b60c3d75', // Mestizo Taste Latino
+  '38b3d32d-fadf-43bf-b58c-230f6a44a322', // Habibi
+  '90878011-d366-477b-86ae-130088a7bcb4', // BlackTop Street Kitchen
+  '9c0f5fe2-20cd-45de-aaf4-e612d1c4a3f7', // Dailyfresh corn (pending row)
+  '6484cfa4-6875-462e-96d3-5f95a7a53829', // Dailyfresh corn
+  'd3cbc49f-8eac-4fdb-9be2-db38975e1041', // Joe & Co.
+  'e3a452b9-8175-401b-825d-cd1dc1cb339f', // It's SnackTime
+])

@@ -12,6 +12,7 @@ import { assertRole } from '@/lib/admin-rbac'
 import { redactNotesForViewer, mergeNotesFromViewer } from '@/lib/eft'
 import { capJsonbSize } from '@/lib/audit/cap'
 import { findWaTemplate, renderWaTemplatePreview } from '@/lib/templates/wa-meta'
+import { notifyApplicationDecision, cleanReason } from '@/lib/applications/decision-notify'
 import { parseAllocation } from '@/lib/stalls'
 import { parsePortalState, updatePortalState, hasPaid } from '@/lib/portal-state'
 
@@ -19,6 +20,8 @@ import { parsePortalState, updatePortalState, hasPaid } from '@/lib/portal-state
 const updateSchema = z.object({
   status: z.enum(['pending', 'approved', 'rejected', 'info_requested']).optional(),
   admin_notes: z.string().optional(),
+  // The reason Samreen picks for a rejection. Sent to the vendor, never written as a column.
+  reason: z.string().max(2000).optional(),
 })
 
 // GET: Single application (admin only)
@@ -80,7 +83,12 @@ export async function PATCH(
   try {
     const { id } = await params
     const body = await request.json()
-    const validated = updateSchema.parse(body)
+    const { reason: decisionReason, ...validated } = updateSchema.parse(body)
+    // A rejection always carries the reason she chose (Taona 2026-09-23). This page used
+    // to reject with a generic "overwhelming number of applications" note and no reason.
+    if (validated.status === 'rejected' && !cleanReason(decisionReason)) {
+      return NextResponse.json({ error: 'reason_required', message: 'Choose a reason for the rejection. It is sent to the vendor.' }, { status: 400 })
+    }
 
     const supabase = await createClient()
 
@@ -217,7 +225,7 @@ export async function PATCH(
           after_value: afterValue,
           actor_email: actorEmail,
           actor_role: 'operator',
-          note: validated.admin_notes ?? null,
+          note: validated.status === 'rejected' ? cleanReason(decisionReason) : (validated.admin_notes ?? null),
         })
         if (evErr) console.error('[applications PATCH] event insert failed:', evErr.message)
       } catch (e) {
@@ -364,26 +372,17 @@ export async function PATCH(
             console.error('[approve] WA template send failed:', (e as Error).message)
           }
         } else if (validated.status === 'rejected') {
-          res = await sendEmail({
-            to: data.email,
-            subject: 'An update on your Young at Heart Festival 2026 application',
-            react: ApplicationRejected({
-              contactName: data.contact_name,
-              businessName: data.business_name,
-            }),
-            text: `Hi ${data.contact_name},\n\nThank you for applying to trade at Young at Heart Festival 2026 with ${data.business_name}, and for your patience while our selection committee reviewed every submission.\n\nWe received an overwhelming number of vendor applications this year, far beyond the spaces we have available. After a careful and fair review, we are not able to offer ${data.business_name} a trading spot at this year's festival.\n\nPlease know this is not a reflection of your business. With limited stalls and so many strong applications, many wonderful vendors could not be accommodated this time. Your details stay on file, and we would warmly welcome a fresh application for future events.\n\nIf you'd like any feedback, simply reply to this email. Questions? support@youngatheart.co.za or +27 65 943 5012.\n\nWarm regards,\nThe Young at Heart Festival Team`,
+          // The ONE rejection sender (lib/applications/decision-notify), same as the
+          // review queue: her chosen reason leads the email and rides the WhatsApp
+          // reason template. This page used to send its own reason-less copy.
+          const r = await notifyApplicationDecision({
+            admin, id, status: 'rejected', reason: decisionReason,
+            app: {
+              email: data.email || '', business_name: data.business_name || '', contact_name: data.contact_name || '',
+              preferred_booth_tier: data.preferred_booth_tier, phone: data.phone, admin_notes: data.admin_notes,
+            },
           })
-          // WhatsApp: vendor_application_declined template. Best-effort.
-          try {
-            const phone = (data.phone || data.whatsapp_number) as string | null
-            if (phone) {
-              const firstName = String(data.contact_name || '').trim().split(/\s+/)[0] || 'there'
-              const wa = await sendTemplate(toE164(phone), 'vendor_application_declined', [firstName], { category: 'utility' })
-              if (wa.skipped) console.warn('[reject] WA template skipped:', wa.skipped)
-            }
-          } catch (e) {
-            console.error('[reject] WA template send failed:', (e as Error).message)
-          }
+          res = { ok: r.emailSent, error: r.emailError }
         } else if (validated.status === 'info_requested') {
           res = await sendEmail({
             to: data.email,

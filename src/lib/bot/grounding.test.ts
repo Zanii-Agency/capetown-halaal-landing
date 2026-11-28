@@ -13,10 +13,10 @@ import type { VendorSession } from './vendor-session'
 const verified: VendorSession = { status: 'verified', waPhone: '+27821234567', vendorId: 'v1' } as VendorSession
 const unknown: VendorSession = { status: 'unknown', waPhone: '+27821234567' } as VendorSession
 
-test('verified vendor prompt carries the part-payment ladder (push this month first)', () => {
+test('verified vendor prompt carries the payment-plan rules (20% deposit, 14 Nov cap)', () => {
   const p = systemPrompt(verified)
-  assert.match(p, /15 OCTOBER 2026/)
-  assert.match(p, /PUSH FOR PAYMENT THIS MONTH FIRST/)
+  assert.match(p, /DEPOSIT of at least 20%/)
+  assert.match(p, /14 NOVEMBER 2026/)
   assert.match(p, /actually solve it with your tools/) // solve-don't-deflect discipline
 })
 

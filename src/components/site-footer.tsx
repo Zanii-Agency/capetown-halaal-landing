@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Instagram, Facebook, Mail, Phone, Calendar, MapPin } from 'lucide-react'
 import { Logo } from '@/components/logo'
-import { ZaniiCredit } from '@/components/zanii-credit'
 import { showsSiteFooter } from '@/lib/site-chrome'
 
 /**
@@ -50,6 +49,7 @@ const LEGAL = [
   { label: 'Terms & Conditions', href: '/terms' },
   { label: 'Refund & Cancellation', href: '/refund-policy' },
   { label: 'Privacy Policy', href: '/privacy' },
+  { label: 'FAQ', href: '/faq' },
   { label: 'Contact', href: '/contact' },
 ]
 
@@ -160,7 +160,6 @@ export function SiteFooter() {
           <p className="text-sm text-neutral-500">
             © 2026 Young at Heart Festival. All rights reserved.
           </p>
-          <ZaniiCredit surface="site" />
         </div>
       </div>
     </footer>

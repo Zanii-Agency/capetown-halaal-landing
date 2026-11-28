@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendEmail } from '@/lib/email/resend'
 import { requireOperator } from '@/lib/admin-rbac'
+import { resolveSupportCase } from '@/lib/support-case'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -86,5 +87,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
   } catch { /* swallow */ }
 
+  await resolveSupportCase(db, { email: peer })
   return NextResponse.json({ ok: true })
 }
