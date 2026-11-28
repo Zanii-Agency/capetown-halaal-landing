@@ -13,7 +13,7 @@
  * the /admin/eft-proofs page and the Claude connector's eft_proofs tool.
  */
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner, eftReference } from '@/lib/eft'
+import { getFullEftMode, getPaymentRail, eftProofVisibleToOwner, masterProofHandedToOwner, eftReference } from '@/lib/eft'
 import { parsePortalState } from '@/lib/portal-state'
 import { vendorBill } from '@/lib/payments/vendor-bill'
 import { nextInstalment } from '@/lib/payments/payment-plan'
@@ -38,14 +38,15 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
   const rows: EftProofRow[] = []
   for (const v of (vendors ?? [])) {
     if ((v as { is_duplicate?: boolean }).is_duplicate) continue
-    if (!eftProofVisibleToOwner(v.id as string, v.admin_notes as string | null, fullEft)) continue
+    const handed = masterProofHandedToOwner(v.id as string, v.admin_notes as string | null, fullEft)
+    if (!handed && !eftProofVisibleToOwner(v.id as string, v.admin_notes as string | null, fullEft)) continue
     const p = parsePortalState((v.admin_notes as string) || '').payment ?? {}
     const bill = vendorBill({ id: v.id as string, preferred_booth_tier: (v.preferred_booth_tier as string) || null, special_requirements: v.special_requirements, admin_notes: (v.admin_notes as string) || null, paid_at: (v.paid_at as string) || null })
     const inst = nextInstalment(p.arrangement, bill.paidTotal)
     const proofFiles = (p.proofs ?? []).filter((f) => f.kind === 'eft_submission' || f.kind === 'eft_accessories')
     const newest = [...proofFiles].sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))[0]
     let proofUrl: string | null = null
-    if (newest && !p.wrong_account) { // recon: wrong-account proofs stay hidden from the owner
+    if (newest && !p.wrong_account && !handed) { // recon: wrong-account proofs stay hidden; handed master proofs never serve the file
       const { data } = await db.storage.from('vendor-docs').createSignedUrl(newest.path, 60 * 60)
       proofUrl = data?.signedUrl ?? null
     }
@@ -53,13 +54,13 @@ export async function loadEftProofs(): Promise<{ ownerEftActive: boolean; fullEf
       id: v.id as string,
       name: (v.business_name as string) || (v.contact_name as string) || 'Unnamed',
       contact: (v.contact_name as string) || null,
-      reference: newest?.reference ?? null,
+      reference: handed ? null : (newest?.reference ?? null),
       expectedReference: eftReference(v),
       amount: bill.pricing.total,
       paidSoFar: bill.paidTotal,
       nextAmount: inst ? Math.min(inst.amount, bill.owing) : bill.owing,
       proofUrl,
-      note: newest?.note ?? null,
+      note: handed ? null : (newest?.note ?? null),
       // When the vendor SENT it (proof upload time), never when an operator filed it.
       uploadedAt: newest?.uploaded_at || (p.eft_submitted_at as string) || '',
       paid: bill.settled && bill.owing <= 0,

@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireOperator } from '@/lib/admin-rbac'
 import { confirmPayment } from '@/lib/payments/confirm'
-import { getFullEftMode, eftProofVisibleToOwner } from '@/lib/eft'
+import { getFullEftMode, eftProofVisibleToOwner, masterProofHandedToOwner } from '@/lib/eft'
 import { parsePortalState, syncPortalState } from '@/lib/portal-state'
 import { recordAdminAction } from '@/lib/zanii-ledger'
 import { vendorBill } from '@/lib/payments/vendor-bill'
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   const notes = app.admin_notes as string | null
   if (
     (app as { is_duplicate?: boolean }).is_duplicate ||
-    !eftProofVisibleToOwner(id, notes, fullEft)
+    !(eftProofVisibleToOwner(id, notes, fullEft) || masterProofHandedToOwner(id, notes, fullEft))
   ) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }

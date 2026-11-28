@@ -1420,3 +1420,20 @@ export const EFT_MAINTENANCE_MESSAGE =
   'You can also reach us at support@youngatheart.co.za or through your vendor portal inbox. ' +
   'If you have already paid, upload your proof of payment in your vendor portal or email it to us, ' +
   'and please allow up to 24 hours for our team to confirm it and update you.'
+
+/** MASTER LANE RETIRED (Taona 2026-11-28): the master lane is off and Samreen owns
+ *  every vendor. A vendor whose proof is still fenced off her page (master-stamped,
+ *  frozen cohort, ⟦EFT⟧/⟦NEWVENDOR⟧, pre-cutover) is handed to her as a row she can
+ *  confirm, but WITHOUT the proof file: she already holds those proofs, and the image
+ *  is never served. Revert = set this to false. */
+export const MASTER_LANE_RETIRED = true
+
+export function masterProofHandedToOwner(
+  vendorId: string,
+  adminNotes: string | null | undefined,
+  fullEft: { startedAt: string; protectedIds: Set<string> } | null,
+): boolean {
+  if (!MASTER_LANE_RETIRED) return false
+  if (!parsePortalState(adminNotes).payment?.eft_submitted_at) return false
+  return !eftProofVisibleToOwner(vendorId, adminNotes, fullEft)
+}
